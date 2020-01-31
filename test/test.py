@@ -28,6 +28,6 @@ agg_v = 0.
 for i in range(2):
     s1 = white_noise(mu)
     agg_v = add(agg_v, s1)
-c = loss(agg_v)
-storch.print_graph(c)
+    loss(agg_v)
+storch.backward(debug=True)
 # storch.backwards()

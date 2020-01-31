@@ -1,8 +1,9 @@
-from storch.tensor import Tensor
+from storch.tensor import Tensor, DeterministicTensor
 from torch.distributions import Distribution
 import torch
 
-def print_graph(node: Tensor, depth_first = False):
+def print_graph(costs: [DeterministicTensor]):
+    nodes = topological_sort(costs)
     counters = [1, 1, 1]
     names = {}
 
@@ -21,16 +22,12 @@ def print_graph(node: Tensor, depth_first = False):
         names[node] = name
         return name
 
-    def pretty_print(node):
+    for node in nodes:
         name = get_name(node, names)
         print(name, node)
         for p, differentiable in node._parents:
             edge = "-D->" if differentiable else "-X->"
             print(get_name(p, names) + edge + name)
-
-    pretty_print(node)
-    for p, _ in node.walk_parents(depth_first):
-        pretty_print(p)
 
 
 def get_distr_parameters(d: Distribution, filter_requires_grad=True) -> [torch.Tensor]:
@@ -67,10 +64,44 @@ def walk_backward_graph(tensor: torch.Tensor, depth_first=True):
     return _walk_backward_graph(tensor.grad_fn, depth_first)
 
 
-def has_differentiable_path(output: torch.Tensor, input: torch.Tensor, depth_first=True):
+def has_differentiable_path(output: torch.Tensor, input: torch.Tensor, depth_first=False):
+    """
+
+    :param output:
+    :param input:
+    :param depth_first: Initialized to False as we are usually doing this only for small distances between tensors.
+    :return:
+    """
     for p in walk_backward_graph(output, depth_first):
         if hasattr(p, "variable") and p.variable is input:
             return True
         elif p is input.grad_fn:
             return True
     return False
+
+def topological_sort(costs: [DeterministicTensor]) -> [Tensor]:
+    """
+    Implements reverse kahn's algorithm
+    :param costs:
+    :return:
+    """
+    for c in costs:
+        if not c.is_cost or c._children:
+            raise ValueError("The inputs of the topological sort should only contain cost nodes.")
+    l = []
+    s = costs.copy()
+    edges = {}
+    while s:
+        n = s.pop()
+        l.append(n)
+        for (p, _) in n._parents:
+            if p in edges:
+                children = edges[p]
+            else:
+                children = list(map(lambda ch: ch[0], p._children))
+                edges[p] = children
+            children.remove(n)
+            if not children:
+                s.append(p)
+    return l
+

@@ -14,6 +14,8 @@ class Tensor:
 
     def _add_parents(self, parents: List[Tensor]) -> None:
         for p in parents:
+            if p.is_cost:
+                raise ValueError("Cost nodes cannot have children.")
             differentiable_link = has_differentiable_path(self._tensor, p._tensor)
             self._parents.append((p, differentiable_link))
             p._children.append((self, differentiable_link))
@@ -22,24 +24,28 @@ class Tensor:
         t = "Stochastic" if self.stochastic else "Deterministic"
         return t + " " + str(self._tensor)
 
-    def _walk(self, collection, recur_fn, depth_first=False):
+    def _walk(self, collection, recur_fn, depth_first=False, only_differentiable=False):
         if depth_first:
-            for p in collection:
-                for _p in recur_fn(p):
-                    yield _p
-                yield p
+            for p, d in collection:
+                for _p, d in recur_fn(p):
+                    if d or not only_differentiable:
+                        yield _p, d
+                if d or not only_differentiable:
+                    yield p, d
         else:
+            for p, d in collection:
+                if d or not only_differentiable:
+                    yield p, d
             for p in collection:
-                yield p
-            for p in collection:
-                for _p in recur_fn(p):
-                    yield _p
+                for _p, d in recur_fn(p):
+                    if d or not only_differentiable:
+                        yield _p, d
 
-    def walk_parents(self, depth_first=False):
-        return self._walk(self._parents, lambda p: p[0].walk_parents(depth_first), depth_first)
+    def walk_parents(self, depth_first=False, only_differentiable=False):
+        return self._walk(self._parents, lambda p: p[0].walk_parents(depth_first), depth_first, only_differentiable)
 
-    def walk_children(self, depth_first=False):
-        return self._walk(self._children, lambda p: p[0].walk_children(depth_first), depth_first)
+    def walk_children(self, depth_first=False, only_differentiable=False):
+        return self._walk(self._children, lambda p: p[0].walk_children(depth_first), depth_first, only_differentiable)
 
     @property
     def stochastic(self):
@@ -58,6 +64,8 @@ class DeterministicTensor(Tensor):
     def __init__(self, tensor: torch.Tensor, is_cost: bool):
         super().__init__(tensor)
         self._is_cost = is_cost
+        if is_cost:
+            storch.inference._cost_tensors.append(self)
 
     @property
     def stochastic(self):
