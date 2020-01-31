@@ -68,10 +68,20 @@ def deterministic(fn):
     return _deterministic(fn, False)
 
 
-def _process_stochastic(output) -> None:
-    if not isinstance(output, Tensor):
+def _process_stochastic(output):
+    if isinstance(output, Tensor):
+        if not output.stochastic:
+            # The Tensor was created by calling @deterministic within a stochastic context.
+            # This means that we have to conservatively assume it is dependent on the parents
+            output._add_parents(storch.wrappers._stochastic_parents)
+        return output
+    if isinstance(output, torch.Tensor):
+        t = DeterministicTensor(output, False)
+        t._add_parents(storch.wrappers._stochastic_parents)
+        return t
+    else:
         raise TypeError("All outputs of functions wrapped in @storch.stochastic "
-                        "should be storch Tensors. At " + str(output))
+                        "should be Tensors. At " + str(output))
 
 
 def stochastic(fn):
@@ -85,16 +95,22 @@ def stochastic(fn):
         if storch.wrappers._context_stochastic or storch.wrappers._context_deterministic:
             raise RuntimeError("Cannot call storch.stochastic from within a stochastic or deterministic context.")
         storch.wrappers._context_stochastic = True
+        # Save the parents
         args, parents = _unwrap(*args, **kwargs)
         storch.wrappers._stochastic_parents = parents
+
         outputs = fn(*args, **kwargs)
+
+        # Add parents to the outputs
         if type(outputs) is tuple:
+            processed_outputs = []
             for o in outputs:
-                _process_stochastic(o)
+                processed_outputs.append(_process_stochastic(o))
         else:
-            _process_stochastic(outputs)
+            processed_outputs = _process_stochastic(outputs)
         storch.wrappers._context_stochastic = False
-        return outputs
+        storch.wrappers._stochastic_parents = None
+        return processed_outputs
     return wrapper
 
 

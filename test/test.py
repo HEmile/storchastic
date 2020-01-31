@@ -27,5 +27,5 @@ for i in range(3):
     s1, s2 = white_noise(mu)
     agg_v = add(agg_v, s1, s2)
 c = loss(agg_v)
-storch.walk_graph(c)
+storch.print_graph(c)
 # storch.backwards()

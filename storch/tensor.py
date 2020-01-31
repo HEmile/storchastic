@@ -21,6 +21,25 @@ class Tensor:
         t = "Stochastic" if self.stochastic else "Deterministic"
         return t + " " + str(self._tensor)
 
+    def _walk(self, collection, recur_fn, depth_first=False):
+        if depth_first:
+            for p in collection:
+                for _p in recur_fn(p):
+                    yield _p
+                yield p
+        else:
+            for p in collection:
+                yield p
+            for p in collection:
+                for _p in recur_fn(p):
+                    yield _p
+
+    def walk_parents(self, depth_first=False):
+        return self._walk(self._parents, lambda p: p.walk_parents(depth_first), depth_first)
+
+    def walk_children(self, depth_first=False):
+        return self._walk(self._children, lambda p: p.walk_children(depth_first), depth_first)
+
     @property
     def stochastic(self):
         return False
