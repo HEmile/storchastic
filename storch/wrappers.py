@@ -35,7 +35,7 @@ def _process_deterministic(o, parents, is_cost):
 
 def _deterministic(fn, is_cost):
     def wrapper(*args, **kwargs):
-        if storch.wrappers._context_deterministic or storch.wrappers._context_stochastic:
+        if storch.wrappers._context_deterministic:
             if is_cost:
                 raise RuntimeError("Cannot call storch.cost from within a deterministic context.")
 
@@ -45,8 +45,6 @@ def _deterministic(fn, is_cost):
 
         if not parents:
             return fn(*args, **kwargs)
-        if storch.wrappers._context_stochastic:
-            raise RuntimeError("Cannot create a deterministic context from within a stochastic context.")
         storch.wrappers._context_deterministic = True
         outputs = fn(*args, **kwargs)
         if type(outputs) is tuple:
