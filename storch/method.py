@@ -11,7 +11,7 @@ class Method(ABC):
         pass
 
     @abstractmethod
-    def estimator(self, tensor: StochasticTensor, costs: torch.Tensor, compute_statistics: bool) -> None:
+    def estimator(self, tensor: StochasticTensor, costs: torch.Tensor, compute_statistics: bool) -> torch.Tensor:
         pass
 
 
@@ -23,10 +23,22 @@ class Reparameterization(Method):
         s = distr.rsample((n,))
         return StochasticTensor(s, self, distr, s.requires_grad)
 
-    def estimator(self, tensor: StochasticTensor, costs: torch.Tensor, compute_statistics: bool) -> None:
+    def estimator(self, tensor: StochasticTensor, costs: torch.Tensor, compute_statistics: bool) -> torch.Tensor:
         if compute_statistics:
             grads = []
-            params = get_distr_parameters(tensor.distribution)
-            for cost in costs:
-                grads.append(torch.autograd.grad(cost, params, retain_graph=True))
+            params = get_distr_parameters(tensor.distribution, filter_requires_grad=True)
+            # TODO: Requires looping over all n evaluations of the costs
+            grads.append(torch.autograd.grad(costs, params, retain_graph=True))
             tensor.grads = grads
+        return 1.
+
+
+class ScoreFunction(Method):
+    def sample(self, distr: Distribution, n: int) -> StochasticTensor:
+        params = get_distr_parameters(distr, filter_requires_grad=True)
+        s = distr.sample((n, ))
+        return StochasticTensor(s, self, distr, len(params) > 0)
+
+    def estimator(self, tensor: StochasticTensor, costs: torch.Tensor, compute_statistics: bool) -> torch.Tensor:
+        log_prob = tensor.distribution.log_prob(tensor._tensor)
+        return costs*log_prob # Yeah this won't work. It needs to return a multiplicative factor that the algorithm itself uses

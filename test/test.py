@@ -1,8 +1,8 @@
 import storch
-from torch.distributions import Normal
+from torch.distributions import Normal, Categorical
 import torch
 
-mu_prior = torch.tensor(2., requires_grad=True)
+mu_prior = torch.tensor([2., -3.], requires_grad=True)
 theta = torch.tensor(4.)
 
 
@@ -22,6 +22,7 @@ def loss(v):
 
 
 mu = storch.sample(Normal(mu_prior, 1))
+# k = storch.sample(Categorical(probs=[0.5, 0.5]))
 
 agg_v = 0.
 for i in range(2):

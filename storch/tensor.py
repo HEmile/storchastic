@@ -14,8 +14,9 @@ class Tensor:
 
     def _add_parents(self, parents: List[Tensor]) -> None:
         for p in parents:
-            self._parents.append(p)
-            p._children.append(self)
+            differentiable_link = has_differentiable_path(self._tensor, p._tensor)
+            self._parents.append((p, differentiable_link))
+            p._children.append((self, differentiable_link))
 
     def __str__(self):
         t = "Stochastic" if self.stochastic else "Deterministic"
@@ -35,10 +36,10 @@ class Tensor:
                     yield _p
 
     def walk_parents(self, depth_first=False):
-        return self._walk(self._parents, lambda p: p.walk_parents(depth_first), depth_first)
+        return self._walk(self._parents, lambda p: p[0].walk_parents(depth_first), depth_first)
 
     def walk_children(self, depth_first=False):
-        return self._walk(self._children, lambda p: p.walk_children(depth_first), depth_first)
+        return self._walk(self._children, lambda p: p[0].walk_children(depth_first), depth_first)
 
     @property
     def stochastic(self):
@@ -86,3 +87,5 @@ class StochasticTensor(Tensor):
 
     def mean_grad(self):
         return torch.mean(self.grads)
+
+from storch.util import has_differentiable_path

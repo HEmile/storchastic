@@ -1,8 +1,6 @@
-import storch
+from storch.tensor import Tensor
 from torch.distributions import Distribution
 import torch
-from storch.tensor import Tensor
-
 
 def print_graph(node: Tensor, depth_first = False):
     counters = [1, 1, 1]
@@ -26,11 +24,12 @@ def print_graph(node: Tensor, depth_first = False):
     def pretty_print(node):
         name = get_name(node, names)
         print(name, node)
-        for p in node._parents:
-            print(get_name(p, names) + "->" + name)
+        for p, differentiable in node._parents:
+            edge = "-D->" if differentiable else "-X->"
+            print(get_name(p, names) + edge + name)
 
     pretty_print(node)
-    for p in node.walk_parents(depth_first):
+    for p, _ in node.walk_parents(depth_first):
         pretty_print(p)
 
 
@@ -44,3 +43,34 @@ def get_distr_parameters(d: Distribution, filter_requires_grad=True) -> [torch.T
         except AttributeError:
             pass
     return params
+
+
+def _walk_backward_graph(grad, depth_first=True):
+    if depth_first:
+        for t, _ in grad.next_functions:
+            if not t:
+                continue
+            yield t
+            for o in _walk_backward_graph(t, depth_first):
+                yield o
+    else:
+        for t, _ in grad.next_functions:
+            yield t
+        for t, _ in grad.next_functions:
+            for o in _walk_backward_graph(t, depth_first):
+                yield o
+
+
+def walk_backward_graph(tensor: torch.Tensor, depth_first=True):
+    if not tensor.grad_fn:
+        raise ValueError("Can only walk backward over graphs with a gradient function.")
+    return _walk_backward_graph(tensor.grad_fn, depth_first)
+
+
+def has_differentiable_path(output: torch.Tensor, input: torch.Tensor, depth_first=True):
+    for p in walk_backward_graph(output, depth_first):
+        if hasattr(p, "variable") and p.variable is input:
+            return True
+        elif p is input.grad_fn:
+            return True
+    return False
