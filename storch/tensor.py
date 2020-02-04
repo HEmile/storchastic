@@ -1,24 +1,29 @@
 from __future__ import annotations
 import torch
 import storch
-from typing import List
 from torch.distributions import Distribution
 
 
 class Tensor:
 
-    def __init__(self, tensor: torch.Tensor):
+    def __init__(self, tensor: torch.Tensor, parents: [Tensor], batch_links: [StochasticTensor]):
+        for i, plate in enumerate(batch_links):
+            if len(tensor.shape) <= i or not tensor.shape[i] == plate.n:
+                raise ValueError(
+                    "Storch Tensors should take into account their surrounding plates. Violated at dimension " + str(i)
+                    + " and plate size " + str(plate.n) + ". Instead, it was " + str(tensor.shape[i]))
+
         self._tensor = tensor
         self._parents = []
-        self._children = []
-
-    def _add_parents(self, parents: List[Tensor]) -> None:
         for p in parents:
             if p.is_cost:
                 raise ValueError("Cost nodes cannot have children.")
             differentiable_link = has_differentiable_path(self._tensor, p._tensor)
             self._parents.append((p, differentiable_link))
             p._children.append((self, differentiable_link))
+        self._children = []
+        self.event_shape = tensor.shape[len(batch_links):]
+        self.batch_links = batch_links
 
     def __str__(self):
         t = "Stochastic" if self.stochastic else "Deterministic"
@@ -59,10 +64,14 @@ class Tensor:
     def requires_grad(self):
         return self._tensor.requires_grad
 
+    @property
+    def batch_shape(self):
+        return torch.Size(map(lambda s: s.n, self.batch_links))
+
 
 class DeterministicTensor(Tensor):
-    def __init__(self, tensor: torch.Tensor, is_cost: bool):
-        super().__init__(tensor)
+    def __init__(self, tensor: torch.Tensor, parents, batch_links: [StochasticTensor], is_cost: bool):
+        super().__init__(tensor, parents, batch_links)
         self._is_cost = is_cost
         if is_cost:
             storch.inference._cost_tensors.append(self)
@@ -77,9 +86,12 @@ class DeterministicTensor(Tensor):
 
 
 class StochasticTensor(Tensor):
-    def __init__(self, tensor: torch.Tensor, sampling_method: storch.Method, distribution: Distribution,
-                 requires_grad: bool):
-        super().__init__(tensor)
+    def __init__(self, tensor: torch.Tensor, parents, sampling_method: storch.Method, batch_links: [StochasticTensor],
+                 distribution: Distribution, requires_grad: bool, n: int):
+        if n > 1:
+            batch_links.insert(0, self)
+        self.n = n
+        super().__init__(tensor, parents, batch_links)
         self.sampling_method = sampling_method
         self._requires_grad = requires_grad
         self.grads = None

@@ -7,7 +7,7 @@ from storch.util import get_distr_parameters
 
 class Method(ABC):
     @abstractmethod
-    def sample(self, distr: Distribution, n: int) -> StochasticTensor:
+    def sample(self, distr: Distribution, n: int) -> torch.Tensor:
         pass
 
     @abstractmethod
@@ -25,8 +25,7 @@ class Infer(Method):
         if not distr.has_rsample:
             raise NotImplementedError("The input distribution has not implemented rsample. If you use a discrete "
                                       "distribution, make sure to use DiscreteReparameterization.")
-        s = distr.rsample((n,))
-        return StochasticTensor(s, self, distr, s.requires_grad)
+        return distr.rsample((n,))
 
     def estimator(self, tensor: StochasticTensor, costs: [DeterministicTensor], compute_statistics: bool) -> torch.Tensor:
         if compute_statistics:
@@ -40,9 +39,7 @@ class Infer(Method):
 
 class ScoreFunction(Method):
     def sample(self, distr: Distribution, n: int) -> StochasticTensor:
-        params = get_distr_parameters(distr, filter_requires_grad=True)
-        s = distr.sample((n, ))
-        return StochasticTensor(s, self, distr, len(params) > 0)
+        return distr.sample((n, ))
 
     def estimator(self, tensor: StochasticTensor, costs: [DeterministicTensor], compute_statistics: bool) -> torch.Tensor:
         log_prob = tensor.distribution.log_prob(tensor._tensor)

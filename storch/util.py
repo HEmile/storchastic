@@ -43,6 +43,8 @@ def get_distr_parameters(d: Distribution, filter_requires_grad=True) -> [torch.T
 
 
 def _walk_backward_graph(grad, depth_first=True):
+    if not grad:
+        return
     if depth_first:
         for t, _ in grad.next_functions:
             if not t:
