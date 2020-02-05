@@ -1,9 +1,9 @@
 import storch
 from torch.distributions import Normal
 import torch
-from storch.util import has_differentiable_path
+from storch.util import has_backwards_path
 
-mu= torch.tensor([1., 0.2, 84.3], requires_grad=True)
+mu = torch.tensor([1., 0.2, 84.3], requires_grad=True)
 theta = torch.tensor([-5., 4.2, 4.3])
 
 
@@ -20,7 +20,7 @@ print(white_noise(mu)[0])
 
 
 a = torch.tensor(0.4, requires_grad=True)
-b = torch.tensor(0.5, requires_grad = True)
+b = torch.tensor(0.5, requires_grad=True)
 c = torch.tensor(0.6, requires_grad=True)
 
 # d = a + b

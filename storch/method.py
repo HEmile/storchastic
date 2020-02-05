@@ -2,7 +2,8 @@ from abc import ABC, abstractmethod
 from torch.distributions import Distribution
 from storch.tensor import DeterministicTensor, StochasticTensor
 import torch
-from storch.util import get_distr_parameters
+from typing import Optional
+from storch.util import has_differentiable_path
 
 
 class Method(ABC):
@@ -11,7 +12,9 @@ class Method(ABC):
         pass
 
     @abstractmethod
-    def estimator(self, tensor: StochasticTensor, costs: [DeterministicTensor], compute_statistics: bool) -> torch.Tensor:
+    # Estimators should optionally return a torch.Tensor that is going to be added to the total cost function
+    # In the case of for example reparameterization, None can be returned to denote that no cost function is added
+    def estimator(self, tensor: StochasticTensor, cost_node: DeterministicTensor, costs: torch.Tensor) -> Optional[torch.Tensor]:
         pass
 
 
@@ -27,20 +30,22 @@ class Infer(Method):
                                       "distribution, make sure to use DiscreteReparameterization.")
         return distr.rsample((n,))
 
-    def estimator(self, tensor: StochasticTensor, costs: [DeterministicTensor], compute_statistics: bool) -> torch.Tensor:
-        if compute_statistics:
-            grads = []
-            params = get_distr_parameters(tensor.distribution, filter_requires_grad=True)
-            # TODO: Requires looping over all n evaluations of the costs
-            grads.append(torch.autograd.grad(costs, params, retain_graph=True))
-            tensor.grads = grads
-        return 1.
+    def estimator(self, tensor: StochasticTensor, cost_node: DeterministicTensor, costs: torch.Tensor) -> Optional[torch.Tensor]:
+        if has_differentiable_path(cost_node, tensor):
+            # There is a differentiable path, so we will just use reparameterization here.
+            return None
+        else:
+            # No automatic baselines
+            s = ScoreFunction()
+            return s.estimator(tensor, cost_node, costs)
 
 
 class ScoreFunction(Method):
     def sample(self, distr: Distribution, n: int) -> StochasticTensor:
         return distr.sample((n, ))
 
-    def estimator(self, tensor: StochasticTensor, costs: [DeterministicTensor], compute_statistics: bool) -> torch.Tensor:
+    def estimator(self, tensor: StochasticTensor, cost_node: DeterministicTensor, costs: torch.Tensor) -> torch.Tensor:
         log_prob = tensor.distribution.log_prob(tensor._tensor)
-        return log_prob # Yeah this won't work. It needs to return a multiplicative factor that the algorithm itself uses
+        # Sum out over the even shape
+        log_prob = log_prob.sum(dim=list(range(len(tensor.batch_links), len(log_prob.shape))))
+        return log_prob * costs.detach()

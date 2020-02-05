@@ -66,7 +66,7 @@ def walk_backward_graph(tensor: torch.Tensor, depth_first=True):
     return _walk_backward_graph(tensor.grad_fn, depth_first)
 
 
-def has_differentiable_path(output: torch.Tensor, input: torch.Tensor, depth_first=False):
+def has_backwards_path(output: torch.Tensor, input: torch.Tensor, depth_first=False):
     """
 
     :param output:
@@ -74,12 +74,22 @@ def has_differentiable_path(output: torch.Tensor, input: torch.Tensor, depth_fir
     :param depth_first: Initialized to False as we are usually doing this only for small distances between tensors.
     :return:
     """
+    if not output.grad_fn:
+        return False
     for p in walk_backward_graph(output, depth_first):
         if hasattr(p, "variable") and p.variable is input:
             return True
         elif p is input.grad_fn:
             return True
     return False
+
+
+def has_differentiable_path(output:Tensor, input: Tensor):
+    for c in input.walk_children(only_differentiable=True):
+        if c is output:
+            return True
+    return False
+
 
 def topological_sort(costs: [DeterministicTensor]) -> [Tensor]:
     """
@@ -106,4 +116,3 @@ def topological_sort(costs: [DeterministicTensor]) -> [Tensor]:
             if not children:
                 s.append(p)
     return l
-
