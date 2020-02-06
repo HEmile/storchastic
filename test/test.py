@@ -30,12 +30,16 @@ mu = storch.sample(Normal(mu_prior, 1), n=4)
 agg_v = 0.
 for i in range(2):
     s1, s2 = white_noise(mu)
-    add_1 = add(s1, s2, mu)
-    agg_v = add(agg_v, add_1, mu)
+    mult1 = s2 * mu
+    add_1 = s1 + mult1
+    agg_v = add_1 + agg_v
+    # print(agg_v[..., 1])
+    print(agg_v.max(dim=-1))
+    print(agg_v.mean(dim=-1))
+    print(agg_v.view((-1, 8)))
     loss(agg_v)
 
-storch.backward(debug=True, keep_grads=True)
-print(mu._accum_grads)
-print(s1._accum_grads)
-print(s2._accum_grads)
-# storch.backwards()
+storch.backward(debug=False, keep_grads=True)
+# print(mu._accum_grads)
+# print(s1._accum_grads)
+# print(s2._accum_grads)

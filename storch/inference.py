@@ -126,12 +126,10 @@ def backward(retain_graph=False, debug=False, keep_grads=False):
         if keep_grads and len(c.batch_shape) > 0:
             total_loss += _keep_grads_backwards(c, c._tensor)
         else:
-            print("ac", avg_cost.shape)
             accum_loss += avg_cost
             total_loss += avg_cost
 
     if isinstance(accum_loss, torch.Tensor) and accum_loss.requires_grad:
-        print(accum_loss.shape)
         accum_loss.backward()
 
     if not retain_graph:

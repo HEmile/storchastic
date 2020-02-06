@@ -1,6 +1,7 @@
 import storch
 import torch
-from storch.tensor import Tensor, DeterministicTensor, StochasticTensor
+from collections.abc import Iterable
+# from storch.tensor import Tensor, DeterministicTensor, StochasticTensor
 
 _context_stochastic = False
 _context_deterministic = False
@@ -9,29 +10,28 @@ _plate_links = []
 
 def _unwrap(*args, **kwargs):
     parents = []
-    plates: [StochasticTensor] = []
+    plates: [storch.StochasticTensor] = []
 
     # Collect parent tensors and plates
     for a in args:
-        if isinstance(a, Tensor):
+        if isinstance(a, storch.Tensor):
             parents.append(a)
             for plate in a.batch_links:
                 if plate not in plates:
                     plates.append(plate)
-        else:
-            if not isinstance(a, torch.Tensor):
-                NotImplementedError("Unwrapping of values other than tensors is currently not supported", a)
 
     if len(kwargs.values()) > 0:
-        NotImplementedError("Unwrapping of kwargs is currently not supported")
+        print("unchecked kwargs pass")
+        # raise NotImplementedError("Unwrapping of kwargs is currently not supported")
 
     storch.wrappers._plate_links = plates
 
     # Unsqueeze and align batched dimensions so that batching works easily.
     unsqueezed = []
     for t in args:
-        if not isinstance(t, Tensor):
+        if not isinstance(t, storch.Tensor):
             unsqueezed.append(t)
+            print("unchecked argument pass")
             continue
         tensor = t._tensor
 
@@ -57,21 +57,21 @@ def _unwrap(*args, **kwargs):
 
 
 def _process_deterministic(o, parents, plates, is_cost):
-    if isinstance(o, Tensor):
+    if isinstance(o, storch.Tensor):
         raise RuntimeError("Creation of storch Tensor within deterministic context")
     if isinstance(o, torch.Tensor):
-        t = DeterministicTensor(o, parents, plates, is_cost)
+        t = storch.DeterministicTensor(o, parents, plates, is_cost)
         if is_cost and t.event_shape != ():
             # TODO: Make sure the o.size() check takes into account the size of the sample.
             raise ValueError("Event shapes (ie, non batched dimensions) of cost nodes have to be single floating point numbers. ")
         return t
-    raise NotImplementedError("Handling of other types of return values is currently not implemented")
+    raise NotImplementedError("Handling of other types of return values is currently not implemented: ", o)
 
 
 def _deterministic(fn, is_cost):
     def wrapper(*args, **kwargs):
         if storch.wrappers._context_stochastic:
-            # TODO
+            # TODO check if we can re-add this
             raise NotImplementedError("It is currently not allowed to open a deterministic context in a stochastic context")
         if storch.wrappers._context_deterministic:
             if is_cost:
@@ -85,10 +85,11 @@ def _deterministic(fn, is_cost):
             return fn(*args, **kwargs)
         storch.wrappers._context_deterministic = True
         outputs = fn(*args, **kwargs)
-        if type(outputs) is tuple:
-            outputs = []
+        if isinstance(outputs, Iterable) and not isinstance(outputs, torch.Tensor):
+            n_outputs = []
             for o in outputs:
-               outputs.append(_process_deterministic(o, parents, plates, is_cost))
+                n_outputs.append(_process_deterministic(o, parents, plates, is_cost))
+            outputs = n_outputs
         else:
             outputs = _process_deterministic(outputs, parents, plates, is_cost)
         storch.wrappers._context_deterministic = False
@@ -96,22 +97,24 @@ def _deterministic(fn, is_cost):
     return wrapper
 
 
-def cost(fn):
-    return _deterministic(fn, True)
-
 def deterministic(fn):
     return _deterministic(fn, False)
 
 
+def cost(fn):
+    return _deterministic(fn, True)
+
+
 def _process_stochastic(output, parents, plates):
-    if isinstance(output, Tensor):
+    if isinstance(output, storch.Tensor):
         if not output.stochastic:
+            # TODO: Calls _add_parents so something is going wrong here
             # The Tensor was created by calling @deterministic within a stochastic context.
             # This means that we have to conservatively assume it is dependent on the parents
             output._add_parents(storch.wrappers._stochastic_parents)
         return output
     if isinstance(output, torch.Tensor):
-        t = DeterministicTensor(output, parents, plates, False)
+        t = storch.DeterministicTensor(output, parents, plates, False)
         return t
     else:
         raise TypeError("All outputs of functions wrapped in @storch.stochastic "
@@ -136,7 +139,7 @@ def stochastic(fn):
         outputs = fn(*args, **kwargs)
 
         # Add parents to the outputs
-        if type(outputs) is tuple:
+        if isinstance(outputs, Iterable):
             processed_outputs = []
             for o in outputs:
                 processed_outputs.append(_process_stochastic(o, parents, plates))
@@ -146,5 +149,3 @@ def stochastic(fn):
         storch.wrappers._stochastic_parents = []
         return processed_outputs
     return wrapper
-
-
