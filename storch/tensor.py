@@ -37,7 +37,7 @@ class Tensor:
 
     def __str__(self):
         t = "Stochastic" if self.stochastic else ("Cost" if self.is_cost else "Deterministic")
-        return t + " " + str(self._tensor.shape)
+        return t + " " + str(self._tensor)
 
     def _walk(self, expand_fn, depth_first=True, only_differentiable=False, repeat_visited=False, walk_fn=lambda x: x):
         visited = set()
@@ -97,7 +97,10 @@ class Tensor:
         return self._tensor.grad
 
     def dim(self):
-        return self._tensor.dim
+        return self._tensor.dim()
+
+    def event_dim_indices(self):
+        return list(range(len(self.batch_links), self._tensor.dim()))
 
     # region UnwrappedFunctions
     # The reason all these functions work and don't go into infinite recursion is because they unwraps

@@ -32,6 +32,13 @@ def _create_hook(sample: StochasticTensor, tensor: torch.tensor):
     return hook
 
 
+def add_cost(cost: StochasticTensor):
+    if cost.event_shape != ():
+        raise ValueError("Can only register cost functions with empty event shapes")
+    cost._is_cost = True
+    storch.inference._cost_tensors.append(cost)
+
+
 def sample(distr: Distribution, method: Method = None, n: int = 1) -> Tensor:
     if not method:
         if distr.has_rsample:

@@ -9,13 +9,16 @@ _context_deterministic = False
 _stochastic_parents = []
 _plate_links = []
 
+def is_iterable(a):
+    return isinstance(a, Iterable) and not isinstance(a, torch.Tensor) and not isinstance(a, str)
+
 def _collect_parents_and_plates(a, parents: [storch.Tensor], plates: [storch.StochasticTensor]):
     if isinstance(a, storch.Tensor):
         parents.append(a)
         for plate in a.batch_links:
             if plate not in plates:
                 plates.append(plate)
-    elif isinstance(a, Iterable):
+    elif is_iterable(a):
         for _a in a:
             _collect_parents_and_plates(_a, parents, plates)
     elif isinstance(a, Mapping):
@@ -43,7 +46,7 @@ def _unsqueeze_and_unwrap(a, plates: [storch.StochasticTensor]):
             if plate not in a.batch_links:
                 tensor = tensor.unsqueeze(i)
         return tensor
-    elif isinstance(a, Iterable):
+    elif is_iterable(a):
         l = []
         for _a in a:
             l.append(_unsqueeze_and_unwrap(_a, plates))
@@ -80,6 +83,8 @@ def _unwrap(*args, **kwargs):
 
 
 def _process_deterministic(o, parents, plates, is_cost):
+    if o is None:
+        return
     if isinstance(o, storch.Tensor):
         raise RuntimeError("Creation of storch Tensor within deterministic context")
     if isinstance(o, torch.Tensor):
@@ -108,7 +113,7 @@ def _deterministic(fn, is_cost):
             return fn(*args, **kwargs)
         storch.wrappers._context_deterministic = True
         outputs = fn(*args, **kwargs)
-        if isinstance(outputs, Iterable) and not isinstance(outputs, torch.Tensor):
+        if is_iterable(outputs):
             n_outputs = []
             for o in outputs:
                 n_outputs.append(_process_deterministic(o, parents, plates, is_cost))
@@ -162,7 +167,7 @@ def stochastic(fn):
         outputs = fn(*args, **kwargs)
 
         # Add parents to the outputs
-        if isinstance(outputs, Iterable):
+        if is_iterable(outputs):
             processed_outputs = []
             for o in outputs:
                 processed_outputs.append(_process_stochastic(o, parents, plates))
