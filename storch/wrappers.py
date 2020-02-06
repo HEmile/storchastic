@@ -17,6 +17,7 @@ def _unwrap(*args, **kwargs):
         if isinstance(a, storch.Tensor):
             parents.append(a)
             for plate in a.batch_links:
+                print("??????")
                 if plate not in plates:
                     plates.append(plate)
 
@@ -24,6 +25,7 @@ def _unwrap(*args, **kwargs):
         print("unchecked kwargs pass")
         # raise NotImplementedError("Unwrapping of kwargs is currently not supported")
 
+    print("here")
     storch.wrappers._plate_links = plates
 
     # Unsqueeze and align batched dimensions so that batching works easily.
@@ -70,6 +72,7 @@ def _process_deterministic(o, parents, plates, is_cost):
 
 def _deterministic(fn, is_cost):
     def wrapper(*args, **kwargs):
+        print("start of wrapper", fn)
         if storch.wrappers._context_stochastic:
             # TODO check if we can re-add this
             raise NotImplementedError("It is currently not allowed to open a deterministic context in a stochastic context")
@@ -79,7 +82,9 @@ def _deterministic(fn, is_cost):
 
             # We are already in a deterministic context, no need to wrap or unwrap as only the outer dependencies matter
             return fn(*args, **kwargs)
+        print("Here3")
         args, parents, plates = _unwrap(*args, **kwargs)
+        print("Here4")
 
         if not parents:
             return fn(*args, **kwargs)

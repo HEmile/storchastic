@@ -157,9 +157,8 @@ class Tensor:
     def __and__(self, other):
         return self.__and__(other)
 
-    @storch.deterministic
-    def __eq__(self, other):
-        return self.__eq__(other)
+    def eq(self, other):
+        return self.eq(other)
 
     @storch.deterministic
     def __ge__(self, other):
@@ -168,6 +167,7 @@ class Tensor:
     @storch.deterministic
     def __getitem__(self, indices: Union[None, _int, slice, Tensor, List, Tuple]):
         # TODO: properly test this
+        print("getting item")
         return self.__getitem__(indices)
 
     @storch.deterministic
@@ -191,8 +191,8 @@ class Tensor:
         return self.__lt__(other)
 
     @storch.deterministic
-    def __ne__(self, other):
-        return self.__ne__(other)
+    def ne(self, other):
+        return self.ne(other)
 
     @storch.deterministic
     def __neg__(self):
