@@ -28,7 +28,7 @@ class Tensor:
         for p in parents:
             if p.is_cost:
                 raise ValueError("Cost nodes cannot have children.")
-            differentiable_link = has_backwards_path(self._tensor, p._tensor)
+            differentiable_link = has_backwards_path(self, p)
             self._parents.append((p, differentiable_link))
             p._children.append((self, differentiable_link))
         self._children = []
@@ -37,7 +37,7 @@ class Tensor:
 
     def __str__(self):
         t = "Stochastic" if self.stochastic else ("Cost" if self.is_cost else "Deterministic")
-        return t + " " + str(self._tensor)
+        return t + " " + str(self._tensor.shape)
 
     def _walk(self, expand_fn, depth_first=True, only_differentiable=False, repeat_visited=False, walk_fn=lambda x: x):
         visited = set()
@@ -68,6 +68,9 @@ class Tensor:
 
     def walk_children(self, depth_first=True, only_differentiable=False, repeat_visited=False, walk_fn=lambda x: x):
         return self._walk(lambda p: p._children, depth_first, only_differentiable, repeat_visited, walk_fn)
+
+    def detach_tensor(self) -> torch.Tensor:
+        return self._tensor.detach()
 
     @property
     def stochastic(self) -> bool:
@@ -167,7 +170,6 @@ class Tensor:
     @storch.deterministic
     def __getitem__(self, indices: Union[None, _int, slice, Tensor, List, Tuple]):
         # TODO: properly test this
-        print("getting item")
         return self.__getitem__(indices)
 
     @storch.deterministic
@@ -992,12 +994,12 @@ class StochasticTensor(Tensor):
         if n > 1:
             batch_links.insert(0, self)
         self.n = n
+        self.distribution = distribution
         super().__init__(tensor, parents, batch_links)
         self.sampling_method = sampling_method
         self._requires_grad = requires_grad
         self.grads = []
         self._accum_grads = {}
-        self.distribution = distribution
 
     @property
     def stochastic(self):

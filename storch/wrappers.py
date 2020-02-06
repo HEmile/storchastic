@@ -1,6 +1,7 @@
+from __future__ import annotations
 import storch
 import torch
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 # from storch.tensor import Tensor, DeterministicTensor, StochasticTensor
 
 _context_stochastic = False
@@ -8,41 +9,29 @@ _context_deterministic = False
 _stochastic_parents = []
 _plate_links = []
 
-def _unwrap(*args, **kwargs):
-    parents = []
-    plates: [storch.StochasticTensor] = []
+def _collect_parents_and_plates(a, parents: [storch.Tensor], plates: [storch.StochasticTensor]):
+    if isinstance(a, storch.Tensor):
+        parents.append(a)
+        for plate in a.batch_links:
+            if plate not in plates:
+                plates.append(plate)
+    elif isinstance(a, Iterable):
+        for _a in a:
+            _collect_parents_and_plates(_a, parents, plates)
+    elif isinstance(a, Mapping):
+        for _a in a.values():
+            _collect_parents_and_plates(_a, parents, plates)
 
-    # Collect parent tensors and plates
-    for a in args:
-        if isinstance(a, storch.Tensor):
-            parents.append(a)
-            for plate in a.batch_links:
-                print("??????")
-                if plate not in plates:
-                    plates.append(plate)
-
-    if len(kwargs.values()) > 0:
-        print("unchecked kwargs pass")
-        # raise NotImplementedError("Unwrapping of kwargs is currently not supported")
-
-    print("here")
-    storch.wrappers._plate_links = plates
-
-    # Unsqueeze and align batched dimensions so that batching works easily.
-    unsqueezed = []
-    for t in args:
-        if not isinstance(t, storch.Tensor):
-            unsqueezed.append(t)
-            print("unchecked argument pass")
-            continue
-        tensor = t._tensor
+def _unsqueeze_and_unwrap(a, plates: [storch.StochasticTensor]):
+    if isinstance(a, storch.Tensor):
+        tensor = a._tensor
 
         # It can be possible that the ordering of the plates does not align with the ordering of the inputs.
         # This part corrects this.
         amt_recognized = 0
-        links = t.batch_links.copy()
+        links = a.batch_links.copy()
         for i, plate in enumerate(plates):
-            if plate in t.batch_links:
+            if plate in a.batch_links:
                 if plate is not links[amt_recognized]:
                     # The plate is also in the tensor, but not in the ordering expected. So switch that ordering
                     j = links.index(plate)
@@ -51,11 +40,43 @@ def _unwrap(*args, **kwargs):
                 amt_recognized += 1
 
         for i, plate in enumerate(plates):
-            if plate not in t.batch_links:
+            if plate not in a.batch_links:
                 tensor = tensor.unsqueeze(i)
-        unsqueezed.append(tensor)
+        return tensor
+    elif isinstance(a, Iterable):
+        l = []
+        for _a in a:
+            l.append(_unsqueeze_and_unwrap(_a, plates))
+        if isinstance(a, tuple):
+            return tuple(l)
+        return l
+    elif isinstance(a, Mapping):
+        d = {}
+        for k, _a in a.items():
+            d[k] = _unsqueeze_and_unwrap(_a, plates)
+        return d
+    else:
+        return a
 
-    return tuple(unsqueezed), parents, plates
+
+def _unwrap(*args, **kwargs):
+    parents = []
+    plates: [storch.StochasticTensor] = []
+
+    # Collect parent tensors and plates
+    _collect_parents_and_plates(args, parents, plates)
+    _collect_parents_and_plates(kwargs, parents, plates)
+
+    storch.wrappers._plate_links = plates
+
+    # Unsqueeze and align batched dimensions so that batching works easily.
+    unsqueezed_args = []
+    for t in args:
+        unsqueezed_args.append(_unsqueeze_and_unwrap(t, plates))
+    unsqueezed_kwargs = {}
+    for k, v in kwargs.items():
+        unsqueezed_kwargs[k] = _unsqueeze_and_unwrap(v, plates)
+    return unsqueezed_args, unsqueezed_kwargs, parents, plates
 
 
 def _process_deterministic(o, parents, plates, is_cost):
@@ -72,7 +93,6 @@ def _process_deterministic(o, parents, plates, is_cost):
 
 def _deterministic(fn, is_cost):
     def wrapper(*args, **kwargs):
-        print("start of wrapper", fn)
         if storch.wrappers._context_stochastic:
             # TODO check if we can re-add this
             raise NotImplementedError("It is currently not allowed to open a deterministic context in a stochastic context")
@@ -82,11 +102,9 @@ def _deterministic(fn, is_cost):
 
             # We are already in a deterministic context, no need to wrap or unwrap as only the outer dependencies matter
             return fn(*args, **kwargs)
-        print("Here3")
-        args, parents, plates = _unwrap(*args, **kwargs)
-        print("Here4")
+        args, kwargs, parents, plates = _unwrap(*args, **kwargs)
 
-        if not parents:
+        if not parents and not is_cost:
             return fn(*args, **kwargs)
         storch.wrappers._context_deterministic = True
         outputs = fn(*args, **kwargs)
@@ -138,7 +156,7 @@ def stochastic(fn):
             raise RuntimeError("Cannot call storch.stochastic from within a stochastic or deterministic context.")
         storch.wrappers._context_stochastic = True
         # Save the parents
-        args, parents, plates = _unwrap(*args, **kwargs)
+        args, kwargs, parents, plates = _unwrap(*args, **kwargs)
         storch.wrappers._stochastic_parents = parents
 
         outputs = fn(*args, **kwargs)

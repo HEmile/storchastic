@@ -20,17 +20,16 @@ def loss(v):
 
 
 mu = storch.sample(Normal(mu_prior, 1), n=4)
+print(mu)
 # k = storch.sample(Categorical(probs=[0.5, 0.5]))
 
 agg_v = 0.
 for i in range(2):
     s1, s2 = white_noise(mu)
-    print("blaaa")
     agg_v = agg_v + s1 + s2 * mu
-    print("bloooo")
     loss(agg_v)
 
-storch.backward(debug=False, keep_grads=True)
+storch.backward(debug=True, keep_grads=True)
 # print(mu._accum_grads)
 # print(s1._accum_grads)
 # print(s2._accum_grads)

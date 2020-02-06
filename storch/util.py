@@ -66,25 +66,37 @@ def walk_backward_graph(tensor: torch.Tensor, depth_first=True):
     return _walk_backward_graph(tensor.grad_fn, depth_first)
 
 
-def has_backwards_path(output: torch.Tensor, input: torch.Tensor, depth_first=False):
+def has_backwards_path(output: Tensor, input: Tensor, depth_first=False):
     """
-
+    Returns true if the gradient functions of the torch.Tensor underlying output is connected to the input tensor.
+    This is only run once to compute the possibility of links between two storch.Tensor's. The result is saved into the
+    parent links on storch.Tensor's.
     :param output:
     :param input:
     :param depth_first: Initialized to False as we are usually doing this only for small distances between tensors.
     :return:
     """
-    if not output.grad_fn:
-        return False
-    for p in walk_backward_graph(output, depth_first):
-        if hasattr(p, "variable") and p.variable is input:
+
+    if output.stochastic:
+        outputs = get_distr_parameters(output.distribution)
+    else:
+        outputs = [output._tensor]
+    input = input._tensor
+    for o in outputs:
+        if o is input:
+            # This can happen if the input is a parameter of the output distribution
             return True
-        elif p is input.grad_fn:
-            return True
+        if not o.grad_fn:
+            continue
+        for p in walk_backward_graph(o, depth_first):
+            if hasattr(p, "variable") and p.variable is input:
+                return True
+            elif p is input.grad_fn:
+                return True
     return False
 
 
-def has_differentiable_path(output:Tensor, input: Tensor):
+def has_differentiable_path(output: Tensor, input: Tensor):
     for c in input.walk_children(only_differentiable=True):
         if c is output:
             return True
