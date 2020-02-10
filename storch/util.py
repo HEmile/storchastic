@@ -82,6 +82,8 @@ def has_backwards_path(output: Tensor, input: Tensor, depth_first=False):
     else:
         outputs = [output._tensor]
     input = input._tensor
+    if not input.requires_grad:
+        return False
     for o in outputs:
         if o is input:
             # This can happen if the input is a parameter of the output distribution
@@ -91,7 +93,7 @@ def has_backwards_path(output: Tensor, input: Tensor, depth_first=False):
         for p in walk_backward_graph(o, depth_first):
             if hasattr(p, "variable") and p.variable is input:
                 return True
-            elif p is input.grad_fn:
+            elif input.grad_fn and p is input.grad_fn:
                 return True
     return False
 
@@ -128,3 +130,12 @@ def topological_sort(costs: [DeterministicTensor]) -> [Tensor]:
             if not children:
                 s.append(p)
     return l
+
+
+def tensor_stats(tensor: torch.Tensor):
+    return "shape {} mean {:.3f} std {:.3f} max {:.3f} min {:.3f}".format(tuple(tensor.shape),
+        tensor.mean().item(),
+        tensor.std().item(),
+        tensor.max().item(),
+        tensor.min().item())
+

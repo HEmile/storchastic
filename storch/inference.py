@@ -5,21 +5,28 @@ import torch
 from storch.util import print_graph, get_distr_parameters
 import storch
 from operator import mul
-from itertools import product
+
 from functools import reduce
 from typing import Dict, Optional
 
 _cost_tensors: [DeterministicTensor] = []
 _backward_indices: Dict[StochasticTensor, int] = {}
 _backward_cost: Optional[DeterministicTensor] = None
-_keep_grad: bool = False
+_accum_grad: bool = False
+
 
 def _create_hook(sample: StochasticTensor, tensor: torch.tensor):
     event_shape = list(tensor.shape)
-    def hook(grad:torch.Tensor):
-        if not _keep_grad:
-            return
+    if len(sample.batch_shape) > 0:
+        normalize_factor = 1. / reduce(mul, sample.batch_shape)
+    else:
+        normalize_factor = 1.
+
+    def hook(grad: torch.Tensor):
         accum_grads = sample._accum_grads
+        if not _accum_grad:
+            accum_grads[tensor] = grad
+            return
         if tensor not in accum_grads:
             add_n = [sample.n] if sample.n > 1 else []
             accum_grads[tensor] = grad.new_zeros(add_n + event_shape)
@@ -28,7 +35,9 @@ def _create_hook(sample: StochasticTensor, tensor: torch.tensor):
             indices.append(storch.inference._backward_indices[link])
         indices = tuple(indices)
         offset_indices = 1 if sample.n > 1 else 0
-        accum_grads[tensor][indices] += grad[indices[offset_indices:]]
+        # Unnormalizes the gradient to make them easier to use for computing statistics.
+        accum_grads[tensor][indices] += grad[indices[offset_indices:]] / normalize_factor
+
     return hook
 
 
@@ -57,11 +66,11 @@ def sample(distr: Distribution, method: Method = None, n: int = 1) -> Tensor:
         param.register_hook(_create_hook(s_tensor, param))
     return s_tensor
 
+
 def _keep_grads_backwards(surrounding_node: Tensor, backwards_tensor: torch.Tensor) -> torch.Tensor:
     normalize_factor = 1. / reduce(mul, surrounding_node.batch_shape)
-    ranges = list(map(lambda a: list(range(a)), surrounding_node.batch_shape))
     total_loss = 0.
-    for indices in product(*ranges):
+    for indices in surrounding_node.iterate_batch_indices():
         # Minimize each pass individually to be able to save gradient statistics over multiple runs
         loss = backwards_tensor[indices] * normalize_factor
         zipped_indices = {}
@@ -73,18 +82,18 @@ def _keep_grads_backwards(surrounding_node: Tensor, backwards_tensor: torch.Tens
     return total_loss
 
 
-def backward(retain_graph=False, debug=False, keep_grads=False):
+def backward(retain_graph=False, debug=False, accum_grads=False):
     """
 
     :param retain_graph: If set to False, it will deregister the added cost nodes. Should usually be set to False.
     :param debug: Prints debug information on the backwards call.
-    :param keep_grads: Saves gradient information in stochastic nodes. Note that this is an expensive option as it
+    :param accum_grads: Saves gradient information in stochastic nodes. Note that this is an expensive option as it
     requires doing O(n) backward calls for each stochastic node sampled multiple times. Especially if this is a
     hierarchy of multiple samples.
     :return:
     """
     costs = storch.inference._cost_tensors
-    storch.inference._keep_grad = keep_grads
+    storch.inference._accum_grad = accum_grads
     if debug:
         print_graph(costs)
 
@@ -122,7 +131,7 @@ def backward(retain_graph=False, debug=False, keep_grads=False):
             # backwards call for the costs themselves.
             if additive_terms is not None:
                 # Now mean_cost has the same shape as parent.batch_shape
-                if keep_grads and len(parent.batch_shape) > 0:
+                if accum_grads and len(parent.batch_shape) > 0:
                     total_loss += _keep_grads_backwards(parent, additive_terms)
                 else:
                     at_mean = additive_terms.mean()
@@ -130,7 +139,7 @@ def backward(retain_graph=False, debug=False, keep_grads=False):
                     total_loss += at_mean
 
         # Compute gradients for the cost nodes themselves
-        if keep_grads and len(c.batch_shape) > 0:
+        if accum_grads and len(c.batch_shape) > 0:
             total_loss += _keep_grads_backwards(c, c._tensor)
         else:
             accum_loss += avg_cost
@@ -143,3 +152,7 @@ def backward(retain_graph=False, debug=False, keep_grads=False):
         storch.inference._cost_tensors = []
 
     return total_cost, total_loss
+
+
+def reset():
+    storch.inference._cost_tensors = []

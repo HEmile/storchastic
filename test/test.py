@@ -29,7 +29,7 @@ for i in range(2):
     agg_v = agg_v + s1 + s2 * mu
     loss(agg_v)
 
-storch.backward(debug=True, keep_grads=True)
+storch.backward(debug=True, accum_grads=True)
 # print(mu._accum_grads)
 # print(s1._accum_grads)
 # print(s2._accum_grads)

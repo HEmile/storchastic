@@ -5,6 +5,7 @@ from torch.distributions import Distribution
 from collections import deque
 from typing import Union, List, Tuple
 import builtins
+from itertools import product
 
 _int = builtins.int
 
@@ -37,7 +38,7 @@ class Tensor:
 
     def __str__(self):
         t = "Stochastic" if self.stochastic else ("Cost" if self.is_cost else "Deterministic")
-        return t + " " + str(self._tensor)
+        return t + " " + str(self._tensor.shape)
 
     def _walk(self, expand_fn, depth_first=True, only_differentiable=False, repeat_visited=False, walk_fn=lambda x: x):
         visited = set()
@@ -101,6 +102,13 @@ class Tensor:
 
     def event_dim_indices(self):
         return list(range(len(self.batch_links), self._tensor.dim()))
+
+    def batch_dim_indices(self):
+        return list(range(len(self.batch_links)))
+
+    def iterate_batch_indices(self):
+        ranges = list(map(lambda a: list(range(a)), self.batch_shape))
+        return product(*ranges)
 
     # region UnwrappedFunctions
     # The reason all these functions work and don't go into infinite recursion is because they unwraps
@@ -1001,8 +1009,8 @@ class StochasticTensor(Tensor):
         super().__init__(tensor, parents, batch_links)
         self.sampling_method = sampling_method
         self._requires_grad = requires_grad
-        self.grads = []
         self._accum_grads = {}
+        self._grad = None
 
     @property
     def stochastic(self):
@@ -1016,7 +1024,34 @@ class StochasticTensor(Tensor):
     def grad(self):
         return self._accum_grads
 
-    def mean_grad(self):
-        return torch.mean(self.grads[0])
+    def total_expected_grad(self):
+        r = []
+        indices = self.batch_dim_indices()
+        for tensor, grad in self._accum_grads.items():
+            if grad.dim() == tensor.dim():
+                r.append(grad)
+            else:
+                r.append(grad.mean(dim=indices))
+        return r
+
+    def total_variance_grad(self):
+        """
+        Computes the total variance on the gradient of the parameters of this distribution over all simulations .
+        :return:
+        """
+        r = []
+        indices = self.batch_dim_indices()
+        for tensor, grad in self._accum_grads.items():
+            if grad.dim() == tensor.dim():
+                raise ValueError("There are no batched dimensions to take statistics over. Make sure to call backwards "
+                                 "with accum_grad=True")
+            expected = grad.mean(dim=indices)
+            diff = grad - expected
+            squared_diff = diff * diff
+            sse = squared_diff.sum(dim=indices)
+            r.append(sse.mean())
+        return r
+
+
 
 from storch.util import has_backwards_path
