@@ -63,12 +63,7 @@ class VAE(nn.Module):
         h3 = storch.relu(self.fc3(z))
         return self.fc4(h3).sigmoid()
 
-    @cost
     def KLD(self, mu, logvar):
-        # see Appendix B from VAE paper:
-        # Kingma and Welling. Auto-Encoding Variational Bayes. ICLR, 2014
-        # https://arxiv.org/abs/1312.6114
-        # 0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
         return -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
 
     def forward(self, x):
@@ -77,58 +72,42 @@ class VAE(nn.Module):
         KLD = self.KLD(mu, logvar)
         std = torch.exp(0.5 * logvar)
         dist = Normal(mu, std)
-        z = sample(dist, method=storch.method.ScoreFunction(), n=5)
-        return self.decode(z), KLD, z
+        # z = sample(dist, method=storch.method.ScoreFunction(), n=100)
+        z = dist.sample()
+        log_prob = dist.log_prob(z)
+        return self.decode(z), KLD, z, log_prob.sum()
 
 
 model = VAE().to(device)
-optimizer = optim.Adam(model.parameters(), lr=1e-3)
+optimizer = optim.Adam(model.parameters(), lr=1e-5)
 
 
 # Reconstruction + KL divergence losses summed over all elements and batch
 def loss_function(recon_x, x):
     BCE = storch.nn.b_binary_cross_entropy(recon_x, x.view(-1, 784), reduction="sum")
-
+    print(BCE)
     return BCE
 
 
 def train(epoch):
     model.train()
-    train_loss = 0
     storch.reset()
+    train_loss = 0
     for batch_idx, (data, _) in enumerate(train_loader):
         data = data.to(device)
         optimizer.zero_grad()
-        recon_batch, KLD, z = model(data)
+        recon_batch, KLD, z, log_prob = model(data)
+        print(log_prob)
         BCE = loss_function(recon_batch, data)
-        storch.add_cost(BCE)
-        cond_log = batch_idx % args.log_interval == 0
-        cost, loss = backward(debug=False, accum_grads=cond_log)
+        loss = BCE * log_prob + KLD
+        loss.backward()
         train_loss += loss.item()
         optimizer.step()
-        z.total_expected_grad()
-        if cond_log:
-            grads_mean = []
-            grads_std = []
-            for i in range(10):
-                optimizer.zero_grad()
-                recon_batch, KLD, z = model(data)
-                BCE = loss_function(recon_batch, data)
-                storch.add_cost(BCE)
-                cost, loss = backward()
-                expected_grad = z.total_expected_grad()
-                grads_mean.append(expected_grad[0].unsqueeze(0))
-                grads_std.append(expected_grad[1].unsqueeze(0))
-            def _var(t):
-                m = torch.cat(t)
-                mean = m.mean(0)
-                squared_diff = (m - mean)**2
-                sse = squared_diff.sum(0)
-                return sse.mean()
-            print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}\tCost: {:.6f}\tMean var {:.4E}\t Std var {:.4E}'.format(
+        if batch_idx % args.log_interval == 0:
+            print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
                 epoch, batch_idx * len(data), len(train_loader.dataset),
                 100. * batch_idx / len(train_loader),
-                loss.item() / len(data), cost.item() / len(data), _var(grads_mean), _var(grads_std)))
+                loss.item() / len(data)))
 
     print('====> Epoch: {} Average loss: {:.4f}'.format(
           epoch, train_loss / len(train_loader.dataset)))
@@ -144,10 +123,10 @@ def test(epoch):
             test_loss += (loss_function(recon_batch, data).detach_tensor() + KLD.detach_tensor()).mean()
             if i == 0:
                 n = min(data.size(0), 8)
-                # comparison = storch.cat([data[:n],
-                #                       recon_batch.detach_tensor()[0].view(args.batch_size, 1, 28, 28)[:n]]) # Take the first sample (0)
-                # deterministic(save_image)(comparison.cpu(),
-                #          'results/reconstruction_' + str(epoch) + '.png', nrow=n)
+                comparison = storch.cat([data[:n],
+                                      recon_batch.detach_tensor()[0].view(args.batch_size, 1, 28, 28)[:n]]) # Take the first sample (0)
+                deterministic(save_image)(comparison.cpu(),
+                         'results/reconstruction_' + str(epoch) + '.png', nrow=n)
 
     test_loss /= len(test_loader.dataset)
     print('====> Test set loss: {:.4f}'.format(test_loss))

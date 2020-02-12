@@ -2,15 +2,19 @@ from __future__ import annotations
 import storch
 import torch
 from collections.abc import Iterable, Mapping
+
 # from storch.tensor import Tensor, DeterministicTensor, StochasticTensor
 
 _context_stochastic = False
 _context_deterministic = False
 _stochastic_parents = []
+_context_name = None
 _plate_links = []
+
 
 def is_iterable(a):
     return isinstance(a, Iterable) and not isinstance(a, torch.Tensor) and not isinstance(a, str)
+
 
 def _collect_parents_and_plates(a, parents: [storch.Tensor], plates: [storch.StochasticTensor]):
     if isinstance(a, storch.Tensor):
@@ -24,6 +28,7 @@ def _collect_parents_and_plates(a, parents: [storch.Tensor], plates: [storch.Sto
     elif isinstance(a, Mapping):
         for _a in a.values():
             _collect_parents_and_plates(_a, parents, plates)
+
 
 def _unsqueeze_and_unwrap(a, plates: [storch.StochasticTensor]):
     if isinstance(a, storch.Tensor):
@@ -82,16 +87,17 @@ def _unwrap(*args, **kwargs):
     return unsqueezed_args, unsqueezed_kwargs, parents, plates
 
 
-def _process_deterministic(o, parents, plates, is_cost):
+def _process_deterministic(o, parents, plates, is_cost, name):
     if o is None:
         return
     if isinstance(o, storch.Tensor):
         raise RuntimeError("Creation of storch Tensor within deterministic context")
     if isinstance(o, torch.Tensor):
-        t = storch.DeterministicTensor(o, parents, plates, is_cost)
+        t = storch.DeterministicTensor(o, parents, plates, is_cost, name=name)
         if is_cost and t.event_shape != ():
             # TODO: Make sure the o.size() check takes into account the size of the sample.
-            raise ValueError("Event shapes (ie, non batched dimensions) of cost nodes have to be single floating point numbers. ")
+            raise ValueError(
+                "Event shapes (ie, non batched dimensions) of cost nodes have to be single floating point numbers. ")
         return t
     raise NotImplementedError("Handling of other types of return values is currently not implemented: ", o)
 
@@ -100,7 +106,8 @@ def _deterministic(fn, is_cost):
     def wrapper(*args, **kwargs):
         if storch.wrappers._context_stochastic:
             # TODO check if we can re-add this
-            raise NotImplementedError("It is currently not allowed to open a deterministic context in a stochastic context")
+            raise NotImplementedError(
+                "It is currently not allowed to open a deterministic context in a stochastic context")
         if storch.wrappers._context_deterministic:
             if is_cost:
                 raise RuntimeError("Cannot call storch.cost from within a deterministic context.")
@@ -116,12 +123,13 @@ def _deterministic(fn, is_cost):
         if is_iterable(outputs):
             n_outputs = []
             for o in outputs:
-                n_outputs.append(_process_deterministic(o, parents, plates, is_cost))
+                n_outputs.append(_process_deterministic(o, parents, plates, is_cost, fn.__name__))
             outputs = n_outputs
         else:
-            outputs = _process_deterministic(outputs, parents, plates, is_cost)
+            outputs = _process_deterministic(outputs, parents, plates, is_cost, fn.__name__)
         storch.wrappers._context_deterministic = False
         return outputs
+
     return wrapper
 
 
@@ -156,10 +164,12 @@ def stochastic(fn):
     :param fn:
     :return:
     """
+
     def wrapper(*args, **kwargs):
         if storch.wrappers._context_stochastic or storch.wrappers._context_deterministic:
             raise RuntimeError("Cannot call storch.stochastic from within a stochastic or deterministic context.")
         storch.wrappers._context_stochastic = True
+        storch.wrappers._context_name = fn.__name__
         # Save the parents
         args, kwargs, parents, plates = _unwrap(*args, **kwargs)
         storch.wrappers._stochastic_parents = parents
@@ -175,5 +185,7 @@ def stochastic(fn):
             processed_outputs = _process_stochastic(outputs, parents, plates)
         storch.wrappers._context_stochastic = False
         storch.wrappers._stochastic_parents = []
+        storch.wrappers._context_name = None
         return processed_outputs
+
     return wrapper

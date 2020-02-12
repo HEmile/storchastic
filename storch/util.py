@@ -1,24 +1,31 @@
-from storch.tensor import Tensor, DeterministicTensor
+from storch.tensor import Tensor, DeterministicTensor, StochasticTensor
 from torch.distributions import Distribution
 import torch
 
 def print_graph(costs: [DeterministicTensor]):
     nodes = topological_sort(costs)
-    counters = [1, 1, 1]
+    counters = {"s": 1, "c": 1, "d": 1}
     names = {}
 
     def get_name(node, names):
         if node in names:
             return names[node]
-        if node.stochastic:
-            name = "s" + str(counters[0])
-            counters[0] += 1
+        if node.name:
+            if node.name not in names.values():
+                counters[node.name] = 1
+                name = node.name
+            else:
+                name = node.name + str(counters[node.name])
+                counters[node.name] += 1
+        elif node.stochastic:
+            name = "s" + str(counters["s"])
+            counters["s"] += 1
         elif node.is_cost:
-            name = "c" + str(counters[1])
-            counters[1] += 1
+            name = "c" + str(counters["c"])
+            counters["c"] += 1
         else:
-            name = "d" + str(counters[2])
-            counters[2] += 1
+            name = "d" + str(counters["d"])
+            counters["d"] += 1
         names[node] = name
         return name
 
@@ -30,13 +37,13 @@ def print_graph(costs: [DeterministicTensor]):
             print(get_name(p, names) + edge + name)
 
 
-def get_distr_parameters(d: Distribution, filter_requires_grad=True) -> [torch.Tensor]:
+def get_distr_parameters(d: Distribution, filter_requires_grad=True) -> [(str, torch.Tensor)]:
     params = []
     for k in d.arg_constraints:
         try:
             p = getattr(d, k)
             if isinstance(p, torch.Tensor) and (not filter_requires_grad or p.requires_grad):
-                params.append(p)
+                params.append((k, p))
         except AttributeError:
             pass
     return params
@@ -77,12 +84,14 @@ def has_backwards_path(output: Tensor, input: Tensor, depth_first=False):
     :return:
     """
 
-    if output.stochastic:
+    if isinstance(output, StochasticTensor):
         outputs = get_distr_parameters(output.distribution)
     else:
-        outputs = [output._tensor]
+        outputs = [(None, output._tensor)]
     input = input._tensor
-    for o in outputs:
+    if not input.requires_grad:
+        return False
+    for _, o in outputs:
         if o is input:
             # This can happen if the input is a parameter of the output distribution
             return True
@@ -91,7 +100,7 @@ def has_backwards_path(output: Tensor, input: Tensor, depth_first=False):
         for p in walk_backward_graph(o, depth_first):
             if hasattr(p, "variable") and p.variable is input:
                 return True
-            elif p is input.grad_fn:
+            elif input.grad_fn and p is input.grad_fn:
                 return True
     return False
 
@@ -128,3 +137,12 @@ def topological_sort(costs: [DeterministicTensor]) -> [Tensor]:
             if not children:
                 s.append(p)
     return l
+
+
+def tensor_stats(tensor: torch.Tensor):
+    return "shape {} mean {:.3f} std {:.3f} max {:.3f} min {:.3f}".format(tuple(tensor.shape),
+        tensor.mean().item(),
+        tensor.std().item(),
+        tensor.max().item(),
+        tensor.min().item())
+

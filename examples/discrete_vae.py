@@ -10,9 +10,9 @@ from torch import nn, optim
 from torch.nn import functional as F
 from torchvision import datasets, transforms
 from torchvision.utils import save_image
-from storch import sample, deterministic, cost, backward
+from storch import deterministic, cost, backward
 import storch
-from torch.distributions import Normal
+from torch.distributions import OneHotCategorical, RelaxedOneHotCategorical
 
 torch.manual_seed(0)
 
@@ -48,37 +48,45 @@ class VAE(nn.Module):
     def __init__(self):
         super(VAE, self).__init__()
 
-        self.fc1 = nn.Linear(784, 400)
-        self.fc21 = nn.Linear(400, 20)
-        self.fc22 = nn.Linear(400, 20)
-        self.fc3 = nn.Linear(20, 400)
-        self.fc4 = nn.Linear(400, 784)
+        self.sampling_method = storch.method.GumbelSoftmax(min_temperature=0.5)
+
+        self.fc1 = nn.Linear(784, 512)
+        self.fc2 = nn.Linear(512, 256)
+        self.fc3 = nn.Linear(256, 200)
+        self.fc4 = nn.Linear(200, 256)
+        self.fc5 = nn.Linear(256, 512)
+        self.fc6 = nn.Linear(512, 784)
 
     def encode(self, x):
         h1 = F.relu(self.fc1(x))
-        return self.fc21(h1), self.fc22(h1)
+        h2 = F.relu(self.fc2(h1))
+        return self.fc3(h2)
 
     @deterministic
     def decode(self, z):
-        h3 = storch.relu(self.fc3(z))
-        return self.fc4(h3).sigmoid()
+        h3 = storch.relu(self.fc4(z))
+        h4 = storch.relu(self.fc5(h3))
+        return self.fc6(h4).sigmoid()
 
     @cost
-    def KLD(self, mu, logvar):
+    def KLD(self, p, q):
         # see Appendix B from VAE paper:
         # Kingma and Welling. Auto-Encoding Variational Bayes. ICLR, 2014
         # https://arxiv.org/abs/1312.6114
         # 0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
-        return -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+        div = torch.distributions.kl_divergence(p, q)
+        return div.sum()
 
     def forward(self, x):
-        mu, logvar = self.encode(x.view(-1, 784))
-        # Here!
-        KLD = self.KLD(mu, logvar)
-        std = torch.exp(0.5 * logvar)
-        dist = Normal(mu, std)
-        z = sample(dist, method=storch.method.ScoreFunction(), n=5)
-        return self.decode(z), KLD, z
+        logits = self.encode(x.view(-1, 784))
+        logits = logits.reshape(logits.shape[:-1] + (20, 10))
+        straight_through = False
+        q = OneHotCategorical(logits=logits)
+        p = OneHotCategorical(probs=torch.ones_like(logits) / (1./10.))
+        KLD = self.KLD(q, p)
+        z = self.sampling_method(q, n=5)
+        zp = z.reshape(z.shape[:-2] + (200,))
+        return self.decode(zp), KLD, z
 
 
 model = VAE().to(device)
@@ -108,8 +116,7 @@ def train(epoch):
         optimizer.step()
         z.total_expected_grad()
         if cond_log:
-            grads_mean = []
-            grads_std = []
+            grads_logits = []
             for i in range(10):
                 optimizer.zero_grad()
                 recon_batch, KLD, z = model(data)
@@ -117,18 +124,17 @@ def train(epoch):
                 storch.add_cost(BCE)
                 cost, loss = backward()
                 expected_grad = z.total_expected_grad()
-                grads_mean.append(expected_grad[0].unsqueeze(0))
-                grads_std.append(expected_grad[1].unsqueeze(0))
+                grads_logits.append(expected_grad["logits"].unsqueeze(0))
             def _var(t):
                 m = torch.cat(t)
                 mean = m.mean(0)
                 squared_diff = (m - mean)**2
                 sse = squared_diff.sum(0)
                 return sse.mean()
-            print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}\tCost: {:.6f}\tMean var {:.4E}\t Std var {:.4E}'.format(
+            print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}\tCost: {:.6f}\t Logits var {:.4E}'.format(
                 epoch, batch_idx * len(data), len(train_loader.dataset),
                 100. * batch_idx / len(train_loader),
-                loss.item() / len(data), cost.item() / len(data), _var(grads_mean), _var(grads_std)))
+                loss.item() / len(data), cost.item() / len(data), _var(grads_logits)))
 
     print('====> Epoch: {} Average loss: {:.4f}'.format(
           epoch, train_loss / len(train_loader.dataset)))
@@ -157,7 +163,7 @@ if __name__ == "__main__":
         train(epoch)
         test(epoch)
         with torch.no_grad():
-            im_sample = torch.randn(64, 20).to(device)
+            im_sample = torch.randn(64, 200).to(device)
             im_sample = model.decode(im_sample).cpu()
             save_image(im_sample.view(64, 1, 28, 28),
                        'results/sample_' + str(epoch) + '.png')

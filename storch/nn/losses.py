@@ -3,9 +3,12 @@ import torch
 from storch import deterministic
 from torch.nn import _reduction as _Reduction
 from torch._C import _infer_size
+from storch.typing import AnyTensor, Dims
+from typing import Optional
 
-def binary_cross_entropy(input: storch.Tensor, target: torch.Tensor, weight=None, reduction='mean'):
-    r"""Function that measures the Binary Cross Entropy
+
+def b_binary_cross_entropy(input: AnyTensor, target: torch.Tensor, weight=None, reduction: str = 'mean'):
+    r"""Function that measures the Binary Cross Entropy in a batched way
     between the target and the output.
 
     See :class:`~torch.nn.BCELoss` for details.
@@ -35,12 +38,21 @@ def binary_cross_entropy(input: storch.Tensor, target: torch.Tensor, weight=None
 
         >>> input = torch.randn((3, 2), requires_grad=True)
         >>> target = torch.rand((3, 2), requires_grad=False)
-        >>> loss = F.binary_cross_entropy(F.sigmoid(input), target)
+        >>> loss = b_binary_cross_entropy(F.sigmoid(input), target)
         >>> loss.backward()
     """
-    if target.size() != input.event_shape:
-        raise ValueError("Using a target size ({}) that is different to the input size ({}). "
-                      "Please ensure they have the same size.".format(target.size(), input.event_shape))
+    if isinstance(input, storch.Tensor):
+        indices = input.event_dim_indices()
+        if target.size() != input.event_shape:
+            raise ValueError("Using a target size ({}) that is different to the input size ({}). "
+                             "Please ensure they have the same size.".format(target.size(), input.event_shape))
+    else:
+        offset_dim = input.dim() - target.dim()
+        indices = list(range(input.dim() - target.dim()))
+        for i in range(target.dim()):
+            if input.shape[offset_dim + i] != target.shape[i]:
+                raise ValueError("Input and target are invalid for broadcasting.")
+
 
     if weight is not None:
         new_size = _infer_size(target.size(), weight.size())
@@ -50,14 +62,13 @@ def binary_cross_entropy(input: storch.Tensor, target: torch.Tensor, weight=None
 
     @deterministic
     def _loss(input):
-        return -weight * (target * input.log() + (1. - target) * (1. - input).log())
+        epsilon = 1e-6
+        return -weight * (target * (input + epsilon).log() + (1. - target) * (1. - input + epsilon).log())
+
     unreduced = _loss(input)
-    indices = input.event_dim_indices()
     if reduction == "mean":
         return unreduced.mean(dim=indices)
     elif reduction == "sum":
         return unreduced.sum(dim=indices)
     elif reduction == "none":
         return unreduced
-
-
