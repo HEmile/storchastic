@@ -10,7 +10,7 @@ from torch import nn, optim
 from torch.nn import functional as F
 from torchvision import datasets, transforms
 from torchvision.utils import save_image
-from storch import sample, deterministic, cost, backward
+from storch import deterministic, cost, backward
 import storch
 from torch.distributions import OneHotCategorical, RelaxedOneHotCategorical
 
@@ -48,6 +48,8 @@ class VAE(nn.Module):
     def __init__(self):
         super(VAE, self).__init__()
 
+        self.sampling_method = storch.method.GumbelSoftmax(min_temperature=0.5)
+
         self.fc1 = nn.Linear(784, 512)
         self.fc2 = nn.Linear(512, 256)
         self.fc3 = nn.Linear(256, 200)
@@ -82,7 +84,7 @@ class VAE(nn.Module):
         q = OneHotCategorical(logits=logits)
         p = OneHotCategorical(probs=torch.ones_like(logits) / (1./10.))
         KLD = self.KLD(q, p)
-        z = sample(q, method=storch.method.ScoreFunction(), n=5)
+        z = self.sampling_method(q, n=5)
         zp = z.reshape(z.shape[:-2] + (200,))
         return self.decode(zp), KLD, z
 
@@ -161,7 +163,7 @@ if __name__ == "__main__":
         train(epoch)
         test(epoch)
         with torch.no_grad():
-            im_sample = torch.randn(64, 20).to(device)
+            im_sample = torch.randn(64, 200).to(device)
             im_sample = model.decode(im_sample).cpu()
             save_image(im_sample.view(64, 1, 28, 28),
                        'results/sample_' + str(epoch) + '.png')

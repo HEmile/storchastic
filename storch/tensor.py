@@ -6,12 +6,13 @@ from collections import deque
 from typing import Union, List, Tuple, Dict
 import builtins
 from itertools import product
+from typing import Optional
 
 _int = builtins.int
 
 class Tensor:
 
-    def __init__(self, tensor: torch.Tensor, parents: [Tensor], batch_links: [StochasticTensor]):
+    def __init__(self, tensor: torch.Tensor, parents: [Tensor], batch_links: [StochasticTensor], name: Optional[str] = None):
         for i, plate in enumerate(batch_links):
             if len(tensor.shape) <= i:
                 raise ValueError(
@@ -23,7 +24,7 @@ class Tensor:
                     "Storch Tensors should take into account their surrounding plates. Violated at dimension " + str(i)
                     + " and plate size " + str(plate.n) + ". Instead, it was " + str(tensor.shape[i]))
 
-
+        self.name = name
         self._tensor = tensor
         self._parents = []
         for p in parents:
@@ -984,11 +985,13 @@ class Tensor:
     #endregion
 
 class DeterministicTensor(Tensor):
-    def __init__(self, tensor: torch.Tensor, parents, batch_links: [StochasticTensor], is_cost: bool):
-        super().__init__(tensor, parents, batch_links)
+    def __init__(self, tensor: torch.Tensor, parents, batch_links: [StochasticTensor], is_cost: bool, name: Optional[str] = None):
+        super().__init__(tensor, parents, batch_links, name)
         self._is_cost = is_cost
         if is_cost:
             storch.inference._cost_tensors.append(self)
+            if not name:
+                raise ValueError("Added a cost node without providing a name")
 
     @property
     def stochastic(self) -> bool:
@@ -1001,12 +1004,12 @@ class DeterministicTensor(Tensor):
 
 class StochasticTensor(Tensor):
     def __init__(self, tensor: torch.Tensor, parents, sampling_method: storch.Method, batch_links: [StochasticTensor],
-                 distribution: Distribution, requires_grad: bool, n: int):
+                 distribution: Distribution, requires_grad: bool, n: int, name: Optional[str] = None):
         if n > 1:
             batch_links.insert(0, self)
         self.n = n
         self.distribution = distribution
-        super().__init__(tensor, parents, batch_links)
+        super().__init__(tensor, parents, batch_links, name)
         self.sampling_method = sampling_method
         self._requires_grad = requires_grad
         self._accum_grads = {}
