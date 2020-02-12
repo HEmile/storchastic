@@ -3,7 +3,7 @@ import torch
 import storch
 from torch.distributions import Distribution
 from collections import deque
-from typing import Union, List, Tuple
+from typing import Union, List, Tuple, Dict
 import builtins
 from itertools import product
 
@@ -1024,22 +1024,22 @@ class StochasticTensor(Tensor):
     def grad(self):
         return self._accum_grads
 
-    def total_expected_grad(self):
-        r = []
+    def total_expected_grad(self) -> Dict[str, torch.Tensor]:
+        r = {}
         indices = self.batch_dim_indices()
         for tensor, grad in self._accum_grads.items():
             if grad.dim() == tensor.dim():
-                r.append(grad)
+                r[tensor.param_name] = grad
             else:
-                r.append(grad.mean(dim=indices))
+                r[tensor.param_name] = grad.mean(dim=indices)
         return r
 
-    def total_variance_grad(self):
+    def total_variance_grad(self) -> Dict[str, torch.Tensor]:
         """
         Computes the total variance on the gradient of the parameters of this distribution over all simulations .
         :return:
         """
-        r = []
+        r = {}
         indices = self.batch_dim_indices()
         for tensor, grad in self._accum_grads.items():
             if grad.dim() == tensor.dim():
@@ -1049,7 +1049,7 @@ class StochasticTensor(Tensor):
             diff = grad - expected
             squared_diff = diff * diff
             sse = squared_diff.sum(dim=indices)
-            r.append(sse.mean())
+            r[tensor.param_name] = sse.mean()
         return r
 
 

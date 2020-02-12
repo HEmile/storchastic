@@ -1,6 +1,7 @@
-from torch.distributions import Distribution
+from torch.distributions import Distribution, OneHotCategorical, Bernoulli
 from storch.tensor import Tensor, StochasticTensor, DeterministicTensor
-from storch.method import Method, Infer, ScoreFunction
+from storch.typing import DiscreteDistribution
+from storch.method import Method, Infer, ScoreFunction, GumbelSoftmax
 import torch
 from storch.util import print_graph, get_distr_parameters
 import storch
@@ -15,8 +16,9 @@ _backward_cost: Optional[DeterministicTensor] = None
 _accum_grad: bool = False
 
 
-def _create_hook(sample: StochasticTensor, tensor: torch.tensor):
+def _create_hook(sample: StochasticTensor, tensor: torch.tensor, name: str):
     event_shape = list(tensor.shape)
+    tensor.param_name = name
     if len(sample.batch_shape) > 0:
         normalize_factor = 1. / reduce(mul, sample.batch_shape)
     else:
@@ -52,6 +54,8 @@ def sample(distr: Distribution, method: Method = None, n: int = 1) -> Tensor:
     if not method:
         if distr.has_rsample:
             method = Infer()
+        elif isinstance(distr, OneHotCategorical) or isinstance(distr, Bernoulli):
+            method = GumbelSoftmax()
         else:
             method = ScoreFunction()
     params = get_distr_parameters(distr, filter_requires_grad=True)
@@ -61,9 +65,9 @@ def sample(distr: Distribution, method: Method = None, n: int = 1) -> Tensor:
         tensor = tensor.squeeze(0)
     plates = storch.wrappers._plate_links.copy()
     s_tensor = StochasticTensor(tensor, storch.wrappers._stochastic_parents, method, plates, distr, len(params) > 0, n)
-    for param in params:
+    for name, param in params:
         # TODO: Possibly could find the wrong gradients here if multiple distributions use the same parameter?
-        param.register_hook(_create_hook(s_tensor, param))
+        param.register_hook(_create_hook(s_tensor, param, name))
     return s_tensor
 
 
