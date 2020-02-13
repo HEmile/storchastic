@@ -53,8 +53,12 @@ class Method(ABC, torch.nn.Module):
         if n == 1:
             tensor = tensor.squeeze(0)
         plates = storch.wrappers._plate_links.copy()
+        name = None
+        if storch.wrappers._context_name:
+            name = storch.wrappers._context_name + "_" + str(storch.wrappers._context_amt_samples)
+            storch.wrappers._context_amt_samples += 1
         s_tensor = StochasticTensor(tensor, storch.wrappers._stochastic_parents, self, plates, distr, len(params) > 0,
-                                    n, storch.wrappers._context_name)
+                                    n, name)
         for name, param in params:
             # TODO: Possibly could find the wrong gradients here if multiple distributions use the same parameter?
             # This maybe requires copying the tensor hm...
@@ -62,6 +66,7 @@ class Method(ABC, torch.nn.Module):
         return s_tensor
 
     def _estimator(self, tensor: StochasticTensor, cost_node: DeterministicTensor, costs: torch.Tensor) -> Optional[torch.Tensor]:
+        # For docs: costs here is aligned with the StochasticTensor, that's why there's two different things.
         self._estimation_triples.append((tensor, cost_node, costs))
         return self.estimator(tensor, cost_node, costs)
 
@@ -178,6 +183,11 @@ class GumbelSoftmax(Method):
 
 
 class ScoreFunction(Method):
+    def __init__(self, exponential_decay: float = 0.95, use_baseline=True):
+        super().__init__()
+        self.register_buffer("exponential_decay", torch.tensor(exponential_decay))
+        self.use_baseline = use_baseline
+
     def sample_tensor(self, distr: Distribution, n: int) -> torch.Tensor:
         return distr.sample((n, ))
 
@@ -185,8 +195,32 @@ class ScoreFunction(Method):
         log_prob = tensor.distribution.log_prob(tensor._tensor)
         # Sum out over the even shape
         log_prob = log_prob.sum(dim=list(range(len(tensor.batch_links), len(log_prob.shape))))
+        baseline_name = "ma_" + cost_node.name
+        baseline = getattr(self, baseline_name, 0.) if self.use_baseline else 0.
+        costs = costs - baseline
         return log_prob * costs.detach()
 
     def update_parameters(self, result_triples: [(StochasticTensor, DeterministicTensor, torch.Tensor)]):
-        # TODO
-        pass
+        if not self.training or not self.use_baseline:
+            return
+        # Updates the baselines used
+        new_costs = {}
+        for _, c_node, _ in result_triples:
+            avg_cost = c_node._tensor.mean()
+            if not c_node.name in new_costs:
+                new_costs[c_node.name] = (avg_cost, 1)
+            else:
+                cur_sum, amt = new_costs[c_node.name]
+                new_costs[c_node.name] = (cur_sum + avg_cost, amt + 1)
+        avgs = {}
+        for k, v in new_costs.items():
+            sum, n = v
+            avgs[k] = sum / n
+
+        if self.iterations == 1:
+            for k, avg in avgs.items():
+                self.register_buffer("ma_" + k, avg)
+        else:
+            for k, avg in avgs.items():
+                setattr(self, "ma_" + k, self.exponential_decay * getattr(self, "ma_" + k)
+                        + (1 - self.exponential_decay) * avg)

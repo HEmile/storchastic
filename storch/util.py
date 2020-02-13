@@ -13,18 +13,18 @@ def print_graph(costs: [DeterministicTensor]):
         if node.name:
             if node.name not in names.values():
                 counters[node.name] = 1
-                name = node.name
+                name = node.name + "[" + str(0) + "]"
             else:
-                name = node.name + str(counters[node.name])
+                name = node.name + "[" + str(counters[node.name]) + "]"
                 counters[node.name] += 1
         elif node.stochastic:
-            name = "s" + str(counters["s"])
+            name = "s" + "[" + str(counters["s"]) + "]"
             counters["s"] += 1
         elif node.is_cost:
-            name = "c" + str(counters["c"])
+            name = "c" + "[" + str(counters["c"]) + "]"
             counters["c"] += 1
         else:
-            name = "d" + str(counters["d"])
+            name = "d" + "[" + str(counters["d"]) + "]"
             counters["d"] += 1
         names[node] = name
         return name
@@ -32,6 +32,8 @@ def print_graph(costs: [DeterministicTensor]):
     for node in nodes:
         name = get_name(node, names)
         print(name, node)
+    for node in nodes:
+        name = get_name(node, names)
         for p, differentiable in node._parents:
             edge = "-D->" if differentiable else "-X->"
             print(get_name(p, names) + edge + name)

@@ -13,13 +13,12 @@ _backward_cost: Optional[DeterministicTensor] = None
 _accum_grad: bool = False
 
 
-def add_cost(cost: Tensor, name: Optional[str] = None):
+def add_cost(cost: Tensor, name: str):
     if cost.event_shape != ():
         raise ValueError("Can only register cost functions with empty event shapes")
-    if not cost.name:
-        if not name:
-            raise ValueError("No name provided to register cost node")
-        cost.name = name
+    if not name:
+        raise ValueError("No name provided to register cost node. Make sure to register an unique name with the cost.")
+    cost.name = name
     cost._is_cost = True
     storch.inference._cost_tensors.append(cost)
 

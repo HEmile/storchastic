@@ -10,7 +10,7 @@ from torch import nn, optim
 from torch.nn import functional as F
 from torchvision import datasets, transforms
 from torchvision.utils import save_image
-from storch import sample, deterministic, cost, backward
+from storch import deterministic, cost, backward
 import storch
 from torch.distributions import Normal
 
@@ -48,6 +48,8 @@ class VAE(nn.Module):
     def __init__(self):
         super(VAE, self).__init__()
 
+        self.method = storch.method.Reparameterization()
+
         self.fc1 = nn.Linear(784, 400)
         self.fc21 = nn.Linear(400, 20)
         self.fc22 = nn.Linear(400, 20)
@@ -77,7 +79,7 @@ class VAE(nn.Module):
         KLD = self.KLD(mu, logvar)
         std = torch.exp(0.5 * logvar)
         dist = Normal(mu, std)
-        z = sample(dist, method=storch.method.ScoreFunction(), n=5)
+        z = self.method(dist, n=5)
         return self.decode(z), KLD, z
 
 
@@ -86,6 +88,7 @@ optimizer = optim.Adam(model.parameters(), lr=1e-3)
 
 
 # Reconstruction + KL divergence losses summed over all elements and batch
+@cost
 def loss_function(recon_x, x):
     BCE = storch.nn.b_binary_cross_entropy(recon_x, x.view(-1, 784), reduction="sum")
 
@@ -101,7 +104,7 @@ def train(epoch):
         optimizer.zero_grad()
         recon_batch, KLD, z = model(data)
         BCE = loss_function(recon_batch, data)
-        storch.add_cost(BCE)
+        # storch.add_cost(BCE)
         cond_log = batch_idx % args.log_interval == 0
         cost, loss = backward(debug=False, accum_grads=cond_log)
         train_loss += loss.item()

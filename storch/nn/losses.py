@@ -48,7 +48,7 @@ def b_binary_cross_entropy(input: AnyTensor, target: torch.Tensor, weight=None, 
                              "Please ensure they have the same size.".format(target.size(), input.event_shape))
     else:
         offset_dim = input.dim() - target.dim()
-        indices = list(range(input.dim() - target.dim()))
+        indices = list(range(input.dim() - target.dim(), input.dim()))
         for i in range(target.dim()):
             if input.shape[offset_dim + i] != target.shape[i]:
                 raise ValueError("Input and target are invalid for broadcasting.")

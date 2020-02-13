@@ -11,6 +11,7 @@ theta = torch.tensor([4., 5])
 method = storch.method.Infer(Normal)
 score_method = storch.method.ScoreFunction()
 
+
 @storch.stochastic
 def white_noise(mu):
     return method(Normal(mu, 1), n=1), method(Normal(-mu, 1), n=3)
@@ -28,7 +29,9 @@ print(mu)
 agg_v = 0.
 for i in range(2):
     s1, s2 = white_noise(mu)
-    agg_v = agg_v + s1 + s2 * mu
+    plus = lambda a, b: a + b
+    plus = storch.deterministic(plus)
+    agg_v = plus(agg_v, s1) + s2 * mu
     loss(agg_v)
 
 storch.backward(debug=True, accum_grads=True)

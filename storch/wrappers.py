@@ -9,6 +9,7 @@ _context_stochastic = False
 _context_deterministic = False
 _stochastic_parents = []
 _context_name = None
+_context_amt_samples = 0
 _plate_links = []
 
 
@@ -123,7 +124,7 @@ def _deterministic(fn, is_cost):
         if is_iterable(outputs):
             n_outputs = []
             for o in outputs:
-                n_outputs.append(_process_deterministic(o, parents, plates, is_cost, fn.__name__))
+                n_outputs.append(_process_deterministic(o, parents, plates, is_cost, fn.__name__ + str(len(n_outputs))))
             outputs = n_outputs
         else:
             outputs = _process_deterministic(outputs, parents, plates, is_cost, fn.__name__)
@@ -170,6 +171,7 @@ def stochastic(fn):
             raise RuntimeError("Cannot call storch.stochastic from within a stochastic or deterministic context.")
         storch.wrappers._context_stochastic = True
         storch.wrappers._context_name = fn.__name__
+        storch.wrappers._context_amt_samples = 0
         # Save the parents
         args, kwargs, parents, plates = _unwrap(*args, **kwargs)
         storch.wrappers._stochastic_parents = parents

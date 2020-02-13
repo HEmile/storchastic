@@ -48,7 +48,8 @@ class VAE(nn.Module):
     def __init__(self):
         super(VAE, self).__init__()
 
-        self.sampling_method = storch.method.GumbelSoftmax(min_temperature=0.5)
+        # self.sampling_method = storch.method.ScoreFunction(use_baseline=True)
+        self.sampling_method = storch.method.GumbelSoftmax()
 
         self.fc1 = nn.Linear(784, 512)
         self.fc2 = nn.Linear(512, 256)
@@ -90,10 +91,11 @@ class VAE(nn.Module):
 
 
 model = VAE().to(device)
-optimizer = optim.Adam(model.parameters(), lr=1e-3)
+optimizer = optim.Adam(model.parameters(), lr=1e-4)
 
 
 # Reconstruction + KL divergence losses summed over all elements and batch
+@cost
 def loss_function(recon_x, x):
     BCE = storch.nn.b_binary_cross_entropy(recon_x, x.view(-1, 784), reduction="sum")
 
@@ -103,13 +105,12 @@ def loss_function(recon_x, x):
 def train(epoch):
     model.train()
     train_loss = 0
-    storch.reset()
     for batch_idx, (data, _) in enumerate(train_loader):
         data = data.to(device)
         optimizer.zero_grad()
+        storch.reset()
         recon_batch, KLD, z = model(data)
-        BCE = loss_function(recon_batch, data)
-        storch.add_cost(BCE)
+        loss_function(recon_batch, data)
         cond_log = batch_idx % args.log_interval == 0
         cost, loss = backward(debug=False, accum_grads=cond_log)
         train_loss += loss.item()
@@ -120,9 +121,8 @@ def train(epoch):
             for i in range(10):
                 optimizer.zero_grad()
                 recon_batch, KLD, z = model(data)
-                BCE = loss_function(recon_batch, data)
-                storch.add_cost(BCE)
-                cost, loss = backward()
+                loss_function(recon_batch, data)
+                backward()
                 expected_grad = z.total_expected_grad()
                 grads_logits.append(expected_grad["logits"].unsqueeze(0))
             def _var(t):
