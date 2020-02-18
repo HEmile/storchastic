@@ -27,6 +27,7 @@ parser.add_argument('--seed', type=int, default=1, metavar='S',
                     help='random seed (default: 1)')
 parser.add_argument('--log-interval', type=int, default=10, metavar='N',
                     help='how many batches to wait before logging training status')
+parser.add_argument("--method", type=str, default="gumbel", help="Method in {gumbel, gumbel_straight, score}")
 args = parser.parse_args()
 args.cuda = not args.no_cuda and torch.cuda.is_available()
 
@@ -45,11 +46,15 @@ test_loader = torch.utils.data.DataLoader(
 
 
 class VAE(nn.Module):
-    def __init__(self):
+    def __init__(self, args):
         super(VAE, self).__init__()
 
-        # self.sampling_method = storch.method.ScoreFunction(use_baseline=True)
-        self.sampling_method = storch.method.GumbelSoftmax()
+        if args.method == "gumbel":
+            self.sampling_method = storch.method.GumbelSoftmax()
+        elif args.method == "gumbel_straight":
+            self.sampling_method = storch.method.GumbelSoftmax(straight_through=True)
+        elif args.method == "score":
+            self.sampling_method = storch.method.ScoreFunction(use_baseline=False)
 
         self.fc1 = nn.Linear(784, 512)
         self.fc2 = nn.Linear(512, 256)
@@ -81,7 +86,6 @@ class VAE(nn.Module):
     def forward(self, x):
         logits = self.encode(x.view(-1, 784))
         logits = logits.reshape(logits.shape[:-1] + (20, 10))
-        straight_through = False
         q = OneHotCategorical(logits=logits)
         p = OneHotCategorical(probs=torch.ones_like(logits) / (1./10.))
         KLD = self.KLD(q, p)
@@ -90,7 +94,7 @@ class VAE(nn.Module):
         return self.decode(zp), KLD, z
 
 
-model = VAE().to(device)
+model = VAE(args).to(device)
 optimizer = optim.Adam(model.parameters(), lr=1e-4)
 
 
@@ -112,7 +116,7 @@ def train(epoch):
         recon_batch, KLD, z = model(data)
         loss_function(recon_batch, data)
         cond_log = batch_idx % args.log_interval == 0
-        cost, loss = backward(debug=False, accum_grads=cond_log)
+        cost, loss = backward(debug=False)
         train_loss += loss.item()
         optimizer.step()
         z.total_expected_grad()
@@ -147,7 +151,7 @@ def test(epoch):
         for i, (data, _) in enumerate(test_loader):
             data = data.to(device)
             recon_batch, KLD, _ = model(data)
-            test_loss += (loss_function(recon_batch, data).detach_tensor() + KLD.detach_tensor()).mean()
+            test_loss += (loss_function(recon_batch, data).detach_tensor()).mean()
             if i == 0:
                 n = min(data.size(0), 8)
                 # comparison = storch.cat([data[:n],

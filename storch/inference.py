@@ -38,7 +38,7 @@ def _keep_grads_backwards(surrounding_node: Tensor, backwards_tensor: torch.Tens
     return total_loss
 
 
-def backward(retain_graph=False, debug=False, accum_grads=False):
+def backward(retain_graph=False, debug=False, print_costs=False, accum_grads=False):
     """
 
     :param retain_graph: If set to False, it will deregister the added cost nodes. Should usually be set to False.
@@ -63,8 +63,8 @@ def backward(retain_graph=False, debug=False, accum_grads=False):
     stochastic_nodes = set()
     for c in costs:
         avg_cost = c._tensor.mean()
-        if debug:
-            print(c.name, avg_cost)
+        if print_costs:
+            print(c.name, ":", avg_cost.item())
         total_cost += avg_cost
         storch.inference._backward_cost = c
         for parent in c.walk_parents(depth_first=False):
@@ -105,7 +105,7 @@ def backward(retain_graph=False, debug=False, accum_grads=False):
                 total_loss += _keep_grads_backwards(c, c._tensor)
             else:
                 accum_loss += avg_cost
-            total_loss += avg_cost
+                total_loss += avg_cost
 
     if isinstance(accum_loss, torch.Tensor) and accum_loss.requires_grad:
         accum_loss.backward()
