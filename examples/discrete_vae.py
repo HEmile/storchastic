@@ -30,7 +30,7 @@ parser.add_argument('--log-interval', type=int, default=10, metavar='N',
                     help='how many batches to wait before logging training status')
 parser.add_argument("--method", type=str, default="gumbel", help="Method in {gumbel, gumbel_straight, score, score_ma}")
 parser.add_argument("--latents", type=int, default=20, help="How many latent variables with 10 categories to use")
-parser.add_arguments("--samples", type=int, default=1, help="How large of a budget to use")
+parser.add_argument("--samples", type=int, default=1, help="How large of a budget to use")
 args = parser.parse_args()
 args.cuda = not args.no_cuda and torch.cuda.is_available()
 
@@ -122,13 +122,14 @@ def train(epoch):
         data = data.to(device)
         optimizer.zero_grad()
         storch.reset()
+
         recon_batch, KLD, z = model(data)
         loss_function(recon_batch, data)
         cond_log = batch_idx % args.log_interval == 0
         cost, loss = backward(debug=False)
         train_loss += loss.item()
+
         optimizer.step()
-        z.total_expected_grad()
         if cond_log:
             grads_logits = []
             for i in range(10):
