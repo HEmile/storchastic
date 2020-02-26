@@ -15,7 +15,6 @@ class Baseline(ABC, torch.nn.Module):
 class MovingAverageBaseline(Baseline):
     def __init__(self, exponential_decay=0.95):
         super().__init__()
-        print(exponential_decay)
         self.register_buffer("exponential_decay", torch.tensor(exponential_decay))
         self.register_buffer("moving_average", torch.tensor(0.))
 

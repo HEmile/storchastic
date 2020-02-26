@@ -193,6 +193,8 @@ class ScoreFunction(Method):
                 self.baseline_factory = lambda s, c: MovingAverageBaseline(**kwargs)
             elif baseline_factory == "batch_average":
                 self.baseline_factory = lambda s, c: BatchAverageBaseline()
+            elif baseline_factory == "none" or baseline_factory == "None":
+                self.baseline_factory = None
             else:
                 raise ValueError("Invalid baseline name", baseline_factory)
 
@@ -207,7 +209,6 @@ class ScoreFunction(Method):
         if self.baseline_factory:
             baseline_name = "_b_" + tensor.name + "_" + cost_node.name
             if not hasattr(self, baseline_name):
-                print("Here")
                 setattr(self, baseline_name, self.baseline_factory(tensor, cost_node))
             baseline = getattr(self, baseline_name)
             costs = costs - baseline.compute_baseline(tensor, cost_node, costs)

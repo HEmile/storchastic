@@ -9,11 +9,11 @@ import torch
 import torch.utils.data
 from torch import nn, optim
 from torch.nn import functional as F
-from torchvision import datasets, transforms
 from torchvision.utils import save_image
 from storch import deterministic, cost, backward
 import storch
 from torch.distributions import OneHotCategorical, RelaxedOneHotCategorical
+from examples.dataloader.data_loader import data_loaders
 
 torch.manual_seed(0)
 
@@ -28,9 +28,11 @@ parser.add_argument('--seed', type=int, default=1, metavar='S',
                     help='random seed (default: 1)')
 parser.add_argument('--log-interval', type=int, default=10, metavar='N',
                     help='how many batches to wait before logging training status')
-parser.add_argument("--method", type=str, default="gumbel", help="Method in {gumbel, gumbel_straight, score, score_ma}")
+parser.add_argument("--method", type=str, default="gumbel", help="Method in {gumbel, gumbel_straight, score}")
+parser.add_argument("--baseline", type=str, default="batch_average", help="What baseline to use for the score function.")
 parser.add_argument("--latents", type=int, default=20, help="How many latent variables with 10 categories to use")
 parser.add_argument("--samples", type=int, default=1, help="How large of a budget to use")
+parser.add_argument("--dataset", type=str, default="fixedMNIST")
 args = parser.parse_args()
 args.cuda = not args.no_cuda and torch.cuda.is_available()
 
@@ -40,14 +42,7 @@ torch.manual_seed(args.seed)
 
 device = torch.device("cuda" if args.cuda else "cpu")
 
-kwargs = {'num_workers': 1, 'pin_memory': True} if args.cuda else {}
-train_loader = torch.utils.data.DataLoader(
-    datasets.MNIST('../data', train=True, download=True,
-                   transform=transforms.ToTensor()),
-    batch_size=args.batch_size, shuffle=True, **kwargs)
-test_loader = torch.utils.data.DataLoader(
-    datasets.MNIST('../data', train=False, transform=transforms.ToTensor()),
-    batch_size=args.batch_size, shuffle=True, **kwargs)
+train_loader, test_loader = data_loaders(args)
 
 
 class VAE(nn.Module):
@@ -59,11 +54,7 @@ class VAE(nn.Module):
         elif args.method == "gumbel_straight":
             self.sampling_method = storch.method.GumbelSoftmax(straight_through=True)
         elif args.method == "score":
-            self.sampling_method = storch.method.ScoreFunction(baseline_factory=None)
-        elif args.method == "score_ma":
-            self.sampling_method = storch.method.ScoreFunction(baseline_factory="moving_average")
-        elif args.method == "score_ba":
-            self.sampling_method = storch.method.ScoreFunction(baseline_factory="batch_average")
+            self.sampling_method = storch.method.ScoreFunction(baseline_factory=args.baseline)
         self.latents = args.latents
         self.samples = args.samples
         self.fc1 = nn.Linear(784, 512)
@@ -76,7 +67,6 @@ class VAE(nn.Module):
         self.activation = lambda x: F.leaky_relu(x, negative_slope=0.1)
 
     def encode(self, x):
-        print(x[0])
         h1 = self.activation(self.fc1(x))
         h2 = self.activation(self.fc2(h1))
         return self.fc3(h2)
