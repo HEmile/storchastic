@@ -14,8 +14,6 @@ from torchvision.utils import save_image
 from storch import deterministic, cost, backward
 import storch
 from torch.distributions import OneHotCategorical, RelaxedOneHotCategorical
-import objgraph
-import gc
 
 torch.manual_seed(0)
 
@@ -78,6 +76,7 @@ class VAE(nn.Module):
         self.activation = lambda x: F.leaky_relu(x, negative_slope=0.1)
 
     def encode(self, x):
+        print(x[0])
         h1 = self.activation(self.fc1(x))
         h2 = self.activation(self.fc2(h1))
         return self.fc3(h2)
@@ -175,20 +174,10 @@ def test(epoch):
 
     test_loss /= len(test_loader.dataset)
     print('====> Test set loss: {:.4f}'.format(test_loss))
-# objgraph.show_growth()
 if __name__ == "__main__":
     for epoch in range(1, args.epochs + 1):
 
         train(epoch)
-        # gc.collect()
-        # objgraph.show_growth()
-        # import random
-        # depth = 100
-        # objgraph.show_backrefs(random.choice(objgraph.by_type('StochasticTensor')), filename = 'sT.png', max_depth=depth)
-        # objgraph.show_backrefs(random.choice(objgraph.by_type('DeterministicTensor')), filename='dT.png', max_depth=depth)
-        # objgraph.show_backrefs(random.choice(objgraph.by_type('Tensor')), filename='../test/gc_problems/Tensor.png', max_depth=depth)
-        # objgraph.show_backrefs(random.choice(objgraph.by_type('OrderedDict')), filename='ordereddict.png', max_depth=depth)
-        # objgraph.show_backrefs(objgraph.by_type('function')[-1], filename='function.png', max_depth=depth)
         test(epoch)
         with torch.no_grad():
             im_sample = torch.randn(64, args.latents * 10).to(device)
