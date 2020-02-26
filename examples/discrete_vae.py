@@ -1,5 +1,6 @@
 '''
 Edited from https://github.com/pytorch/examples/blob/master/vae/main.py
+Reproduce experiments from Kool 2020 and Yin 2019
 '''
 
 from __future__ import print_function
@@ -27,7 +28,9 @@ parser.add_argument('--seed', type=int, default=1, metavar='S',
                     help='random seed (default: 1)')
 parser.add_argument('--log-interval', type=int, default=10, metavar='N',
                     help='how many batches to wait before logging training status')
-parser.add_argument("--method", type=str, default="gumbel", help="Method in {gumbel, gumbel_straight, score}")
+parser.add_argument("--method", type=str, default="gumbel", help="Method in {gumbel, gumbel_straight, score, score_ma}")
+parser.add_argument("--latents", type=int, default=20, help="How many latent variables with 10 categories to use")
+parser.add_arguments("--samples", type=int, default=1, help="How large of a budget to use")
 args = parser.parse_args()
 args.cuda = not args.no_cuda and torch.cuda.is_available()
 
@@ -54,24 +57,31 @@ class VAE(nn.Module):
         elif args.method == "gumbel_straight":
             self.sampling_method = storch.method.GumbelSoftmax(straight_through=True)
         elif args.method == "score":
-            self.sampling_method = storch.method.ScoreFunction(use_baseline=False)
-
+            self.sampling_method = storch.method.ScoreFunction(baseline_factory=None)
+        elif args.method == "score_ma":
+            self.sampling_method = storch.method.ScoreFunction(baseline_factory="moving_average")
+        elif args.method == "score_ba":
+            self.sampling_method = storch.method.ScoreFunction(baseline_factory="batch_average")
+        self.latents = args.latents
+        self.samples = args.samples
         self.fc1 = nn.Linear(784, 512)
         self.fc2 = nn.Linear(512, 256)
-        self.fc3 = nn.Linear(256, 200)
-        self.fc4 = nn.Linear(200, 256)
+        self.fc3 = nn.Linear(256, self.latents * 10)
+        self.fc4 = nn.Linear(self.latents * 10, 256)
         self.fc5 = nn.Linear(256, 512)
         self.fc6 = nn.Linear(512, 784)
 
+        self.activation = lambda x: F.leaky_relu(x, negative_slope=0.1)
+
     def encode(self, x):
-        h1 = F.relu(self.fc1(x))
-        h2 = F.relu(self.fc2(h1))
+        h1 = self.activation(self.fc1(x))
+        h2 = self.activation(self.fc2(h1))
         return self.fc3(h2)
 
     @deterministic
     def decode(self, z):
-        h3 = storch.relu(self.fc4(z))
-        h4 = storch.relu(self.fc5(h3))
+        h3 = self.activation(self.fc4(z))
+        h4 = self.activation(self.fc5(h3))
         return self.fc6(h4).sigmoid()
 
     @cost
@@ -79,23 +89,22 @@ class VAE(nn.Module):
         # see Appendix B from VAE paper:
         # Kingma and Welling. Auto-Encoding Variational Bayes. ICLR, 2014
         # https://arxiv.org/abs/1312.6114
-        # 0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
         div = torch.distributions.kl_divergence(p, q)
         return div.sum()
 
     def forward(self, x):
         logits = self.encode(x.view(-1, 784))
-        logits = logits.reshape(logits.shape[:-1] + (20, 10))
+        logits = logits.reshape(logits.shape[:-1] + (self.latents, 10))
         q = OneHotCategorical(logits=logits)
         p = OneHotCategorical(probs=torch.ones_like(logits) / (1./10.))
         KLD = self.KLD(q, p)
-        z = self.sampling_method(q, n=5)
-        zp = z.reshape(z.shape[:-2] + (200,))
+        z = self.sampling_method("z", q, n=self.samples)
+        zp = z.reshape(z.shape[:-2] + (self.latents * 10,))
         return self.decode(zp), KLD, z
 
 
 model = VAE(args).to(device)
-optimizer = optim.Adam(model.parameters(), lr=1e-4)
+optimizer = optim.Adam(model.parameters(), lr=1e-3)
 
 
 # Reconstruction + KL divergence losses summed over all elements and batch
@@ -124,7 +133,7 @@ def train(epoch):
             grads_logits = []
             for i in range(10):
                 optimizer.zero_grad()
-                recon_batch, KLD, z = model(data)
+                recon_batch, _, z = model(data)
                 loss_function(recon_batch, data)
                 backward()
                 expected_grad = z.total_expected_grad()

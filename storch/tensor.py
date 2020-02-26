@@ -39,7 +39,7 @@ class Tensor:
 
     def __str__(self):
         t = "Stochastic" if self.stochastic else ("Cost" if self.is_cost else "Deterministic")
-        return t + " " + str(self._tensor.shape)
+        return t + " " + str(self._tensor)
 
     def _walk(self, expand_fn, depth_first=True, only_differentiable=False, repeat_visited=False, walk_fn=lambda x: x):
         visited = set()
@@ -223,6 +223,11 @@ class Tensor:
     @storch.deterministic
     def __xor__(self, other):
         return self.__xor__(other)
+
+    def __bool__(self):
+        from storch.exceptions import IllegalConditionalError
+        raise IllegalConditionalError("It is not allowed to convert storch tensors to boolean. Make sure to unwrap "
+                                      "storch tensors to normal torch tensor to use this tensor as a boolean.")
     #endregion
 
     # region AlphabeticUnwraps
