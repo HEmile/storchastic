@@ -34,6 +34,8 @@ parser.add_argument("--samples", type=int, default=1, help="How large of a budge
 args = parser.parse_args()
 args.cuda = not args.no_cuda and torch.cuda.is_available()
 
+print(args)
+
 torch.manual_seed(args.seed)
 
 device = torch.device("cuda" if args.cuda else "cpu")
@@ -177,7 +179,7 @@ if __name__ == "__main__":
         train(epoch)
         test(epoch)
         with torch.no_grad():
-            im_sample = torch.randn(64, 200).to(device)
+            im_sample = torch.randn(64, args.latents * 10).to(device)
             im_sample = model.decode(im_sample).cpu()
             save_image(im_sample.view(64, 1, 28, 28),
                        'results/sample_' + str(epoch) + '.png')
