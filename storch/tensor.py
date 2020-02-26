@@ -993,7 +993,7 @@ class DeterministicTensor(Tensor):
     def __init__(self, tensor: torch.Tensor, parents, batch_links: [StochasticTensor], is_cost: bool, name: Optional[str] = None):
         super().__init__(tensor, parents, batch_links, name)
         self._is_cost = is_cost
-        if is_cost:
+        if is_cost and torch.is_grad_enabled():
             storch.inference._cost_tensors.append(self)
             if not name:
                 raise ValueError("Added a cost node without providing a name")
@@ -1035,11 +1035,12 @@ class StochasticTensor(Tensor):
     def total_expected_grad(self) -> Dict[str, torch.Tensor]:
         r = {}
         indices = self.batch_dim_indices()
-        for tensor, grad in self._accum_grads.items():
+        for name, grad in self._accum_grads.items():
+            tensor = getattr(self.distribution, name)
             if grad.dim() == tensor.dim():
-                r[tensor.param_name] = grad
+                r[name] = grad
             else:
-                r[tensor.param_name] = grad.mean(dim=indices)
+                r[name] = grad.mean(dim=indices)
         return r
 
     def total_variance_grad(self) -> Dict[str, torch.Tensor]:
@@ -1049,7 +1050,8 @@ class StochasticTensor(Tensor):
         """
         r = {}
         indices = self.batch_dim_indices()
-        for tensor, grad in self._accum_grads.items():
+        for name, grad in self._accum_grads.items():
+            tensor = getattr(self.distribution, name)
             if grad.dim() == tensor.dim():
                 raise ValueError("There are no batched dimensions to take statistics over. Make sure to call backwards "
                                  "with accum_grad=True")
@@ -1057,7 +1059,7 @@ class StochasticTensor(Tensor):
             diff = grad - expected
             squared_diff = diff * diff
             sse = squared_diff.sum(dim=indices)
-            r[tensor.param_name] = sse.mean()
+            r[name] = sse.mean()
         return r
 
 

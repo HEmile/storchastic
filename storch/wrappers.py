@@ -129,6 +129,7 @@ def _deterministic(fn, is_cost):
         else:
             outputs = _process_deterministic(outputs, parents, plates, is_cost, fn.__name__)
         storch.wrappers._context_deterministic = False
+        storch.wrappers._plate_links = []
         return outputs
 
     return wrapper
@@ -188,6 +189,7 @@ def stochastic(fn):
         storch.wrappers._context_stochastic = False
         storch.wrappers._stochastic_parents = []
         storch.wrappers._context_name = None
+        storch.wrappers._plate_links = []
         return processed_outputs
 
     return wrapper

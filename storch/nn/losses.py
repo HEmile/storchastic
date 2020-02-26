@@ -1,10 +1,8 @@
 import storch
 import torch
 from storch import deterministic
-from torch.nn import _reduction as _Reduction
 from torch._C import _infer_size
-from storch.typing import AnyTensor, Dims
-from typing import Optional
+from storch.typing import AnyTensor
 
 
 def b_binary_cross_entropy(input: AnyTensor, target: torch.Tensor, weight=None, reduction: str = 'mean'):
@@ -58,12 +56,13 @@ def b_binary_cross_entropy(input: AnyTensor, target: torch.Tensor, weight=None, 
         new_size = _infer_size(target.size(), weight.size())
         weight = weight.expand(new_size)
     else:
-        weight = torch.ones_like(target)
+        weight = 1.
 
     @deterministic
     def _loss(input):
         epsilon = 1e-6
-        return -weight * (target * (input + epsilon).log() + (1. - target) * (1. - input + epsilon).log())
+        input = input + epsilon
+        return -weight * (target * input.log() + (1. - target) * (1. - input).log())
 
     unreduced = _loss(input)
     if reduction == "mean":

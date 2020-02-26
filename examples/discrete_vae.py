@@ -14,6 +14,8 @@ from torchvision.utils import save_image
 from storch import deterministic, cost, backward
 import storch
 from torch.distributions import OneHotCategorical, RelaxedOneHotCategorical
+import objgraph
+import gc
 
 torch.manual_seed(0)
 
@@ -128,7 +130,7 @@ def train(epoch):
         recon_batch, KLD, z = model(data)
         loss_function(recon_batch, data)
         cond_log = batch_idx % args.log_interval == 0
-        cost, loss = backward(debug=False)
+        cost, loss = backward()
         train_loss += loss.item()
 
         optimizer.step()
@@ -173,13 +175,25 @@ def test(epoch):
 
     test_loss /= len(test_loader.dataset)
     print('====> Test set loss: {:.4f}'.format(test_loss))
-
+# objgraph.show_growth()
 if __name__ == "__main__":
     for epoch in range(1, args.epochs + 1):
+
         train(epoch)
+        # gc.collect()
+        # objgraph.show_growth()
+        # import random
+        # depth = 100
+        # objgraph.show_backrefs(random.choice(objgraph.by_type('StochasticTensor')), filename = 'sT.png', max_depth=depth)
+        # objgraph.show_backrefs(random.choice(objgraph.by_type('DeterministicTensor')), filename='dT.png', max_depth=depth)
+        # objgraph.show_backrefs(random.choice(objgraph.by_type('Tensor')), filename='../test/gc_problems/Tensor.png', max_depth=depth)
+        # objgraph.show_backrefs(random.choice(objgraph.by_type('OrderedDict')), filename='ordereddict.png', max_depth=depth)
+        # objgraph.show_backrefs(objgraph.by_type('function')[-1], filename='function.png', max_depth=depth)
         test(epoch)
         with torch.no_grad():
             im_sample = torch.randn(64, args.latents * 10).to(device)
             im_sample = model.decode(im_sample).cpu()
             save_image(im_sample.view(64, 1, 28, 28),
                        'results/sample_' + str(epoch) + '.png')
+
+

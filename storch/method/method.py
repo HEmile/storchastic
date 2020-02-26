@@ -15,27 +15,28 @@ class Method(ABC, torch.nn.Module):
     @staticmethod
     def _create_hook(sample: StochasticTensor, tensor: torch.tensor, name: str):
         event_shape = list(tensor.shape)
-        tensor.param_name = name
         if len(sample.batch_shape) > 0:
             normalize_factor = 1. / reduce(mul, sample.batch_shape)
         else:
             normalize_factor = 1.
 
+        accum_grads = sample._accum_grads
+        del sample, tensor # For GC reasons
+
         def hook(grad: torch.Tensor):
-            accum_grads = sample._accum_grads
             if not storch.inference._accum_grad:
-                accum_grads[tensor] = grad
+                accum_grads[name] = grad
                 return
-            if tensor not in accum_grads:
+            if name not in accum_grads:
                 add_n = [sample.n] if sample.n > 1 else []
-                accum_grads[tensor] = grad.new_zeros(add_n + event_shape)
+                accum_grads[name] = grad.new_zeros(add_n + event_shape)
             indices = []
             for link in sample.batch_links:
                 indices.append(storch.inference._backward_indices[link])
             indices = tuple(indices)
             offset_indices = 1 if sample.n > 1 else 0
             # Unnormalizes the gradient to make them easier to use for computing statistics.
-            accum_grads[tensor][indices] += grad[indices[offset_indices:]] / normalize_factor
+            accum_grads[name][indices] += grad[indices[offset_indices:]] / normalize_factor
 
         return hook
 
@@ -51,6 +52,7 @@ class Method(ABC, torch.nn.Module):
         params = get_distr_parameters(distr, filter_requires_grad=True)
 
         tensor = self._sample_tensor(distr, n)
+
         if n == 1:
             tensor = tensor.squeeze(0)
         plates = storch.wrappers._plate_links.copy()
@@ -205,6 +207,7 @@ class ScoreFunction(Method):
         if self.baseline_factory:
             baseline_name = "_b_" + tensor.name + "_" + cost_node.name
             if not hasattr(self, baseline_name):
+                print("Here")
                 setattr(self, baseline_name, self.baseline_factory(tensor, cost_node))
             baseline = getattr(self, baseline_name)
             costs = costs - baseline.compute_baseline(tensor, cost_node, costs)

@@ -20,7 +20,9 @@ def add_cost(cost: Tensor, name: str):
         raise ValueError("No name provided to register cost node. Make sure to register an unique name with the cost.")
     cost.name = name
     cost._is_cost = True
-    storch.inference._cost_tensors.append(cost)
+    if torch.is_grad_enabled():
+        print("Not Ignoring grad")
+        storch.inference._cost_tensors.append(cost)
 
 
 def _keep_grads_backwards(surrounding_node: Tensor, backwards_tensor: torch.Tensor) -> torch.Tensor:
@@ -106,6 +108,8 @@ def backward(retain_graph=False, debug=False, print_costs=False, accum_grads=Fal
             else:
                 accum_loss += avg_cost
                 total_loss += avg_cost
+
+    storch.inference._backward_cost = None
 
     if isinstance(accum_loss, torch.Tensor) and accum_loss.requires_grad:
         accum_loss.backward()
