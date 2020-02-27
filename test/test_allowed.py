@@ -2,6 +2,7 @@ import storch
 from torch.distributions import Normal, Categorical, Poisson
 from storch.exceptions import IllegalConditionalError
 
+
 method = storch.method.Infer(Poisson)
 
 d = Normal(0, 1)

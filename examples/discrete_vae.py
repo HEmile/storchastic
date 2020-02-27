@@ -14,8 +14,7 @@ from storch import deterministic, cost, backward
 import storch
 from torch.distributions import OneHotCategorical, RelaxedOneHotCategorical
 from examples.dataloader.data_loader import data_loaders
-
-torch.manual_seed(0)
+from tensorboardX import SummaryWriter
 
 parser = argparse.ArgumentParser(description='VAE MNIST Example')
 parser.add_argument('--batch-size', type=int, default=128, metavar='N',
@@ -33,10 +32,13 @@ parser.add_argument("--baseline", type=str, default="batch_average", help="What 
 parser.add_argument("--latents", type=int, default=20, help="How many latent variables with 10 categories to use")
 parser.add_argument("--samples", type=int, default=1, help="How large of a budget to use")
 parser.add_argument("--dataset", type=str, default="fixedMNIST")
+parser.add_argument("--lr", type=float, default=1e-3)
 args = parser.parse_args()
 args.cuda = not args.no_cuda and torch.cuda.is_available()
 
+writer = SummaryWriter(comment="discrete_vae_" + args.method)
 print(args)
+writer.add_text("hyperparameters", str(args), global_step=0)
 
 torch.manual_seed(args.seed)
 
@@ -97,7 +99,7 @@ class VAE(nn.Module):
 
 
 model = VAE(args).to(device)
-optimizer = optim.Adam(model.parameters(), lr=1e-3)
+optimizer = optim.Adam(model.parameters(), lr=args.lr)
 
 
 # Reconstruction + KL divergence losses summed over all elements and batch
@@ -138,13 +140,21 @@ def train(epoch):
                 squared_diff = (m - mean)**2
                 sse = squared_diff.sum(0)
                 return sse.mean()
+            avg_loss = loss / len(data)
+            avg_cost = cost.item() / len(data)
+            variance = _var(grads_logits)
+            step = 100. * batch_idx / len(train_loader)
+            global_step = 100 * (epoch - 1) + step
             print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}\tCost: {:.6f}\t Logits var {:.4E}'.format(
                 epoch, batch_idx * len(data), len(train_loader.dataset),
-                100. * batch_idx / len(train_loader),
-                loss.item() / len(data), cost.item() / len(data), _var(grads_logits)))
-
+                step, avg_loss, avg_cost, variance))
+            writer.add_scalar("train/ELBO", avg_cost, global_step)
+            writer.add_scalar("train/loss", avg_loss, global_step)
+            writer.add_scalar("train/variance", variance, global_step)
+    avg_train_loss = train_loss / len(train_loader.dataset)
     print('====> Epoch: {} Average loss: {:.4f}'.format(
-          epoch, train_loss / len(train_loader.dataset)))
+          epoch, avg_train_loss))
+    return avg_train_loss
 
 
 def test(epoch):
@@ -154,7 +164,7 @@ def test(epoch):
         for i, (data, _) in enumerate(test_loader):
             data = data.to(device)
             recon_batch, KLD, _ = model(data)
-            test_loss += (loss_function(recon_batch, data).detach_tensor()).mean()
+            test_loss += (loss_function(recon_batch, data).detach_tensor()).mean() + KLD.detach_tensor()
             if i == 0:
                 n = min(data.size(0), 8)
                 # comparison = storch.cat([data[:n],
@@ -164,15 +174,28 @@ def test(epoch):
 
     test_loss /= len(test_loader.dataset)
     print('====> Test set loss: {:.4f}'.format(test_loss))
-if __name__ == "__main__":
-    for epoch in range(1, args.epochs + 1):
+    return test_loss
 
-        train(epoch)
-        test(epoch)
+
+if __name__ == "__main__":
+    best_train_loss = 1000.
+    best_test_loss = 1000.
+    for epoch in range(1, args.epochs + 1):
+        train_loss = train(epoch)
+        if train_loss < best_train_loss:
+            best_train_loss = train_loss
+        test_loss = test(epoch)
+        writer.add_scalar("test_loss", test_loss, 100 * epoch)
+        writer.flush()
+        if test_loss < best_test_loss:
+            best_test_loss = test_loss
         with torch.no_grad():
             im_sample = torch.randn(64, args.latents * 10).to(device)
             im_sample = model.decode(im_sample).cpu()
             save_image(im_sample.view(64, 1, 28, 28),
                        'results/sample_' + str(epoch) + '.png')
-
-
+    measures = {"hparams/best_train_loss": best_train_loss, "hparams/best_test_loss": best_test_loss,
+                # "hparams/train_loss": train_loss, "hparams/test_loss": test_loss,
+                "train/loss": train_loss, "test_loss": test_loss}
+    writer.add_hparams(vars(args), measures, global_step=100*epoch)
+writer.close()
