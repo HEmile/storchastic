@@ -14,7 +14,7 @@ score_method = storch.method.ScoreFunction()
 
 @storch.stochastic
 def white_noise(mu):
-    return method(Normal(mu, 1), n=1), method(Normal(-mu, 1), n=3)
+    return method("white_noise_1", Normal(mu, 1), n=1), method("white_noise_2", Normal(-mu, 1), n=3)
 
 
 @storch.cost
@@ -22,8 +22,7 @@ def loss(v):
     return torch.nn.MSELoss(reduction="none")(v, theta).mean(dim=-1)
 
 
-mu = score_method(Normal(mu_prior, 1), n=4)
-print(mu)
+mu = score_method("mu", Normal(mu_prior, 1), n=4)
 # k = storch.sample(Categorical(probs=[0.5, 0.5]))
 
 agg_v = 0.
@@ -34,7 +33,7 @@ for i in range(2):
     agg_v = plus(agg_v, s1) + s2 * mu
     loss(agg_v)
 
-storch.backward(debug=True, accum_grads=True)
+storch.backward(debug=False, accum_grads=False)
 # print(mu._accum_grads)
 # print(s1._accum_grads)
 # print(s2._accum_grads)

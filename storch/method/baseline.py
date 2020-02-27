@@ -25,9 +25,10 @@ class MovingAverageBaseline(Baseline):
 
 
 class BatchAverageBaseline(Baseline):
+    # Uses the means of the other samples
     def compute_baseline(self, tensor: StochasticTensor, cost_node: DeterministicTensor,
                          costs: torch.Tensor) -> torch.Tensor:
         if tensor.n == 1:
-            raise ValueError("Can only use the batch average baseline if multiple samples are used. With n=1, you would"
-                             "optimize the constant 0.")
-        return costs.mean().detach()
+            raise ValueError("Can only use the batch average baseline if multiple samples are used.")
+        costs = costs.detach()
+        return (costs.sum(0) - costs) / (costs.shape[0] - 1)

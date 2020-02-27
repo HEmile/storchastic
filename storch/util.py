@@ -148,3 +148,12 @@ def tensor_stats(tensor: torch.Tensor):
         tensor.max().item(),
         tensor.min().item())
 
+
+def reduce_mean(tensor: torch.Tensor, keep_dims: [int]):
+    if len(keep_dims) == tensor.ndim:
+        return tensor
+    sum_out_dims = list(range(tensor.ndim))
+    for dim in keep_dims:
+        sum_out_dims.remove(dim)
+    return tensor.mean(sum_out_dims)
+

@@ -1,6 +1,6 @@
 from storch.tensor import Tensor, StochasticTensor, DeterministicTensor
 import torch
-from storch.util import print_graph
+from storch.util import print_graph, reduce_mean
 import storch
 from operator import mul
 
@@ -85,9 +85,7 @@ def backward(retain_graph=False, debug=False, print_costs=False, accum_grads=Fal
                     c_indices[index_p], c_indices[index_c] = c_indices[index_c], c_indices[index_p]
 
             # Then take the mean over the resulting dimensions (ie, plates that are created by other samples)
-            if len(parent.batch_links) != len(mean_cost.shape):
-                sum_out_dims = tuple(range(len(parent.batch_links), len(mean_cost.shape)))
-                mean_cost = mean_cost.mean(sum_out_dims)
+            mean_cost = reduce_mean(mean_cost, range(len(parent.batch_links)))
 
             additive_terms = parent.sampling_method._estimator(parent, c, mean_cost)
             # This can be None for eg reparameterization. The backwards call for reparameterization happens in the
