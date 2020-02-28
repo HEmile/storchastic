@@ -57,6 +57,8 @@ class VAE(nn.Module):
             self.sampling_method = storch.method.GumbelSoftmax(straight_through=True)
         elif args.method == "score":
             self.sampling_method = storch.method.ScoreFunction(baseline_factory=args.baseline)
+        elif args.method == "expect":
+            self.sampling_method = storch.method.Expect()
         self.latents = args.latents
         self.samples = args.samples
         self.fc1 = nn.Linear(784, 512)
@@ -89,9 +91,12 @@ class VAE(nn.Module):
 
     def forward(self, x):
         logits = self.encode(x.view(-1, 784))
+        logits = storch.denote_independent(logits, 0)  # Denote the minibatch dimension as being independent
         logits = logits.reshape(logits.shape[:-1] + (self.latents, 10))
         q = OneHotCategorical(logits=logits)
-        p = OneHotCategorical(probs=torch.ones_like(logits) / (1./10.))
+        print(q)
+        print(q.logits.batch_links)
+        p = OneHotCategorical(probs=torch.ones_like(logits.detach_tensor()) / (1./10.))
         KLD = self.KLD(q, p)
         z = self.sampling_method("z", q, n=self.samples)
         zp = z.reshape(z.shape[:-2] + (self.latents * 10,))

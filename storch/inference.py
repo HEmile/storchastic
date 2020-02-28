@@ -1,8 +1,9 @@
-from storch.tensor import Tensor, StochasticTensor, DeterministicTensor
+from storch.tensor import Tensor, StochasticTensor, DeterministicTensor, IndependentTensor
 import torch
 from storch.util import print_graph, reduce_mean
 import storch
 from operator import mul
+from storch.typing import AnyTensor, Dims
 
 from functools import reduce
 from typing import Dict, Optional
@@ -13,6 +14,33 @@ _backward_cost: Optional[DeterministicTensor] = None
 _accum_grad: bool = False
 
 
+def denote_independent(tensor: AnyTensor, dims: Dims) -> IndependentTensor:
+    """
+    Denote the given dimensions on the tensor as being independent, that is, batched dimensions.
+    It will automatically put these dimensions to the right.
+    :param tensor:
+    :param dims:
+    :return:
+    """
+    if isinstance(dims, int):
+        dims = [dims]
+    dims = sorted(dims)
+    for index, dim in enumerate(dims):
+        if isinstance(tensor, torch.Tensor):
+            if dim != index:
+                tensor = tensor.transpose(dim, index)
+            tensor = IndependentTensor(tensor, [], [])
+        else:
+            t_tensor = tensor._tensor
+            if dim != index:
+                t_tensor = t_tensor.transpose(dim, index)
+            name = tensor.name + "_indep_" + str(index) if tensor.name else None
+            tensor = IndependentTensor(t_tensor, tensor.batch_links, [tensor], name)
+    return tensor
+
+
+
+
 def add_cost(cost: Tensor, name: str):
     if cost.event_shape != ():
         raise ValueError("Can only register cost functions with empty event shapes")
@@ -21,7 +49,6 @@ def add_cost(cost: Tensor, name: str):
     cost.name = name
     cost._is_cost = True
     if torch.is_grad_enabled():
-        print("Not Ignoring grad")
         storch.inference._cost_tensors.append(cost)
 
 

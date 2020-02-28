@@ -1,7 +1,7 @@
 from .wrappers import deterministic, stochastic, cost
 from .tensor import Tensor, DeterministicTensor, StochasticTensor
 from .method import *
-from .inference import backward, add_cost, reset
+from .inference import backward, add_cost, reset, denote_independent
 from .util import print_graph
 from .storch import *
 import storch.nn

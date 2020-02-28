@@ -113,8 +113,13 @@ def _deterministic(fn, is_cost):
             if is_cost:
                 raise RuntimeError("Cannot call storch.cost from within a deterministic context.")
 
-            # We are already in a deterministic context, no need to wrap or unwrap as only the outer dependencies matter
-            return fn(*args, **kwargs)
+            # TODO: This is currently uncommented and it will in fact unwrap. This was required because it was, eg,
+            # possible to open a deterministic context, passing distributions with storch.Tensors as parameters,
+            # then doing computations on these parameters. This is because these storch.Tensors will not be unwrapped
+            # in the deterministic context as the unwrapping only considers lists.
+
+            # # We are already in a deterministic context, no need to wrap or unwrap as only the outer dependencies matter
+            # return fn(*args, **kwargs)
         args, kwargs, parents, plates = _unwrap(*args, **kwargs)
 
         if not parents and not is_cost:

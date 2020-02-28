@@ -8,17 +8,21 @@ import builtins
 from itertools import product
 from typing import Optional
 
+# from storch.typing import BatchTensor
+
 _int = builtins.int
+
 
 class Tensor:
 
-    def __init__(self, tensor: torch.Tensor, parents: [Tensor], batch_links: [StochasticTensor], name: Optional[str] = None):
+    def __init__(self, tensor: torch.Tensor, parents: [Tensor],
+                 batch_links: [Union[StochasticTensor, IndependentTensor]], name: Optional[str] = None):
         for i, plate in enumerate(batch_links):
             if len(tensor.shape) <= i:
                 raise ValueError(
-                "Got an input tensor with a shape too small for its surrounding batch. Violated at dimension "
-                + str(i) + " and plate shape dimension " + str(len(batch_links)) + ". Instead, it was " + str(
-                    len(tensor.shape)))
+                    "Got an input tensor with a shape too small for its surrounding batch. Violated at dimension "
+                    + str(i) + " and plate shape dimension " + str(len(batch_links)) + ". Instead, it was " + str(
+                        len(tensor.shape)))
             elif not tensor.shape[i] == plate.n:
                 raise ValueError(
                     "Storch Tensors should take into account their surrounding plates. Violated at dimension " + str(i)
@@ -65,7 +69,7 @@ class Tensor:
                         visited.add(w)
                         queue.append(w)
 
-    def walk_parents(self, depth_first=True, only_differentiable=False, repeat_visited=False, walk_fn=lambda x:x):
+    def walk_parents(self, depth_first=True, only_differentiable=False, repeat_visited=False, walk_fn=lambda x: x):
         return self._walk(lambda p: p._parents, depth_first, only_differentiable, repeat_visited, walk_fn)
 
     def walk_children(self, depth_first=True, only_differentiable=False, repeat_visited=False, walk_fn=lambda x: x):
@@ -92,7 +96,10 @@ class Tensor:
 
     @property
     def shape(self) -> torch.Size:
-        return self._tensor.shape
+        return self._tensor.size()
+
+    def size(self) -> torch.Size:
+        return self._tensor.size()
 
     @property
     def grad(self):
@@ -100,6 +107,9 @@ class Tensor:
 
     def dim(self):
         return self._tensor.dim()
+
+    def ndimension(self):
+        return self._tensor.ndimension()
 
     def event_dim_indices(self):
         return list(range(len(self.batch_links), self._tensor.dim()))
@@ -228,7 +238,8 @@ class Tensor:
         from storch.exceptions import IllegalConditionalError
         raise IllegalConditionalError("It is not allowed to convert storch tensors to boolean. Make sure to unwrap "
                                       "storch tensors to normal torch tensor to use this tensor as a boolean.")
-    #endregion
+
+    # endregion
 
     # region AlphabeticUnwraps
     @property
@@ -473,6 +484,7 @@ class Tensor:
 
     @storch.deterministic
     def expand_as(self, other):
+        print("here???")
         return self.expand_as(other)
 
     @storch.deterministic
@@ -985,12 +997,20 @@ class Tensor:
     def view_as(self, other):
         return self.view_as(other)
 
-    #endregion
+    # endregion
 
-    #endregion
+    # region NonListed
+    @storch.deterministic
+    def softmax(self, dim, dtype=None):
+        return self.softmax(dim, dtype)
+    # endregion
+
+    # endregion
+
 
 class DeterministicTensor(Tensor):
-    def __init__(self, tensor: torch.Tensor, parents, batch_links: [StochasticTensor], is_cost: bool, name: Optional[str] = None):
+    def __init__(self, tensor: torch.Tensor, parents, batch_links: [Union[StochasticTensor, IndependentTensor]],
+                 is_cost: bool, name: Optional[str] = None):
         super().__init__(tensor, parents, batch_links, name)
         self._is_cost = is_cost
         if is_cost and torch.is_grad_enabled():
@@ -999,16 +1019,27 @@ class DeterministicTensor(Tensor):
                 raise ValueError("Added a cost node without providing a name")
 
     @property
-    def stochastic(self) -> bool:
-        return False
-
-    @property
     def is_cost(self) -> bool:
         return self._is_cost
 
 
+class IndependentTensor(Tensor):
+    """
+    Used to denote independencies on a Tensor. This could for example be the minibatch dimension. The first dimension
+    of the input tensor is taken to be independent and added as a batch dimension to the storch system.
+    """
+
+    def __init__(self, tensor: torch.Tensor, parents: [Tensor],
+                 batch_links: [Union[StochasticTensor, IndependentTensor]], name: Optional[str] = None):
+        self.n = tensor.shape[0]
+        if self.n > 1:
+            batch_links.insert(0, self)
+        super().__init__(tensor, parents, batch_links, name)
+
+
 class StochasticTensor(Tensor):
-    def __init__(self, tensor: torch.Tensor, parents, sampling_method: storch.Method, batch_links: [StochasticTensor],
+    def __init__(self, tensor: torch.Tensor, parents: [Tensor], sampling_method: storch.Method,
+                 batch_links: [Union[StochasticTensor, IndependentTensor]],
                  distribution: Distribution, requires_grad: bool, n: int, name: Optional[str] = None):
         if n > 1:
             batch_links.insert(0, self)
@@ -1061,7 +1092,6 @@ class StochasticTensor(Tensor):
             sse = squared_diff.sum(dim=indices)
             r[name] = sse.mean()
         return r
-
 
 
 from storch.util import has_backwards_path

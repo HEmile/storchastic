@@ -1,3 +1,4 @@
+from __future__ import annotations
 import torch
 from storch.tensor import Tensor, StochasticTensor, DeterministicTensor
 from storch.method.baseline import Baseline
