@@ -86,6 +86,8 @@ class VAE(nn.Module):
         # see Appendix B from VAE paper:
         # Kingma and Welling. Auto-Encoding Variational Bayes. ICLR, 2014
         # https://arxiv.org/abs/1312.6114
+        print(p.logits.shape)
+        print(q.logits.shape)
         div = torch.distributions.kl_divergence(p, q)
         return div.sum()
 
@@ -93,10 +95,12 @@ class VAE(nn.Module):
         logits = self.encode(x.view(-1, 784))
         logits = storch.denote_independent(logits, 0)  # Denote the minibatch dimension as being independent
         logits = logits.reshape(logits.shape[:-1] + (self.latents, 10))
+
+        # TODO: q distribution is of size 0
         q = OneHotCategorical(logits=logits)
         print(q)
         print(q.logits.batch_links)
-        p = OneHotCategorical(probs=torch.ones_like(logits.detach_tensor()) / (1./10.))
+        p = OneHotCategorical(probs=torch.ones_like(logits) / (1./10.))
         KLD = self.KLD(q, p)
         z = self.sampling_method("z", q, n=self.samples)
         zp = z.reshape(z.shape[:-2] + (self.latents * 10,))

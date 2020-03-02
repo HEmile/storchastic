@@ -31,9 +31,6 @@ for i in range(2):
     plus = lambda a, b: a + b
     plus = storch.deterministic(plus)
     agg_v = plus(agg_v, s1) + s2 * mu
-    loss(agg_v)
+    print(loss(agg_v))
 
-storch.backward(debug=False, accum_grads=False)
-# print(mu._accum_grads)
-# print(s1._accum_grads)
-# print(s2._accum_grads)
+storch.backward(debug=True, accum_grads=False)

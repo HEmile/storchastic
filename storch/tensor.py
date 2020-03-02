@@ -3,7 +3,7 @@ import torch
 import storch
 from torch.distributions import Distribution
 from collections import deque
-from typing import Union, List, Tuple, Dict
+from typing import Union, List, Tuple, Dict, Iterable
 import builtins
 from itertools import product
 from typing import Optional
@@ -13,8 +13,7 @@ from typing import Optional
 _int = builtins.int
 
 
-class Tensor:
-
+class Tensor(torch.Tensor):
     def __init__(self, tensor: torch.Tensor, parents: [Tensor],
                  batch_links: [Union[StochasticTensor, IndependentTensor]], name: Optional[str] = None):
         for i, plate in enumerate(batch_links):
@@ -28,7 +27,7 @@ class Tensor:
                     "Storch Tensors should take into account their surrounding plates. Violated at dimension " + str(i)
                     + " and plate size " + str(plate.n) + ". Instead, it was " + str(tensor.shape[i]))
 
-        self.name = name
+        self._name = name
         self._tensor = tensor
         self._parents = []
         for p in parents:
@@ -41,9 +40,36 @@ class Tensor:
         self.event_shape = tensor.shape[len(batch_links):]
         self.batch_links = batch_links
 
+    def __getattribute__(self, name):
+        if name in dir(torch.Tensor) and name not in Tensor.__dict__:
+            raise AttributeError(name)
+        else:
+            return super().__getattribute__(name)
+
+    def __dir__(self) -> Iterable[str]:
+        return sorted(set(dir(self.__class_) | self.__dict__.keys()) -
+                      (set(dir(torch.Tensor)) - Tensor.__dict__.keys()))
+
+    @staticmethod
+    def __new__(cls, *args, **kwargs):
+        return super(torch.Tensor, cls).__new__(cls)
+
+    def __eq__(self, other):
+        return object.__eq__(self, other)
+
+    def __hash__(self):
+        return object.__hash__(self)
+
+    @property
+    def name(self):
+        return self._name
+
     def __str__(self):
         t = "Stochastic" if self.stochastic else ("Cost" if self.is_cost else "Deterministic")
         return t + " " + str(self._tensor)
+
+    def __repr__(self):
+        return self._tensor.__repr__()
 
     def _walk(self, expand_fn, depth_first=True, only_differentiable=False, repeat_visited=False, walk_fn=lambda x: x):
         visited = set()
@@ -1006,6 +1032,7 @@ class Tensor:
     # endregion
 
     # endregion
+
 
 
 class DeterministicTensor(Tensor):
