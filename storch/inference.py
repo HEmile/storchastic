@@ -106,7 +106,11 @@ def backward(retain_graph=False, debug=False, print_costs=False, accum_grads=Fal
             mean_cost = c._tensor
             c_indices = c.batch_links.copy()
             for index_p, plate in enumerate(parent.batch_links):
-                index_c = c_indices.index(plate)
+                index_c = -100000
+                for i, _plate in enumerate(c_indices):
+                    if _plate is plate:
+                        index_c = i
+                        break
                 if not index_c == index_p:
                     mean_cost = mean_cost.transpose(index_p, index_c)
                     c_indices[index_p], c_indices[index_c] = c_indices[index_c], c_indices[index_p]

@@ -9,6 +9,7 @@ from storch.typing import DiscreteDistribution, BaselineFactory
 from functools import reduce
 from operator import mul
 import storch
+from storch.wrappers import plate_in
 from storch.method.baseline import MovingAverageBaseline, BatchAverageBaseline
 
 class Method(ABC, torch.nn.Module):
@@ -49,22 +50,38 @@ class Method(ABC, torch.nn.Module):
         return self.sample(sample_name, distr, n)
 
     def sample(self, sample_name: str, distr: Distribution, n: int = 1) -> StochasticTensor:
-        params = get_distr_parameters(distr, filter_requires_grad=True)
+        # Unwrap the distributions parameters
+        params = get_distr_parameters(distr, filter_requires_grad=False)
+        parents = {}
+        plates = storch.wrappers._plate_links.copy()
+        for name, p in params.items():
+            if isinstance(p, storch.Tensor):
+                try:
+                    parents[name] = p
+                    for plate in p.batch_links:
+                        if not plate_in(plate, plates):
+                            plates.append(plate)
+                    setattr(distr, name, p._tensor)
+                    params[name] = p._tensor
+                except AttributeError as e:
+                    if storch._debug:
+                        print("Couldn't unwrap parameter", name, "on distribution", distr)
 
         tensor = self._sample_tensor(distr, n)
 
         if n == 1:
             tensor = tensor.squeeze(0)
-        plates = storch.wrappers._plate_links.copy()
-        # if storch.wrappers._context_name:
-        #     name = storch.wrappers._context_name + "_" + str(storch.wrappers._context_amt_samples)
-        #     storch.wrappers._context_amt_samples += 1
-        s_tensor = StochasticTensor(tensor, storch.wrappers._stochastic_parents, self, plates, distr, len(params) > 0,
+        s_tensor = StochasticTensor(tensor, storch.wrappers._stochastic_parents + list(parents.values()), self, plates, distr, len(params) > 0,
                                     n, sample_name)
-        for name, param in params:
+        for name, param in params.items():
             # TODO: Possibly could find the wrong gradients here if multiple distributions use the same parameter?
             # This maybe requires copying the tensor hm...
-            param.register_hook(self._create_hook(s_tensor, param, name))
+            if param.requires_grad:
+                # TODO: This requires_grad check might go wrong if requires_grad is assigned in a different way (like here with len(params) > 0
+                param.register_hook(self._create_hook(s_tensor, param, name))
+            if name in parents and not isinstance(param, storch.Tensor):
+                setattr(distr, name, parents[name])
+
         return s_tensor
 
     def _estimator(self, tensor: StochasticTensor, cost_node: DeterministicTensor, costs: torch.Tensor) -> Optional[torch.Tensor]:
@@ -213,3 +230,30 @@ class ScoreFunction(Method):
             baseline = getattr(self, baseline_name)
             costs = costs - baseline.compute_baseline(tensor, cost_node, costs)
         return log_prob * costs.detach()
+
+
+class Expect(Method):
+    def __init__(self, budget=10000):
+        super().__init__()
+        self.budget = budget
+
+    def _sample_tensor(self, distr: Distribution, n: int) -> torch.Tensor:
+        if not distr.has_enumerate_support:
+            raise ValueError("Can only calculate the expected value for distributions with enumerable support.")
+        support = distr.enumerate_support(expand=True)
+        # print(distr.batch_shape, distr.event_shape)
+        # print(support[9, 1])
+
+    def estimator(self, tensor: StochasticTensor, cost_node: DeterministicTensor, costs: torch.Tensor) -> Optional[torch.Tensor]:
+        pass
+
+
+class UnorderedSet(Method):
+    def __init__(self):
+        super().__init__()
+
+    def _sample_tensor(self, distr: Distribution, n: int) -> torch.Tensor:
+        pass
+
+    def estimator(self, tensor: StochasticTensor, cost_node: DeterministicTensor, costs: torch.Tensor) -> Optional[torch.Tensor]:
+        pass

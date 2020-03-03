@@ -7,7 +7,7 @@ method = storch.method.Infer(Poisson)
 
 d = Normal(0, 1)
 
-s = method.sample(d)
+s = method.sample("oeps", d)
 # print(s>1)
 try:
     if s:

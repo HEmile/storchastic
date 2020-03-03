@@ -6,5 +6,5 @@ from .util import print_graph
 from .storch import *
 import storch.nn
 import storch.typing
-_debug = False
+_debug = True
 

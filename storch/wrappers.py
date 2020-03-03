@@ -13,6 +13,14 @@ _context_amt_samples = 0
 _plate_links = []
 
 
+def plate_in(plate, l):
+    # Not using "plate in plates" because __eq__ is overriden, which opens a deterministic context, which
+    # calls this method again, causing infinite recursion
+    for _plate in l:
+        if _plate is plate:
+            return True
+    return False
+
 def is_iterable(a):
     return isinstance(a, Iterable) and not isinstance(a, torch.Tensor) and not isinstance(a, str)
 
@@ -21,7 +29,7 @@ def _collect_parents_and_plates(a, parents: [storch.Tensor], plates: [storch.Sto
     if isinstance(a, storch.Tensor):
         parents.append(a)
         for plate in a.batch_links:
-            if plate not in plates:
+            if not plate_in(plate, plates):
                 plates.append(plate)
     elif is_iterable(a):
         for _a in a:
@@ -40,16 +48,21 @@ def _unsqueeze_and_unwrap(a, plates: [storch.StochasticTensor]):
         amt_recognized = 0
         links = a.batch_links.copy()
         for i, plate in enumerate(plates):
-            if plate in a.batch_links:
+            if plate_in(plate, a.batch_links):
                 if plate is not links[amt_recognized]:
                     # The plate is also in the tensor, but not in the ordering expected. So switch that ordering
-                    j = links.index(plate)
+                    j = -1
+                    for k, _plate in enumerate(links):
+                        # Not using links.index to prevent recursion
+                        if _plate is plate:
+                            j = k
+                            break
                     tensor = tensor.transpose(j, amt_recognized)
                     links[amt_recognized], links[j] = links[j], links[amt_recognized]
                 amt_recognized += 1
 
         for i, plate in enumerate(plates):
-            if plate not in a.batch_links:
+            if not plate_in(plate, a.batch_links):
                 tensor = tensor.unsqueeze(i)
         return tensor
     elif is_iterable(a):
@@ -92,8 +105,11 @@ def _process_deterministic(o, parents, plates, is_cost, name):
     if o is None:
         return
     if isinstance(o, storch.Tensor):
-        raise RuntimeError("Creation of storch Tensor within deterministic context")
-    if isinstance(o, torch.Tensor):
+        if o.stochastic:
+            raise RuntimeError("Creation of stochastic storch Tensor within deterministic context")
+        # TODO: Does this require shape checking?
+        return o
+    if isinstance(o, torch.Tensor):  # Explicitly _not_ a storch.Tensor
         t = storch.DeterministicTensor(o, parents, plates, is_cost, name=name)
         if is_cost and t.event_shape != ():
             # TODO: Make sure the o.size() check takes into account the size of the sample.
@@ -146,6 +162,16 @@ def deterministic(fn):
 
 def cost(fn):
     return _deterministic(fn, True)
+
+def _self_deterministic(fn, self):
+    fn = deterministic(fn)
+    def wrapper(*args, **kwargs):
+        # Inserts the self object at the beginning of the passed arguments. In essence, it "fakes" the self reference.
+        args = list(args)
+        args.insert(0, self)
+        return fn(*args, **kwargs)
+    return wrapper
+
 
 
 def _process_stochastic(output, parents, plates):
