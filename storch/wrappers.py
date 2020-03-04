@@ -54,7 +54,7 @@ def _unsqueeze_and_unwrap(a: Any, multi_dim_plates: [Plate]):
         # It can be possible that the ordering of the plates does not align with the ordering of the inputs.
         # This part corrects this.
         amt_recognized = 0
-        links: [Plate] = a.batch_links.copy()
+        links: [Plate] = a.multi_dim_plates()
         for i, plate in enumerate(multi_dim_plates):
             if plate in a.batch_links:
                 if plate != links[amt_recognized]:
