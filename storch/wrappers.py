@@ -5,9 +5,10 @@ from typing import Union, Any, Tuple
 import storch
 import torch
 from collections.abc import Iterable, Mapping
+import warnings
 
 _context_stochastic = False
-_context_deterministic = False
+_context_deterministic = 0
 _stochastic_parents = []
 _context_name = None
 _context_amt_samples = 0
@@ -78,7 +79,7 @@ def _unsqueeze_and_unwrap(a: Any, multi_dim_plates: [Plate]):
     elif isinstance(a, Mapping):
         d = {}
         for k, _a in a.items():
-            d[k] = _unsqueeze_and_unwrap(_a, plates)
+            d[k] = _unsqueeze_and_unwrap(_a, multi_dim_plates)
         return d
     else:
         return a
@@ -134,7 +135,7 @@ def _deterministic(fn, is_cost: bool):
             # TODO check if we can re-add this
             raise NotImplementedError(
                 "It is currently not allowed to open a deterministic context in a stochastic context")
-        if storch.wrappers._context_deterministic:
+        if storch.wrappers._context_deterministic > 0:
             if is_cost:
                 raise RuntimeError("Cannot call storch.cost from within a deterministic context.")
 
@@ -142,15 +143,16 @@ def _deterministic(fn, is_cost: bool):
             # possible to open a deterministic context, passing distributions with storch.Tensors as parameters,
             # then doing computations on these parameters. This is because these storch.Tensors will not be unwrapped
             # in the deterministic context as the unwrapping only considers lists.
-
             # # We are already in a deterministic context, no need to wrap or unwrap as only the outer dependencies matter
             # return fn(*args, **kwargs)
+
         args, kwargs, parents, plates = _unwrap(*args, **kwargs)
 
         if not parents and not is_cost:
             return fn(*args, **kwargs)
-        storch.wrappers._context_deterministic = True
+        storch.wrappers._context_deterministic += 1
         outputs = fn(*args, **kwargs)
+        storch.wrappers._context_deterministic -= 1
         if is_iterable(outputs):
             n_outputs = []
             for o in outputs:
@@ -158,7 +160,6 @@ def _deterministic(fn, is_cost: bool):
             outputs = n_outputs
         else:
             outputs = _process_deterministic(outputs, parents, plates, is_cost, fn.__name__)
-        storch.wrappers._context_deterministic = False
         storch.wrappers._plate_links = []
         return outputs
 
@@ -172,6 +173,7 @@ def deterministic(fn):
 def cost(fn):
     return _deterministic(fn, True)
 
+
 def _self_deterministic(fn, self: storch.Tensor):
     fn = deterministic(fn)
     def wrapper(*args, **kwargs):
@@ -180,7 +182,6 @@ def _self_deterministic(fn, self: storch.Tensor):
         args.insert(0, self)
         return fn(*args, **kwargs)
     return wrapper
-
 
 
 def _process_stochastic(output: torch.Tensor, parents: [storch.Tensor], plates: [Plate]):
@@ -208,7 +209,7 @@ def stochastic(fn):
     """
 
     def wrapper(*args, **kwargs):
-        if storch.wrappers._context_stochastic or storch.wrappers._context_deterministic:
+        if storch.wrappers._context_stochastic or storch.wrappers._context_deterministic > 0:
             raise RuntimeError("Cannot call storch.stochastic from within a stochastic or deterministic context.")
         storch.wrappers._context_stochastic = True
         storch.wrappers._context_name = fn.__name__
@@ -232,4 +233,25 @@ def stochastic(fn):
         storch.wrappers._plate_links = []
         return processed_outputs
 
+    return wrapper
+
+
+def _exception_wrapper(fn):
+    def wrapper(*args, **kwargs):
+        for a in args:
+            if isinstance(a, storch.Tensor):
+                raise RuntimeError("It is not allowed to call this method using storch.Tensor, likely because it exposes its"
+                                   "wrapped tensor to Python.")
+        return fn(*args, **kwargs)
+    return wrapper
+
+def _unpack_wrapper(fn):
+    def wrapper(*args, **kwargs):
+        new_args = []
+        for a in args:
+            if isinstance(a, storch.Tensor):
+                new_args.append(a._tensor)
+            else:
+                new_args.append(a)
+        return fn(*tuple(new_args), **kwargs)
     return wrapper

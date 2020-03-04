@@ -75,8 +75,9 @@ class VAE(nn.Module):
         h2 = self.activation(self.fc2(h1))
         return self.fc3(h2)
 
-    @deterministic
+    # @deterministic
     def decode(self, z):
+        print(z)
         h3 = self.activation(self.fc4(z))
         h4 = self.activation(self.fc5(h3))
         return self.fc6(h4).sigmoid()
@@ -92,7 +93,7 @@ class VAE(nn.Module):
 
     def forward(self, x):
         logits = self.encode(x.view(-1, 784))
-        logits = storch.denote_independent(logits, 0)  # Denote the minibatch dimension as being independent
+        logits = storch.denote_independent(logits, 0, "data")  # Denote the minibatch dimension as being independent
         logits = logits.reshape(logits.shape[:-1] + (self.latents, 10))
 
         q = OneHotCategorical(logits=logits)
@@ -113,7 +114,8 @@ def loss_function(recon_x, x):
     x = x.view(-1, 784)
     # TODO: Not going to work: These are now two different data batch links.
     #  There should be another way to link batch dimensions manually. Possibly requires some different object as key.
-    x = storch.denote_independent(x, 0)
+    x = storch.denote_independent(x, 0, "data")
+    # print(recon_x, x)
     BCE = storch.nn.b_binary_cross_entropy(recon_x, x, reduction="sum")
 
     return BCE

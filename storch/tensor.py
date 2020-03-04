@@ -86,22 +86,29 @@ class Tensor(torch.Tensor):
 
         return sorted(keys)
 
+    # @staticmethod
+    # def __new__(cls, *args, **kwargs):
+    #     # print("here")
+    #     tensor = args[0]
+    #     try:
+    #         # Pass the input tensor to register this tensor in C. Or something.
+    #         if tensor.ndimension() > 0:
+    #             return super(Tensor, cls).__new__(cls, tensor)
+    #     except TypeError as e:
+    #         if storch._debug:
+    #             print("Was not able to create the object using the input tensor. Using a fallback construction.")
+    #             print("TypeError:", e)
+    #
+    #         # For some reason, scalar tensors cannot be used in the __new__ constructor? That's when these type errors could
+    #         # happen. It can also happen with eg bool tensors. Passing the device is still useful
+    #     return super(Tensor, cls).__new__(cls, device=args[0].device)  # args[0])
+
     @staticmethod
     def __new__(cls, *args, **kwargs):
-        # print("here")
         tensor = args[0]
-        try:
-            # Pass the input tensor to register this tensor in C. Or something.
-            if tensor.ndimension() > 0:
-                return super(torch.Tensor, cls).__new__(cls, tensor)
-        except TypeError as e:
-            if storch._debug:
-                print("Was not able to create the object using the input tensor. Using a fallback construction.")
-                print("TypeError:", e)
-
-        # For some reason, scalar tensors cannot be used in the __new__ constructor? That's when these type errors could
-        # happen. It can also happen with eg bool tensors. Passing the device is still useful
-        return super(torch.Tensor, cls).__new__(cls, device=args[0].device)  # args[0])
+        # Pass the input tensor to register this tensor in C. This will initialize an empty (0s?) tensor in the backend.
+        # TODO: Does that mean it will require double the memory?
+        return super(Tensor, cls).__new__(cls, size=tuple(tensor.shape), device=tensor.device)
 
     def new_tensor(self, data: Any, dtype: Optional[dtype] = None, device: Union[device, str, None] = None,
                    requires_grad: bool = False) -> Tensor:
@@ -250,6 +257,9 @@ class Tensor(torch.Tensor):
 
     # region OperatorOverloads
 
+    def __len__(self):
+        return self._tensor.__len__()
+
     @storch.deterministic
     def __getitem__(self, indices: Union[None, _int, slice, Tensor, List, Tuple]):
         # TODO: properly test this
@@ -369,6 +379,16 @@ class Tensor(torch.Tensor):
         from storch.exceptions import IllegalConditionalError
         raise IllegalConditionalError("It is not allowed to convert storch tensors to boolean. Make sure to unwrap "
                                       "storch tensors to normal torch tensor to use this tensor as a boolean.")
+
+    def __array__(self):
+        from storch.exceptions import IllegalConditionalError
+        raise IllegalConditionalError("It is not allowed to convert storch tensors to numpy arrays. Make sure to unwrap "
+                                      "storch tensors to normal torch tensor to use this tensor as a np.array.")
+
+    def __array_wrap__(self):
+        from storch.exceptions import IllegalConditionalError
+        raise IllegalConditionalError("It is not allowed to convert storch tensors to numpy arrays. Make sure to unwrap "
+                                      "storch tensors to normal torch tensor to use this tensor as a np.array.")
     # endregion
 
 
