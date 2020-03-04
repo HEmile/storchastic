@@ -16,20 +16,35 @@ _size = Union[Size, List[_int], Tuple[_int, ...]]
 
 _torch_dict = None
 
+Plate = Tuple[str, int]
 
 class Tensor(torch.Tensor):
     def __init__(self, tensor: torch.Tensor, parents: [Tensor],
-                 batch_links: [Union[StochasticTensor, IndependentTensor]], name: Optional[str] = None):
-        for i, plate in enumerate(batch_links):
-            if len(tensor.shape) <= i:
+                 batch_links: [Plate], name: Optional[str] = None):
+        plate_names = set()
+        batch_len = 0
+        # Check whether this tensor does not violate the constraints imposed by the given batch_links
+        for plate in batch_links:
+            plate_name, plate_n = plate
+            if plate_name in plate_names:
+                raise ValueError("Batch links contain two instances of plate " + plate_name + ". This can be caused by "
+                                 "different samples with the same name using a different amount of samples n. "
+                                 "Make sure that these samples use the same number of samples.")
+            plate_names.add(plate_name)
+            if plate_n == 1:  # plate length is 1. Ignore this dimension, as singleton dimensions should not exist.
+                continue
+            if len(tensor.shape) <= batch_len:
                 raise ValueError(
                     "Got an input tensor with a shape too small for its surrounding batch. Violated at dimension "
-                    + str(i) + " and plate shape dimension " + str(len(batch_links)) + ". Instead, it was " + str(
+                    + str(batch_len) + " and plate shape dimension " + str(len(batch_links)) + ". Instead, it was " + str(
                         len(tensor.shape)))
-            elif not tensor.shape[i] == plate.n:
+            elif not tensor.shape[batch_len] == plate_n:
                 raise ValueError(
-                    "Storch Tensors should take into account their surrounding plates. Violated at dimension " + str(i)
-                    + " and plate size " + str(plate.n) + ". Instead, it was " + str(tensor.shape[i]))
+                    "Storch Tensors should take into account their surrounding plates. Violated at dimension " + str(batch_len)
+                    + " and plate " + plate_name + " with size " + str(plate_n) + ". "
+                    "Instead, it was " + str(tensor.shape[batch_len]) + ". Batch links: " + str(batch_links) + " Tensor shape: "
+                    + str(tensor.shape))
+            batch_len += 1
 
         self._name = name
         self._tensor = tensor
@@ -41,10 +56,14 @@ class Tensor(torch.Tensor):
             self._parents.append((p, differentiable_link))
             p._children.append((self, differentiable_link))
         self._children = []
-        self.event_shape = tensor.shape[len(batch_links):]
+        self.batch_len = batch_len
+        self.event_shape = tensor.shape[batch_len:]
         self.batch_links = batch_links
 
     def __getattribute__(self, name):
+        # TODO: We can possibly improve the performance of this method by precomputing the wrappers.
+        # Loop over the dict, and for missing values, wrap the callable.
+
         # Note that __getattribute__ does not work for magic methods like __add__
         # print("Trying to get", name)
         if not storch.tensor._torch_dict:
@@ -105,13 +124,9 @@ class Tensor(torch.Tensor):
                   device: Union[device, str, None] = None, requires_grad: bool = False) -> Tensor:
         return self._tensor.new_zeros(size, dtype=dtype, layout=layout, device=device, requires_grad=requires_grad)
 
-    # TODO
     @storch.deterministic
     def __eq__(self, other):
         return self.__eq__(other)
-
-    # def __eq__(self, other):
-    #     return object.__eq__(self, other)
 
     def __hash__(self):
         return object.__hash__(self)
@@ -125,8 +140,9 @@ class Tensor(torch.Tensor):
         return self._tensor.is_sparse
 
     def __str__(self):
-        t = "Stochastic" if self.stochastic else ("Cost" if self.is_cost else "Deterministic")
-        return t + " " + str(self._tensor)
+        t = (self.name + ": " if self.name else "") + \
+            "Stochastic" if self.stochastic else ("Cost" if self.is_cost else "Deterministic")
+        return t + " " + str(self._tensor) + " Batch links: " + str(self.batch_links)
 
     def __repr__(self):
         return object.__repr__(self)
@@ -178,7 +194,7 @@ class Tensor(torch.Tensor):
 
     @property
     def batch_shape(self) -> torch.Size:
-        return torch.Size(map(lambda s: s.n, self.batch_links))
+        return self._tensor.shape[:self.batch_len]
 
     @property
     def shape(self) -> torch.Size:
@@ -216,14 +232,21 @@ class Tensor(torch.Tensor):
         return self._tensor.register_hook(hook)
 
     def event_dim_indices(self):
-        return list(range(len(self.batch_links), self._tensor.dim()))
+        return list(range(self.batch_len, self._tensor.dim()))
 
     def batch_dim_indices(self):
-        return list(range(len(self.batch_links)))
+        return list(range(self.batch_len))
 
     def iterate_batch_indices(self):
         ranges = list(map(lambda a: list(range(a)), self.batch_shape))
         return product(*ranges)
+
+    def multi_dim_plates(self) -> [Plate]:
+        platez = []
+        for plate_name, plate_n in self.batch_links:
+            if plate_n > 1:
+                platez.append((plate_name, plate_n))
+        return platez
 
     # region OperatorOverloads
 
@@ -350,7 +373,7 @@ class Tensor(torch.Tensor):
 
 
 class DeterministicTensor(Tensor):
-    def __init__(self, tensor: torch.Tensor, parents, batch_links: [Union[StochasticTensor, IndependentTensor]],
+    def __init__(self, tensor: torch.Tensor, parents, batch_links: [Tuple[str, int]],
                  is_cost: bool, name: Optional[str] = None):
         super().__init__(tensor, parents, batch_links, name)
         self._is_cost = is_cost
@@ -371,20 +394,28 @@ class IndependentTensor(Tensor):
     """
 
     def __init__(self, tensor: torch.Tensor, parents: [Tensor],
-                 batch_links: [Union[StochasticTensor, IndependentTensor]], name: Optional[str] = None):
-        self.n = tensor.shape[0]
-        if self.n > 1:
-            batch_links.insert(0, self)
+                 batch_links: [Tuple[str, int]], name: str):
+        n = tensor.shape[0]
+        for plate_name, plate_n in batch_links:
+            if plate_name == name:
+                raise ValueError(
+                    "Cannot create independent tensor with name " + name + ". A parent sample has already used"
+                    " this name. Use a different name for this independent dimension.")
+        batch_links.insert(0, (name, n))
         super().__init__(tensor, parents, batch_links, name)
+        self.n = n
 
 
 class StochasticTensor(Tensor):
     # TODO: Copy original tensor to make sure it cannot change using inplace
     def __init__(self, tensor: torch.Tensor, parents: [Tensor], sampling_method: storch.Method,
-                 batch_links: [Union[StochasticTensor, IndependentTensor]],
-                 distribution: Distribution, requires_grad: bool, n: int, name: Optional[str] = None):
-        if n > 1:
-            batch_links.insert(0, self)
+                 batch_links: [Tuple[str, int]],
+                 distribution: Distribution, requires_grad: bool, n: int, name: str):
+        for plate_name, plate_n in batch_links:
+            if plate_name == name:
+                raise ValueError("Cannot create stochastic tensor with name " + name + ". A parent sample has already used"
+                                " this name. Use a different name for this sample.")
+        batch_links.insert(0, (name, n))
         self.n = n
         self.distribution = distribution
         super().__init__(tensor, parents, batch_links, name)

@@ -2,14 +2,13 @@ from abc import ABC, abstractmethod
 from torch.distributions import Distribution, Categorical, OneHotCategorical, Bernoulli, RelaxedOneHotCategorical, RelaxedBernoulli
 from storch.tensor import DeterministicTensor, StochasticTensor
 import torch
-from typing import Optional, Type, Union
+from typing import Optional, Type, Union, Dict
 from storch.util import has_differentiable_path, get_distr_parameters
 from pyro.distributions import RelaxedBernoulliStraightThrough, RelaxedOneHotCategoricalStraightThrough
-from storch.typing import DiscreteDistribution, BaselineFactory
+from storch.typing import DiscreteDistribution, BaselineFactory, Plate
 from functools import reduce
 from operator import mul
 import storch
-from storch.wrappers import plate_in
 from storch.method.baseline import MovingAverageBaseline, BatchAverageBaseline
 
 class Method(ABC, torch.nn.Module):
@@ -51,15 +50,15 @@ class Method(ABC, torch.nn.Module):
 
     def sample(self, sample_name: str, distr: Distribution, n: int = 1) -> StochasticTensor:
         # Unwrap the distributions parameters
-        params = get_distr_parameters(distr, filter_requires_grad=False)
-        parents = {}
-        plates = storch.wrappers._plate_links.copy()
+        params: Dict[str, torch.Tensor] = get_distr_parameters(distr, filter_requires_grad=False)
+        parents: Dict[str, torch.Tensor] = {}
+        plates: [Plate] = storch.wrappers._plate_links.copy()
         for name, p in params.items():
             if isinstance(p, storch.Tensor):
                 try:
                     parents[name] = p
                     for plate in p.batch_links:
-                        if not plate_in(plate, plates):
+                        if plate not in plates:
                             plates.append(plate)
                     setattr(distr, name, p._tensor)
                     params[name] = p._tensor
@@ -67,7 +66,7 @@ class Method(ABC, torch.nn.Module):
                     if storch._debug:
                         print("Couldn't unwrap parameter", name, "on distribution", distr)
 
-        tensor = self._sample_tensor(distr, n)
+        tensor: torch.Tensor = self._sample_tensor(distr, n)
 
         if n == 1:
             tensor = tensor.squeeze(0)

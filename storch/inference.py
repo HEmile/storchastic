@@ -14,31 +14,25 @@ _backward_cost: Optional[DeterministicTensor] = None
 _accum_grad: bool = False
 
 
-def denote_independent(tensor: AnyTensor, dims: Dims) -> IndependentTensor:
+def denote_independent(tensor: AnyTensor, dim: int, plate_name: str) -> IndependentTensor:
     """
     Denote the given dimensions on the tensor as being independent, that is, batched dimensions.
     It will automatically put these dimensions to the right.
     :param tensor:
     :param dims:
+    :param plate_name: Name of the plate. Reused if called again
     :return:
     """
-    if isinstance(dims, int):
-        dims = [dims]
-    dims = sorted(dims)
-    for index, dim in enumerate(dims):
-        if isinstance(tensor, torch.Tensor):
-            if dim != index:
-                tensor = tensor.transpose(dim, index)
-            tensor = IndependentTensor(tensor, [], [])
-        else:
-            t_tensor = tensor._tensor
-            if dim != index:
-                t_tensor = t_tensor.transpose(dim, index)
-            name = tensor.name + "_indep_" + str(index) if tensor.name else None
-            tensor = IndependentTensor(t_tensor, tensor.batch_links, [tensor], name)
-    return tensor
-
-
+    if isinstance(tensor, torch.Tensor):
+        if dim != 0:
+            tensor = tensor.transpose(dim, 0)
+        return IndependentTensor(tensor, [], [], plate_name)
+    else:
+        t_tensor = tensor._tensor
+        if dim != 0:
+            t_tensor = t_tensor.transpose(dim, 0)
+        name = tensor.name + "_indep_" + plate_name if tensor.name else plate_name
+        return IndependentTensor(t_tensor, tensor.batch_links, [tensor], name)
 
 
 def add_cost(cost: Tensor, name: str):
@@ -104,19 +98,15 @@ def backward(retain_graph=False, debug=False, print_costs=False, accum_grads=Fal
 
             # Sum out over the plate dimensions of the parent, so that the shape is the same as the parent but the event shape
             mean_cost = c._tensor
-            c_indices = c.batch_links.copy()
-            for index_p, plate in enumerate(parent.batch_links):
-                index_c = -100000
-                for i, _plate in enumerate(c_indices):
-                    if _plate is plate:
-                        index_c = i
-                        break
+            c_indices = c.multi_dim_plates()
+            for index_p, plate in enumerate(parent.multi_dim_plates()):
+                index_c = c_indices.index(plate)
                 if not index_c == index_p:
                     mean_cost = mean_cost.transpose(index_p, index_c)
                     c_indices[index_p], c_indices[index_c] = c_indices[index_c], c_indices[index_p]
 
             # Then take the mean over the resulting dimensions (ie, plates that are created by other samples)
-            mean_cost = reduce_mean(mean_cost, range(len(parent.batch_links)))
+            mean_cost = reduce_mean(mean_cost, parent.batch_dim_indices())
 
             additive_terms = parent.sampling_method._estimator(parent, c, mean_cost)
             # This can be None for eg reparameterization. The backwards call for reparameterization happens in the

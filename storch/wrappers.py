@@ -1,9 +1,10 @@
 from __future__ import annotations
+
+from typing import Union, Any, Tuple
+
 import storch
 import torch
 from collections.abc import Iterable, Mapping
-
-# from storch.tensor import Tensor, DeterministicTensor, StochasticTensor
 
 _context_stochastic = False
 _context_deterministic = False
@@ -12,24 +13,31 @@ _context_name = None
 _context_amt_samples = 0
 _plate_links = []
 
+Plate = Tuple[str, int]
 
-def plate_in(plate, l):
-    # Not using "plate in plates" because __eq__ is overriden, which opens a deterministic context, which
-    # calls this method again, causing infinite recursion
-    for _plate in l:
-        if _plate is plate:
-            return True
-    return False
+# def plate_in(plate: Plate, l: [Plate]):
+#     # Not using "plate in plates" because __eq__ is overriden, which opens a deterministic context, which
+#     # calls this method again, causing infinite recursion
+#     for _plate in l:
+#         if plate_equal(plate, _plate):
+#             return True
+#     return False
+#
+#
+# def plate_equal(plate_1: Plate, plate_2: Plate):
+#     # Only doing == check on strings, as storch.Tensor's cannot reduce to bool
+#     return plate_1 is plate_2 or isinstance(plate_1, str) and isinstance(plate_2, str) and plate_1 == plate_2
 
-def is_iterable(a):
+
+def is_iterable(a: Any):
     return isinstance(a, Iterable) and not isinstance(a, torch.Tensor) and not isinstance(a, str)
 
 
-def _collect_parents_and_plates(a, parents: [storch.Tensor], plates: [storch.StochasticTensor]):
+def _collect_parents_and_plates(a: Any, parents: [storch.Tensor], plates: [Plate]):
     if isinstance(a, storch.Tensor):
         parents.append(a)
         for plate in a.batch_links:
-            if not plate_in(plate, plates):
+            if plate not in plates:
                 plates.append(plate)
     elif is_iterable(a):
         for _a in a:
@@ -39,36 +47,31 @@ def _collect_parents_and_plates(a, parents: [storch.Tensor], plates: [storch.Sto
             _collect_parents_and_plates(_a, parents, plates)
 
 
-def _unsqueeze_and_unwrap(a, plates: [storch.StochasticTensor]):
+def _unsqueeze_and_unwrap(a: Any, multi_dim_plates: [Plate]):
     if isinstance(a, storch.Tensor):
         tensor = a._tensor
 
         # It can be possible that the ordering of the plates does not align with the ordering of the inputs.
         # This part corrects this.
         amt_recognized = 0
-        links = a.batch_links.copy()
-        for i, plate in enumerate(plates):
-            if plate_in(plate, a.batch_links):
-                if plate is not links[amt_recognized]:
+        links: [Plate] = a.batch_links.copy()
+        for i, plate in enumerate(multi_dim_plates):
+            if plate in a.batch_links:
+                if plate != links[amt_recognized]:
                     # The plate is also in the tensor, but not in the ordering expected. So switch that ordering
-                    j = -1
-                    for k, _plate in enumerate(links):
-                        # Not using links.index to prevent recursion
-                        if _plate is plate:
-                            j = k
-                            break
+                    j = links.index(plate)
                     tensor = tensor.transpose(j, amt_recognized)
                     links[amt_recognized], links[j] = links[j], links[amt_recognized]
                 amt_recognized += 1
 
-        for i, plate in enumerate(plates):
-            if not plate_in(plate, a.batch_links):
+        for i, plate in enumerate(multi_dim_plates):
+            if plate not in a.batch_links:
                 tensor = tensor.unsqueeze(i)
         return tensor
     elif is_iterable(a):
         l = []
         for _a in a:
-            l.append(_unsqueeze_and_unwrap(_a, plates))
+            l.append(_unsqueeze_and_unwrap(_a, multi_dim_plates))
         if isinstance(a, tuple):
             return tuple(l)
         return l
@@ -82,8 +85,8 @@ def _unsqueeze_and_unwrap(a, plates: [storch.StochasticTensor]):
 
 
 def _unwrap(*args, **kwargs):
-    parents = []
-    plates: [storch.StochasticTensor] = []
+    parents: [storch.Tensor] = []
+    plates: [Plate] = []
 
     # Collect parent tensors and plates
     _collect_parents_and_plates(args, parents, plates)
@@ -91,23 +94,29 @@ def _unwrap(*args, **kwargs):
 
     storch.wrappers._plate_links = plates
 
+    # Get the list of plates with size larger than 1 for the unsqueezing of tensors
+    multi_dim_plates = []
+    for plate_name, plate_n in plates:
+        if plate_n > 1:
+            multi_dim_plates.append((plate_name, plate_n))
+
     # Unsqueeze and align batched dimensions so that batching works easily.
     unsqueezed_args = []
     for t in args:
-        unsqueezed_args.append(_unsqueeze_and_unwrap(t, plates))
+        unsqueezed_args.append(_unsqueeze_and_unwrap(t, multi_dim_plates))
     unsqueezed_kwargs = {}
     for k, v in kwargs.items():
-        unsqueezed_kwargs[k] = _unsqueeze_and_unwrap(v, plates)
+        unsqueezed_kwargs[k] = _unsqueeze_and_unwrap(v, multi_dim_plates)
     return unsqueezed_args, unsqueezed_kwargs, parents, plates
 
 
-def _process_deterministic(o, parents, plates, is_cost, name):
+def _process_deterministic(o: Any, parents: [storch.Tensor], plates: [Plate], is_cost: bool, name: str):
     if o is None:
         return
     if isinstance(o, storch.Tensor):
         if o.stochastic:
             raise RuntimeError("Creation of stochastic storch Tensor within deterministic context")
-        # TODO: Does this require shape checking?
+        # TODO: Does this require shape checking? Parent/Plate checking?
         return o
     if isinstance(o, torch.Tensor):  # Explicitly _not_ a storch.Tensor
         t = storch.DeterministicTensor(o, parents, plates, is_cost, name=name)
@@ -119,7 +128,7 @@ def _process_deterministic(o, parents, plates, is_cost, name):
     raise NotImplementedError("Handling of other types of return values is currently not implemented: ", o)
 
 
-def _deterministic(fn, is_cost):
+def _deterministic(fn, is_cost: bool):
     def wrapper(*args, **kwargs):
         if storch.wrappers._context_stochastic:
             # TODO check if we can re-add this
@@ -163,7 +172,7 @@ def deterministic(fn):
 def cost(fn):
     return _deterministic(fn, True)
 
-def _self_deterministic(fn, self):
+def _self_deterministic(fn, self: storch.Tensor):
     fn = deterministic(fn)
     def wrapper(*args, **kwargs):
         # Inserts the self object at the beginning of the passed arguments. In essence, it "fakes" the self reference.
@@ -174,7 +183,7 @@ def _self_deterministic(fn, self):
 
 
 
-def _process_stochastic(output, parents, plates):
+def _process_stochastic(output: torch.Tensor, parents: [storch.Tensor], plates: [Plate]):
     if isinstance(output, storch.Tensor):
         if not output.stochastic:
             # TODO: Calls _add_parents so something is going wrong here

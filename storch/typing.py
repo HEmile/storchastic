@@ -20,3 +20,5 @@ Dims = Union[int, _size]
 DiscreteDistribution = Union[Bernoulli, Categorical, OneHotCategorical]
 
 BaselineFactory = Callable[[StochasticTensor, DeterministicTensor], Baseline]
+
+Plate = Tuple[str, int]
