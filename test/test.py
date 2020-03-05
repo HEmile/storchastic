@@ -12,7 +12,6 @@ method = storch.method.Infer(Normal)
 score_method = storch.method.ScoreFunction()
 
 
-@storch.cost
 def loss(v):
     return torch.nn.MSELoss(reduction="none")(v, theta).mean(dim=-1)
 
@@ -28,6 +27,6 @@ for i in range(2):
     # plus = lambda a, b: a + b
     # plus = storch.deterministic(plus)
     agg_v = agg_v + s1 + s2 * mu
-    print(loss(agg_v))
+    storch.add_cost(loss(agg_v), "loss")
 
 storch.backward(debug=True, accum_grads=False)

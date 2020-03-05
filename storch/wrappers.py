@@ -5,8 +5,8 @@ from typing import Union, Any, Tuple, List, Optional
 import storch
 import torch
 from collections.abc import Iterable, Mapping
-import warnings
 from functools import wraps
+from storch.exceptions import IllegalStorchExposeError
 
 _context_stochastic = False
 _context_deterministic = 0
@@ -256,8 +256,8 @@ def _exception_wrapper(fn):
     def wrapper(*args, **kwargs):
         for a in args:
             if isinstance(a, storch.Tensor):
-                raise RuntimeError("It is not allowed to call this method using storch.Tensor, likely because it exposes its"
-                                   "wrapped tensor to Python.")
+                raise IllegalStorchExposeError("It is not allowed to call this method using storch.Tensor, likely "
+                                               "because it exposes its wrapped tensor to Python.")
         return fn(*args, **kwargs)
     return wrapper
 

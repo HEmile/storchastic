@@ -26,13 +26,14 @@ _excluded_init = {
     "zeros",
     "compiled_with_cxx11_abi",
 }
-_unwrap_only = {
+_unwrap_only_init = {
     "_has_compatible_shallow_copy_type",
     "empty_like",
     "full_like",
     "ones_like",
     "is_distributed",
     "is_floating_point",
+    "is_signed",
     "is_same_size",
     "cudnn_is_acceptable",
     "numel",
@@ -44,15 +45,68 @@ _exception_init = {
     "equal",
     "is_complex",
     "is_nonzero",
-    "is_signed",
     "q_per_channel_axis",
     "q_scale",
     "q_zero_point"
 }
-_to_test = {
+_to_test_init = {
     "allclose",
     "cudnn_is_acceptable",
     "fbgemm_linear_quantize_weight",
     "numel"
+}
+
+_excluded_function = {
+    "get_softmax_dim",
+    "assert_int-or-pair"
+}
+
+_exception_tensor = {
+    "allclose",
+    "bernoulli",
+    "bernoulli_",
+    "equal",
+    "is_complex",
+    "is_nonzero",
+    "item",
+    "normal_"
+    "q_per_channel_axis",
+    "q_scale",
+    "q_zero_point",
+    "random_",
+    "stride",
+    "to_list",
+    "uniform_"
+}
+
+_unwrap_only_tensor = {
+    "_make_subclass"
+    "_dimI",
+    "_dimV",
+    "_is_view",
+    "_nnz",
+    "dense_dim",
+    "get_device",
+    "has_names",
+    "is_coalesced",
+    "is_continguous",
+    "is_distributed",
+    "is_floating_point",
+    "is_pinned",
+    "is_same_size",
+    "is_set_to",
+    "is_signed",
+    "nelement",
+    "numel",
+    "qscheme",
+    "size",
+    "sparse_dim",
+    "storage",
+    "storage_offset",
+
+}
+
+_to_test_tensor = {
+    "_make_subclass"
 }
 # print(_excluded_init)

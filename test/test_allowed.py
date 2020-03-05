@@ -1,6 +1,6 @@
 import storch
 from torch.distributions import Normal, Categorical, Poisson
-from storch.exceptions import IllegalConditionalError
+from storch.exceptions import IllegalStorchExposeError
 
 method = storch.method.Infer(Poisson)
 
@@ -11,7 +11,7 @@ s = method.sample("oeps", d)
 try:
     if s:
         print("Oeps")
-except IllegalConditionalError:
+except IllegalStorchExposeError:
     print("Good!!")
 
 if s == s:

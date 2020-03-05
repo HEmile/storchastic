@@ -7,7 +7,9 @@ from typing import Union, List, Tuple, Dict, Iterable, Any, Callable
 import builtins
 from itertools import product
 from typing import Optional
-from torch import dtype, device, layout, strided, Size
+from torch import Size
+from storch.exceptions import IllegalStorchExposeError
+from storch.excluded_init import _exception_tensor, _unwrap_only_tensor
 
 # from storch.typing import BatchTensor
 
@@ -63,80 +65,12 @@ class Tensor(torch.Tensor):
         self.event_dims = len(self.event_shape)
         self.batch_links = batch_links
 
-    def __getattribute__(self, name):
-        # TODO: We can possibly improve the performance of this method by precomputing the wrappers.
-        # Loop over the dict, and for missing values, wrap the callable.
-
-        # Note that __getattribute__ does not work for magic methods like __add__
-        # print("Trying to get", name)
-        if not storch.tensor._torch_dict:
-            storch.tensor._torch_dict = dir(torch.Tensor)
-        if name != "__dict__" and name != "__class__" and name not in Tensor.__dict__ \
-                and name in storch.tensor._torch_dict:
-            attr = getattr(Tensor, name)
-            if storch._debug:
-                print("Wrapping tensor function", name)
-            if isinstance(attr, Callable):
-                return storch.wrappers._self_deterministic(attr, self)
-            raise AttributeError(name)
-        else:
-            return super().__getattribute__(name)
-
-    def __dir__(self):
-        tensor_methods = dir(self.__class__)
-        attrs = list(self.__dict__.keys())
-        keys = tensor_methods + attrs
-
-        return sorted(keys)
-
-    # @staticmethod
-    # def __new__(cls, *args, **kwargs):
-    #     # print("here")
-    #     tensor = args[0]
-    #     try:
-    #         # Pass the input tensor to register this tensor in C. Or something.
-    #         if tensor.ndimension() > 0:
-    #             return super(Tensor, cls).__new__(cls, tensor)
-    #     except TypeError as e:
-    #         if storch._debug:
-    #             print("Was not able to create the object using the input tensor. Using a fallback construction.")
-    #             print("TypeError:", e)
-    #
-    #         # For some reason, scalar tensors cannot be used in the __new__ constructor? That's when these type errors could
-    #         # happen. It can also happen with eg bool tensors. Passing the device is still useful
-    #     return super(Tensor, cls).__new__(cls, device=args[0].device)  # args[0])
-
     @staticmethod
     def __new__(cls, *args, **kwargs):
         tensor = args[0]
         # Pass the input tensor to register this tensor in C. This will initialize an empty (0s?) tensor in the backend.
         # TODO: Does that mean it will require double the memory?
-        return super(Tensor, cls).__new__(cls, size=tuple(tensor.shape), device=tensor.device)
-
-    def new_tensor(self, data: Any, dtype: Optional[dtype] = None, device: Union[device, str, None] = None,
-                   requires_grad: bool = False) -> Tensor:
-        return self._tensor.new_tensor(data, dtype, device, requires_grad)
-
-    def new_full(self, size: _size, fill_value: torch.Number, *, dtype: dtype = None, layout: layout = strided,
-                 device: Union[device, str, None] = None, requires_grad: bool = False) -> Tensor:
-        return self._tensor.new_full(size, fill_value, dtype=dtype, layout=layout, device=device,
-                                     requires_grad=requires_grad)
-
-    def new_empty(self, size: _size, *, dtype: dtype = None, layout: layout = strided,
-                  device: Union[device, str, None] = None, requires_grad: bool = False) -> Tensor:
-        return self._tensor.new_empty(size, dtype=dtype, layout=layout, device=device, requires_grad=requires_grad)
-
-    def new_ones(self, size: _size, dtype: Optional[dtype] = None, device: Union[device, str, None] = None,
-                 requires_grad: bool = False) -> Tensor:
-        return self._tensor.new_ones(size, dtype, device, requires_grad)
-
-    def new_zeros(self, size: _size, *, dtype: dtype = None, layout: layout = strided,
-                  device: Union[device, str, None] = None, requires_grad: bool = False) -> Tensor:
-        return self._tensor.new_zeros(size, dtype=dtype, layout=layout, device=device, requires_grad=requires_grad)
-
-    @storch.deterministic
-    def __eq__(self, other):
-        return self.__eq__(other)
+        return super(Tensor, cls).__new__(cls, device=tensor.device)
 
     def __hash__(self):
         return object.__hash__(self)
@@ -156,6 +90,10 @@ class Tensor(torch.Tensor):
 
     def __repr__(self):
         return object.__repr__(self)
+
+    @storch.deterministic
+    def __eq__(self, other):
+        return self.__eq__(other)
 
     def _walk(self, expand_fn, depth_first=True, only_differentiable=False, repeat_visited=False, walk_fn=lambda x: x):
         visited = set()
@@ -210,9 +148,6 @@ class Tensor(torch.Tensor):
     def shape(self) -> torch.Size:
         return self._tensor.size()
 
-    def size(self) -> torch.Size:
-        return self._tensor.size()
-
     def is_cuda(self):
         return self._tensor.is_cuda
 
@@ -262,141 +197,90 @@ class Tensor(torch.Tensor):
             if plate_n > 1:
                 yield plate_name, plate_n
 
+    def backward(self, gradient: Optional[Tensor]=None, keep_graph: bool=False, create_graph: bool=False) -> None:
+        raise NotImplementedError("Cannot call .backward on storch.Tensor. Instead, register cost nodes using "
+                                  "storch.add_cost, then use storch.backward().")
+
+
     # region OperatorOverloads
 
     def __len__(self):
         return self._tensor.__len__()
 
-    @storch.deterministic
-    def __getitem__(self, indices: Union[None, _int, slice, Tensor, List, Tuple]):
-        # TODO: properly test this
-        return self.__getitem__(indices)
-
+    # TODO: Is this safe?
     def __index__(self):
         return self._tensor.__index__()
 
-    @storch.deterministic
-    def __setitem__(self, key, value):
-        return self.__setitem__(key, value)
-
-    @storch.deterministic
-    def __add__(self, other):
-        return self.__add__(other)
-
-    @storch.deterministic
-    def __radd__(self, other):
-        return self.__radd__(other)
-
-    @storch.deterministic
-    def __sub__(self, other):
-        return self.__sub__(other)
-
-    @storch.deterministic
-    def __mul__(self, other):
-        return self.__mul__(other)
-
-    @storch.deterministic
-    def __rmul__(self, other):
-        return self.__rmul__(other)
-
-    @storch.deterministic
-    def __matmul__(self, other):
-        return self.__matmul__(other)
-
-    @storch.deterministic
-    def __pow__(self, other):
-        return self.__pow__(other)
-
-    @storch.deterministic
-    def __div__(self, other):
-        return self.__div__(other)
-
-    @storch.deterministic
-    def __mod__(self, other):
-        return self.__mod__(other)
-
-    @storch.deterministic
-    def __truediv__(self, other):
-        return self.__truediv__(other)
-
-    @storch.deterministic
-    def __floordiv__(self, other):
-        return self.__floordiv__(other)
-
-    @storch.deterministic
-    def __rfloordiv__(self, other):
-        return self.__rfloordiv__(other)
-
-    @storch.deterministic
-    def __abs__(self):
-        return self.__abs__()
-
-    @storch.deterministic
-    def __and__(self, other):
-        return self.__and__(other)
-
+    # TODO: shouldn't this have @deterministic?
     def eq(self, other):
         return self.eq(other)
 
-    @storch.deterministic
-    def __ge__(self, other):
-        return self.__ge__(other)
+    def __getstate__(self):
+        raise NotImplementedError("Pickle is currently not implemented for storch tensors.")
 
-    @storch.deterministic
-    def __gt__(self, other):
-        return self.__gt__(other)
+    def __setstate__(self, state):
+        raise NotImplementedError("Pickle is currently not implemented for storch tensors.")
 
-    @storch.deterministic
-    def __invert__(self):
-        return self.__invert__()
-
-    @storch.deterministic
-    def __le__(self, other):
-        return self.__le__(other)
-
-    @storch.deterministic
-    def __lshift__(self, other):
-        return self.__lshift__(other)
-
-    @storch.deterministic
-    def __lt__(self, other):
-        return self.__lt__(other)
-
-    @storch.deterministic
-    def ne(self, other):
-        return self.ne(other)
-
-    @storch.deterministic
-    def __neg__(self):
-        return self.__neg__()
-
-    @storch.deterministic
-    def __or__(self, other):
-        return self.__or__(other)
-
-    @storch.deterministic
-    def __rshift__(self, other):
-        return self.__rshift__(other)
-
-    @storch.deterministic
-    def __xor__(self, other):
-        return self.__xor__(other)
+    def __and__(self, other):
+        if isinstance(other, bool):
+            raise IllegalStorchExposeError("Calling 'and' with a bool exposes the underlying tensor as a bool.")
+        return storch.deterministic(self._tensor.__and__)(other)
 
     def __bool__(self):
-        from storch.exceptions import IllegalConditionalError
-        raise IllegalConditionalError("It is not allowed to convert storch tensors to boolean. Make sure to unwrap "
+        raise IllegalStorchExposeError("It is not allowed to convert storch tensors to boolean. Make sure to unwrap "
                                       "storch tensors to normal torch tensor to use this tensor as a boolean.")
 
+    def __float__(self):
+        raise IllegalStorchExposeError("It is not allowed to convert storch tensors to float. Make sure to unwrap "
+                                      "storch tensors to normal torch tensor to use this tensor as a float.")
+
+    def __int__(self):
+        raise IllegalStorchExposeError("It is not allowed to convert storch tensors to int. Make sure to unwrap "
+                                      "storch tensors to normal torch tensor to use this tensor as an int.")
+
+    def __long__(self):
+        raise IllegalStorchExposeError("It is not allowed to convert storch tensors to long. Make sure to unwrap "
+                                      "storch tensors to normal torch tensor to use this tensor as a long.")
+
+    def __nonzero__(self) -> builtins.bool:
+        raise IllegalStorchExposeError("It is not allowed to convert storch tensors to boolean. Make sure to unwrap "
+                                       "storch tensors to normal torch tensor to use this tensor as a boolean.")
+
     def __array__(self):
-        from storch.exceptions import IllegalConditionalError
-        raise IllegalConditionalError("It is not allowed to convert storch tensors to numpy arrays. Make sure to unwrap "
-                                      "storch tensors to normal torch tensor to use this tensor as a np.array.")
+        self.numpy()
 
     def __array_wrap__(self):
-        from storch.exceptions import IllegalConditionalError
-        raise IllegalConditionalError("It is not allowed to convert storch tensors to numpy arrays. Make sure to unwrap "
-                                      "storch tensors to normal torch tensor to use this tensor as a np.array.")
+        self.numpy()
+
+    def numpy(self):
+        raise IllegalStorchExposeError(
+            "It is not allowed to convert storch tensors to numpy arrays. Make sure to unwrap "
+            "storch tensors to normal torch tensor to use this tensor as a np.array.")
+
+    def __contains__(self, item):
+        raise IllegalStorchExposeError("It is not allowed to expose storch tensors via in statements.")
+
+    def __deepcopy__(self, memodict={}):
+        raise NotImplementedError("There is currently no deep copying implementation for storch Tensors.")
+
+    def __iter__(self):
+        raise NotImplementedError("Cannot currently iterate over storch Tensors.")
+
+    def detach_(self) -> Tensor:
+        raise NotImplementedError("In place detach is not allowed on storch tensors.")
     # endregion
+
+
+for m in dir(torch.Tensor):
+    v = getattr(torch.Tensor, m)
+    if isinstance(v, Callable) and m not in Tensor.__dict__ and m not in object.__dict__:
+        if m in _exception_tensor:
+            setattr(torch.Tensor, m, storch._exception_wrapper(v))
+        elif m in _unwrap_only_tensor:
+            setattr(torch.Tensor, m , storch._unpack_wrapper(v))
+        else:
+            setattr(torch.Tensor, m, storch.deterministic(v))
+
 
 
 class CostTensor(Tensor):

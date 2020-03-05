@@ -8,10 +8,10 @@ from .util import print_graph
 from .storch import *
 import storch.typing
 import storch.nn
-_debug = False
-
 from inspect import isclass
-from .excluded_init import _excluded_init, _exception_init, _unwrap_only
+from .excluded_init import _excluded_init, _exception_init, _unwrap_only_init, _excluded_function
+
+_debug = False
 
 # Wrap all (common) normal PyTorch functions. This is required because they call
 # C code. The returned tensors from the C code can only automatically be wrapped
@@ -25,12 +25,15 @@ for m, v in torch.__dict__.items():
         continue
     if m in _exception_init:
         torch.__dict__[m] = _exception_wrapper(v)
-    elif m in _unwrap_only:
+    elif m in _unwrap_only_init:
         torch.__dict__[m] = _unpack_wrapper(v)
     elif not isclass(v) and not str.startswith(m, "_cufft_") \
             and not str.startswith(m, "rand") and m not in _excluded_init:
         torch.__dict__[m] = deterministic(v)
 
+let_through = False
 for m, v in torch.nn.functional.__dict__.items():
-    if isinstance(v, Callable):
+    if m == "conv1d":
+        let_through = True
+    if let_through and isinstance(v, Callable) and m not in _excluded_function:
         torch.nn.functional.__dict__[m] = deterministic(v)
