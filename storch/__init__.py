@@ -1,13 +1,14 @@
 from typing import Callable
 
-from .wrappers import deterministic, stochastic, cost, _exception_wrapper, _unpack_wrapper
-from .tensor import Tensor, DeterministicTensor, StochasticTensor
+from .wrappers import deterministic, stochastic, reduce, _exception_wrapper, _unpack_wrapper
+from .tensor import Tensor, CostTensor, StochasticTensor
 from .method import *
 from .inference import backward, add_cost, reset, denote_independent
 from .util import print_graph
 from .storch import *
 import storch.typing
-_debug = True
+import storch.nn
+_debug = False
 
 from inspect import isclass
 from .excluded_init import _excluded_init, _exception_init, _unwrap_only

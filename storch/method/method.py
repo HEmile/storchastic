@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from torch.distributions import Distribution, Categorical, OneHotCategorical, Bernoulli, RelaxedOneHotCategorical, RelaxedBernoulli
-from storch.tensor import DeterministicTensor, StochasticTensor
+from storch.tensor import CostTensor, StochasticTensor
 import torch
 from typing import Optional, Type, Union, Dict
 from storch.util import has_differentiable_path, get_distr_parameters
@@ -83,7 +83,7 @@ class Method(ABC, torch.nn.Module):
 
         return s_tensor
 
-    def _estimator(self, tensor: StochasticTensor, cost_node: DeterministicTensor, costs: torch.Tensor) -> Optional[torch.Tensor]:
+    def _estimator(self, tensor: StochasticTensor, cost_node: CostTensor, costs: torch.Tensor) -> Optional[torch.Tensor]:
         # For docs: costs here is aligned with the StochasticTensor, that's why there's two different things.
         self._estimation_triples.append((tensor, cost_node, costs))
         return self.estimator(tensor, cost_node, costs)
@@ -100,10 +100,10 @@ class Method(ABC, torch.nn.Module):
     @abstractmethod
     # Estimators should optionally return a torch.Tensor that is going to be added to the total cost function
     # In the case of for example reparameterization, None can be returned to denote that no cost function is added
-    def estimator(self, tensor: StochasticTensor, cost_node: DeterministicTensor, costs: torch.Tensor) -> Optional[torch.Tensor]:
+    def estimator(self, tensor: StochasticTensor, cost_node: CostTensor, costs: torch.Tensor) -> Optional[torch.Tensor]:
         pass
 
-    def update_parameters(self, result_triples: [(StochasticTensor, DeterministicTensor, torch.Tensor)]) -> None:
+    def update_parameters(self, result_triples: [(StochasticTensor, CostTensor, torch.Tensor)]) -> None:
         pass
 
 
@@ -124,10 +124,10 @@ class Infer(Method):
     def _sample_tensor(self, distr: Distribution, n: int) -> torch.Tensor:
         return self._method._sample_tensor(distr, n)
 
-    def estimator(self, tensor: StochasticTensor, cost_node: DeterministicTensor, costs: torch.Tensor) -> Optional[torch.Tensor]:
+    def estimator(self, tensor: StochasticTensor, cost_node: CostTensor, costs: torch.Tensor) -> Optional[torch.Tensor]:
         return self._method.estimator(tensor, cost_node, costs)
 
-    def update_parameters(self, result_triples: [(StochasticTensor, DeterministicTensor, torch.Tensor)]):
+    def update_parameters(self, result_triples: [(StochasticTensor, CostTensor, torch.Tensor)]):
         self._method.update_parameters(result_triples)
 
 class Reparameterization(Method):
@@ -147,7 +147,7 @@ class Reparameterization(Method):
                                       "distribution, make sure to use eg GumbelSoftmax.")
         return distr.rsample((n,))
 
-    def estimator(self, tensor: StochasticTensor, cost_node: DeterministicTensor, costs: torch.Tensor) -> Optional[torch.Tensor]:
+    def estimator(self, tensor: StochasticTensor, cost_node: CostTensor, costs: torch.Tensor) -> Optional[torch.Tensor]:
         if has_differentiable_path(cost_node, tensor):
             # There is a differentiable path, so we will just use reparameterization here.
             return None
@@ -155,7 +155,7 @@ class Reparameterization(Method):
             # No automatic baselines
             return self._score_method.estimator(tensor, cost_node, costs)
 
-    def update_parameters(self, result_triples: [(StochasticTensor, DeterministicTensor, torch.Tensor)]):
+    def update_parameters(self, result_triples: [(StochasticTensor, CostTensor, torch.Tensor)]):
         self._score_method.update_parameters(result_triples)
 
 class GumbelSoftmax(Method):
@@ -187,14 +187,14 @@ class GumbelSoftmax(Method):
             raise ValueError("Using Gumbel Softmax with non-discrete distribution")
         return gumbel_distr.rsample((n,))
 
-    def estimator(self, tensor: StochasticTensor, cost_node: DeterministicTensor, costs: torch.Tensor) -> Optional[torch.Tensor]:
+    def estimator(self, tensor: StochasticTensor, cost_node: CostTensor, costs: torch.Tensor) -> Optional[torch.Tensor]:
         if has_differentiable_path(cost_node, tensor):
             return None
         else:
             s = ScoreFunction()
             return s.estimator(tensor, cost_node, costs)
 
-    def update_parameters(self, result_triples: [(StochasticTensor, DeterministicTensor, torch.Tensor)]):
+    def update_parameters(self, result_triples: [(StochasticTensor, CostTensor, torch.Tensor)]):
         if self.training:
             self.temperature = torch.max(self.min_temperature, torch.exp(-self.annealing_rate * self.iterations))
 
@@ -217,7 +217,7 @@ class ScoreFunction(Method):
     def _sample_tensor(self, distr: Distribution, n: int) -> torch.Tensor:
         return distr.sample((n, ))
 
-    def estimator(self, tensor: StochasticTensor, cost_node: DeterministicTensor, costs: torch.Tensor) -> torch.Tensor:
+    def estimator(self, tensor: StochasticTensor, cost_node: CostTensor, costs: torch.Tensor) -> torch.Tensor:
         log_prob = tensor.distribution.log_prob(tensor._tensor)
         # Sum out over the even shape
         log_prob = log_prob.sum(dim=list(range(len(tensor.batch_links), len(log_prob.shape))))
@@ -243,7 +243,7 @@ class Expect(Method):
         # print(distr.batch_shape, distr.event_shape)
         # print(support[9, 1])
 
-    def estimator(self, tensor: StochasticTensor, cost_node: DeterministicTensor, costs: torch.Tensor) -> Optional[torch.Tensor]:
+    def estimator(self, tensor: StochasticTensor, cost_node: CostTensor, costs: torch.Tensor) -> Optional[torch.Tensor]:
         pass
 
 
@@ -254,5 +254,5 @@ class UnorderedSet(Method):
     def _sample_tensor(self, distr: Distribution, n: int) -> torch.Tensor:
         pass
 
-    def estimator(self, tensor: StochasticTensor, cost_node: DeterministicTensor, costs: torch.Tensor) -> Optional[torch.Tensor]:
+    def estimator(self, tensor: StochasticTensor, cost_node: CostTensor, costs: torch.Tensor) -> Optional[torch.Tensor]:
         pass

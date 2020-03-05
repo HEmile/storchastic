@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from typing import Union, Any, Tuple
+from typing import Union, Any, Tuple, List, Optional
 
 import storch
 import torch
 from collections.abc import Iterable, Mapping
 import warnings
+from functools import wraps
 
 _context_stochastic = False
 _context_deterministic = 0
@@ -55,7 +56,7 @@ def _unsqueeze_and_unwrap(a: Any, multi_dim_plates: [Plate]):
         # It can be possible that the ordering of the plates does not align with the ordering of the inputs.
         # This part corrects this.
         amt_recognized = 0
-        links: [Plate] = a.multi_dim_plates()
+        links: [Plate] = list(a.multi_dim_plates())
         for i, plate in enumerate(multi_dim_plates):
             if plate in a.batch_links:
                 if plate != links[amt_recognized]:
@@ -85,7 +86,7 @@ def _unsqueeze_and_unwrap(a: Any, multi_dim_plates: [Plate]):
         return a
 
 
-def _unwrap(*args, **kwargs):
+def _handle_args(unwrap=True, *args, **kwargs):
     parents: [storch.Tensor] = []
     plates: [Plate] = []
 
@@ -98,18 +99,19 @@ def _unwrap(*args, **kwargs):
     for plate_name, plate_n in plates:
         if plate_n > 1:
             multi_dim_plates.append((plate_name, plate_n))
+    if unwrap:
+        # Unsqueeze and align batched dimensions so that batching works easily.
+        unsqueezed_args = []
+        for t in args:
+            unsqueezed_args.append(_unsqueeze_and_unwrap(t, multi_dim_plates))
+        unsqueezed_kwargs = {}
+        for k, v in kwargs.items():
+            unsqueezed_kwargs[k] = _unsqueeze_and_unwrap(v, multi_dim_plates)
+        return unsqueezed_args, unsqueezed_kwargs, parents, plates
+    return args, kwargs, parents, plates
 
-    # Unsqueeze and align batched dimensions so that batching works easily.
-    unsqueezed_args = []
-    for t in args:
-        unsqueezed_args.append(_unsqueeze_and_unwrap(t, multi_dim_plates))
-    unsqueezed_kwargs = {}
-    for k, v in kwargs.items():
-        unsqueezed_kwargs[k] = _unsqueeze_and_unwrap(v, multi_dim_plates)
-    return unsqueezed_args, unsqueezed_kwargs, parents, plates
 
-
-def _process_deterministic(o: Any, parents: [storch.Tensor], plates: [Plate], is_cost: bool, name: str):
+def _process_deterministic(o: Any, parents: [storch.Tensor], plates: [Plate], name: str):
     if o is None:
         return
     if isinstance(o, storch.Tensor):
@@ -118,35 +120,32 @@ def _process_deterministic(o: Any, parents: [storch.Tensor], plates: [Plate], is
         # TODO: Does this require shape checking? Parent/Plate checking?
         return o
     if isinstance(o, torch.Tensor):  # Explicitly _not_ a storch.Tensor
-        t = storch.DeterministicTensor(o, parents, plates, is_cost, name=name)
-        if is_cost and t.event_shape != ():
-            # TODO: Make sure the o.size() check takes into account the size of the sample.
-            raise ValueError(
-                "Event shapes (ie, non batched dimensions) of cost nodes have to be single floating point numbers. ")
+        t = storch.Tensor(o, parents, plates, name=name)
         return t
     raise NotImplementedError("Handling of other types of return values is currently not implemented: ", o)
 
 
-def _deterministic(fn, is_cost: bool):
+def _deterministic(fn, *, unwrap: bool = True, reduce_dims: Optional[Union[str, List[str]]] = None):
+    @wraps(fn)
     def wrapper(*args, **kwargs):
         if storch.wrappers._context_stochastic:
             # TODO check if we can re-add this
             raise NotImplementedError(
                 "It is currently not allowed to open a deterministic context in a stochastic context")
-        if storch.wrappers._context_deterministic > 0:
-            if is_cost:
-                raise RuntimeError("Cannot call storch.cost from within a deterministic context.")
+            # if storch.wrappers._context_deterministic > 0:
+            #     if is_cost:
+            #         raise RuntimeError("Cannot call storch.cost from within a deterministic context.")
 
             # TODO: This is currently uncommented and it will in fact unwrap. This was required because it was, eg,
             # possible to open a deterministic context, passing distributions with storch.Tensors as parameters,
             # then doing computations on these parameters. This is because these storch.Tensors will not be unwrapped
             # in the deterministic context as the unwrapping only considers lists.
-            # We are already in a deterministic context, no need to wrap or unwrap as only the outer dependencies matter
-            return fn(*args, **kwargs)
+            # # We are already in a deterministic context, no need to wrap or unwrap as only the outer dependencies matter
+            # return fn(*args, **kwargs)
 
-        args, kwargs, parents, plates = _unwrap(*args, **kwargs)
+        args, kwargs, parents, plates = _handle_args(unwrap, *args, **kwargs)
 
-        if not parents and not is_cost:
+        if not parents:
             return fn(*args, **kwargs)
 
         storch.wrappers._context_deterministic += 1
@@ -158,29 +157,37 @@ def _deterministic(fn, is_cost: bool):
 
         if storch.wrappers._ignore_wrap:
             return outputs
-
+        nonlocal reduce_dims
+        if reduce_dims:
+            if isinstance(reduce_dims, str):
+                reduce_dims = [reduce_dims]
+            plates = [p for p in plates if p[0] not in reduce_dims]
         if is_iterable(outputs):
             n_outputs = []
             for o in outputs:
-                n_outputs.append(_process_deterministic(o, parents, plates, is_cost, fn.__name__ + str(len(n_outputs))))
+                n_outputs.append(_process_deterministic(o, parents, plates, fn.__name__ + str(len(n_outputs))))
             outputs = n_outputs
         else:
-            outputs = _process_deterministic(outputs, parents, plates, is_cost, fn.__name__)
+            outputs = _process_deterministic(outputs, parents, plates, fn.__name__)
         return outputs
 
     return wrapper
 
 
-def deterministic(fn):
-    return _deterministic(fn, False)
+def deterministic(fn=None, *, unwrap=True):
+    if fn:
+        return _deterministic(fn, unwrap=unwrap)
+    return lambda _f: _deterministic(_f, unwrap=unwrap)
 
 
-def cost(fn):
-    return _deterministic(fn, True)
-
+def reduce(fn, dims: Union[str, List[str]]):
+    if storch._debug:
+        print("Reducing dims", dims)
+    return _deterministic(fn, reduce_dims=dims)
 
 def _self_deterministic(fn, self: storch.Tensor):
     fn = deterministic(fn)
+    @wraps(fn)
     def wrapper(*args, **kwargs):
         # Inserts the self object at the beginning of the passed arguments. In essence, it "fakes" the self reference.
         args = list(args)
@@ -212,13 +219,13 @@ def stochastic(fn):
     :param fn:
     :return:
     """
-
+    @wraps(fn)
     def wrapper(*args, **kwargs):
         if storch.wrappers._context_stochastic or storch.wrappers._context_deterministic > 0:
             raise RuntimeError("Cannot call storch.stochastic from within a stochastic or deterministic context.")
 
         # Save the parents
-        args, kwargs, parents, plates = _unwrap(*args, **kwargs)
+        args, kwargs, parents, plates = _handle_args(*args, **kwargs)
 
         storch.wrappers._plate_links = plates
         storch.wrappers._stochastic_parents = parents

@@ -1,10 +1,10 @@
 from typing import Dict
 
-from storch.tensor import Tensor, DeterministicTensor, StochasticTensor
+from storch.tensor import Tensor, CostTensor, StochasticTensor
 from torch.distributions import Distribution
 import torch
 
-def print_graph(costs: [DeterministicTensor]):
+def print_graph(costs: [CostTensor]):
     nodes = topological_sort(costs)
     counters = {"s": 1, "c": 1, "d": 1}
     names = {}
@@ -121,7 +121,7 @@ def has_differentiable_path(output: Tensor, input: Tensor):
     return False
 
 
-def topological_sort(costs: [DeterministicTensor]) -> [Tensor]:
+def topological_sort(costs: [CostTensor]) -> [Tensor]:
     """
     Implements reverse kahn's algorithm
     :param costs:

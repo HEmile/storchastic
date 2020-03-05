@@ -10,7 +10,7 @@ import torch.utils.data
 from torch import nn, optim
 from torch.nn import functional as F
 from torchvision.utils import save_image
-from storch import deterministic, cost, backward
+from storch import deterministic, backward
 import storch
 from torch.distributions import OneHotCategorical, RelaxedOneHotCategorical
 from examples.dataloader.data_loader import data_loaders
@@ -81,18 +81,17 @@ class VAE(nn.Module):
         h4 = self.activation(self.fc5(h3))
         return self.fc6(h4).sigmoid()
 
-    @cost
     def KLD(self, p, q):
         # see Appendix B from VAE paper:
         # Kingma and Welling. Auto-Encoding Variational Bayes. ICLR, 2014
         # https://arxiv.org/abs/1312.6114
 
-        div = torch.distributions.kl_divergence(p, q)
-        return div.sum(-1)
+        kld = torch.distributions.kl_divergence(p, q).sum(-1)
+        storch.add_cost(kld, "KL-divergence")
+        return kld
 
     def forward(self, x):
-        logits = self.encode(x.view(-1, 784))
-        logits = storch.denote_independent(logits, 0, "data")  # Denote the minibatch dimension as being independent
+        logits = self.encode(x)
         logits = logits.reshape(logits.shape[:-1] + (self.latents, 10))
 
         q = OneHotCategorical(logits=logits)
@@ -108,16 +107,9 @@ optimizer = optim.Adam(model.parameters(), lr=args.lr)
 
 
 # Reconstruction + KL divergence losses summed over all elements and batch
-@cost
 def loss_function(recon_x, x):
-    x = x.view(-1, 784)
-    # TODO: Not going to work: These are now two different data batch links.
-    #  There should be another way to link batch dimensions manually. Possibly requires some different object as key.
-    x = storch.denote_independent(x, 0, "data")
-    # print(recon_x, x)
-    BCE = storch.nn.b_binary_cross_entropy(recon_x, x, reduction="sum")
-
-    return BCE
+    bce = storch.nn.b_binary_cross_entropy(recon_x, x, reduction="sum")
+    return bce
 
 
 def train(epoch):
@@ -128,8 +120,10 @@ def train(epoch):
         optimizer.zero_grad()
         storch.reset()
 
+        # Denote the minibatch dimension as being independent
+        data = storch.denote_independent(data.view(-1, 784), 0, "data")
         recon_batch, KLD, z = model(data)
-        loss_function(recon_batch, data)
+        storch.add_cost(loss_function(recon_batch, data), "reconstruction")
         cond_log = batch_idx % args.log_interval == 0
         cost, loss = backward()
         train_loss += loss.item()
@@ -150,16 +144,14 @@ def train(epoch):
                 squared_diff = (m - mean)**2
                 sse = squared_diff.sum(0)
                 return sse.mean()
-            avg_loss = loss / len(data)
-            avg_cost = cost.item() / len(data)
             variance = _var(grads_logits)
             step = 100. * batch_idx / len(train_loader)
             global_step = 100 * (epoch - 1) + step
             print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}\tCost: {:.6f}\t Logits var {:.4E}'.format(
                 epoch, batch_idx * len(data), len(train_loader.dataset),
-                step, avg_loss, avg_cost, variance))
-            writer.add_scalar("train/ELBO", avg_cost, global_step)
-            writer.add_scalar("train/loss", avg_loss, global_step)
+                step, loss, cost, variance))
+            writer.add_scalar("train/ELBO", cost, global_step)
+            writer.add_scalar("train/loss", loss, global_step)
             writer.add_scalar("train/variance", variance, global_step)
     avg_train_loss = train_loss / len(train_loader.dataset)
     print('====> Epoch: {} Average loss: {:.4f}'.format(

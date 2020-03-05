@@ -24,7 +24,7 @@ class Tensor(torch.Tensor):
         if isinstance(tensor, Tensor):
             raise TypeError("storch.Tensors should be constructed with torch.Tensors, not other storch.Tensors.")
         plate_names = set()
-        batch_len = 0
+        batch_dims = 0
         # Check whether this tensor does not violate the constraints imposed by the given batch_links
         for plate in batch_links:
             plate_name, plate_n = plate
@@ -35,18 +35,18 @@ class Tensor(torch.Tensor):
             plate_names.add(plate_name)
             if plate_n == 1:  # plate length is 1. Ignore this dimension, as singleton dimensions should not exist.
                 continue
-            if len(tensor.shape) <= batch_len:
+            if len(tensor.shape) <= batch_dims:
                 raise ValueError(
                     "Got an input tensor with a shape too small for its surrounding batch. Violated at dimension "
-                    + str(batch_len) + " and plate shape dimension " + str(len(batch_links)) + ". Instead, it was " + str(
+                    + str(batch_dims) + " and plate shape dimension " + str(len(batch_links)) + ". Instead, it was " + str(
                         len(tensor.shape)))
-            elif not tensor.shape[batch_len] == plate_n:
+            elif not tensor.shape[batch_dims] == plate_n:
                 raise ValueError(
-                    "Storch Tensors should take into account their surrounding plates. Violated at dimension " + str(batch_len)
+                    "Storch Tensors should take into account their surrounding plates. Violated at dimension " + str(batch_dims)
                     + " and plate " + plate_name + " with size " + str(plate_n) + ". "
-                    "Instead, it was " + str(tensor.shape[batch_len]) + ". Batch links: " + str(batch_links) + " Tensor shape: "
+                    "Instead, it was " + str(tensor.shape[batch_dims]) + ". Batch links: " + str(batch_links) + " Tensor shape: "
                     + str(tensor.shape))
-            batch_len += 1
+            batch_dims += 1
 
         self._name = name
         self._tensor = tensor
@@ -58,8 +58,9 @@ class Tensor(torch.Tensor):
             self._parents.append((p, differentiable_link))
             p._children.append((self, differentiable_link))
         self._children = []
-        self.batch_len = batch_len
-        self.event_shape = tensor.shape[batch_len:]
+        self.batch_dims = batch_dims
+        self.event_shape = tensor.shape[batch_dims:]
+        self.event_dims = len(self.event_shape)
         self.batch_links = batch_links
 
     def __getattribute__(self, name):
@@ -203,7 +204,7 @@ class Tensor(torch.Tensor):
 
     @property
     def batch_shape(self) -> torch.Size:
-        return self._tensor.shape[:self.batch_len]
+        return self._tensor.shape[:self.batch_dims]
 
     @property
     def shape(self) -> torch.Size:
@@ -241,21 +242,25 @@ class Tensor(torch.Tensor):
         return self._tensor.register_hook(hook)
 
     def event_dim_indices(self):
-        return list(range(self.batch_len, self._tensor.dim()))
+        return range(self.batch_dims, self._tensor.dim())
 
     def batch_dim_indices(self):
-        return list(range(self.batch_len))
+        return range(self.batch_dims)
+
+    def get_batch_dim_index(self, batch_name: str):
+        for i, (plate_name, _) in enumerate(self.multi_dim_plates()):
+            if plate_name == batch_name:
+                return i
+        raise IndexError("Tensor has no such batch: " + batch_name + ". Alternatively, the dimension of this batch is 1.")
 
     def iterate_batch_indices(self):
         ranges = list(map(lambda a: list(range(a)), self.batch_shape))
         return product(*ranges)
 
-    def multi_dim_plates(self) -> [Plate]:
-        platez = []
+    def multi_dim_plates(self) -> Iterable[Plate]:
         for plate_name, plate_n in self.batch_links:
             if plate_n > 1:
-                platez.append((plate_name, plate_n))
-        return platez
+                yield plate_name, plate_n
 
     # region OperatorOverloads
 
@@ -394,19 +399,13 @@ class Tensor(torch.Tensor):
     # endregion
 
 
-class DeterministicTensor(Tensor):
-    def __init__(self, tensor: torch.Tensor, parents, batch_links: [Tuple[str, int]],
-                 is_cost: bool, name: Optional[str] = None):
+class CostTensor(Tensor):
+    def __init__(self, tensor: torch.Tensor, parents, batch_links: [Tuple[str, int]], name):
         super().__init__(tensor, parents, batch_links, name)
-        self._is_cost = is_cost
-        if is_cost and torch.is_grad_enabled():
-            storch.inference._cost_tensors.append(self)
-            if not name:
-                raise ValueError("Added a cost node without providing a name")
 
     @property
     def is_cost(self) -> bool:
-        return self._is_cost
+        return True
 
 
 class IndependentTensor(Tensor):
@@ -426,6 +425,11 @@ class IndependentTensor(Tensor):
         batch_links.insert(0, (name, n))
         super().__init__(tensor, parents, batch_links, name)
         self.n = n
+
+    # TODO: Should IndependentTensors be stochastic? Sometimes, like if it is denoting a minibatch, making them
+    #  stochastic seems like it is correct. Are there other cases?
+    def stochastic(self) -> bool:
+        return True
 
 
 class StochasticTensor(Tensor):

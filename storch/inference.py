@@ -1,4 +1,4 @@
-from storch.tensor import Tensor, StochasticTensor, DeterministicTensor, IndependentTensor
+from storch.tensor import Tensor, StochasticTensor, CostTensor, IndependentTensor
 import torch
 from storch.util import print_graph, reduce_mean
 import storch
@@ -8,9 +8,8 @@ from storch.typing import AnyTensor, Dims
 from functools import reduce
 from typing import Dict, Optional
 
-_cost_tensors: [DeterministicTensor] = []
+_cost_tensors: [CostTensor] = []
 _backward_indices: Dict[StochasticTensor, int] = {}
-_backward_cost: Optional[DeterministicTensor] = None
 _accum_grad: bool = False
 
 
@@ -23,6 +22,8 @@ def denote_independent(tensor: AnyTensor, dim: int, plate_name: str) -> Independ
     :param plate_name: Name of the plate. Reused if called again
     :return:
     """
+    if storch.wrappers._context_stochastic or storch.wrappers._context_deterministic > 0:
+        raise RuntimeError("Cannot create independent tensors within a deterministic or stochastic context.")
     if isinstance(tensor, torch.Tensor):
         if dim != 0:
             tensor = tensor.transpose(dim, 0)
@@ -40,10 +41,10 @@ def add_cost(cost: Tensor, name: str):
         raise ValueError("Can only register cost functions with empty event shapes")
     if not name:
         raise ValueError("No name provided to register cost node. Make sure to register an unique name with the cost.")
-    cost.name = name
-    cost._is_cost = True
+    cost = CostTensor(cost._tensor, [cost], cost.batch_links, name)
     if torch.is_grad_enabled():
         storch.inference._cost_tensors.append(cost)
+    return cost
 
 
 def _keep_grads_backwards(surrounding_node: Tensor, backwards_tensor: torch.Tensor) -> torch.Tensor:
@@ -89,16 +90,16 @@ def backward(retain_graph=False, debug=False, print_costs=False, accum_grads=Fal
         if print_costs:
             print(c.name, ":", avg_cost.item())
         total_cost += avg_cost
-        storch.inference._backward_cost = c
         for parent in c.walk_parents(depth_first=False):
-            if parent.stochastic:
+            # Instance check here instead of parent.stochastic, as backward methods are only used on these.
+            if isinstance(parent, StochasticTensor):
                 stochastic_nodes.add(parent)
-            if not parent.stochastic or not parent.requires_grad:
+            if not isinstance(parent, StochasticTensor) or not parent.requires_grad:
                 continue
 
             # Sum out over the plate dimensions of the parent, so that the shape is the same as the parent but the event shape
             mean_cost = c._tensor
-            c_indices = c.multi_dim_plates()
+            c_indices = list(c.multi_dim_plates())
             for index_p, plate in enumerate(parent.multi_dim_plates()):
                 index_c = c_indices.index(plate)
                 if not index_c == index_p:
@@ -127,8 +128,6 @@ def backward(retain_graph=False, debug=False, print_costs=False, accum_grads=Fal
             else:
                 accum_loss += avg_cost
                 total_loss += avg_cost
-
-    storch.inference._backward_cost = None
 
     if isinstance(accum_loss, torch.Tensor) and accum_loss.requires_grad:
         accum_loss.backward()
