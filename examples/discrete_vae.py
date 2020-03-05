@@ -77,7 +77,6 @@ class VAE(nn.Module):
 
     # @deterministic
     def decode(self, z):
-        print(z)
         h3 = self.activation(self.fc4(z))
         h4 = self.activation(self.fc5(h3))
         return self.fc6(h4).sigmoid()

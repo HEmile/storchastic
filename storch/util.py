@@ -13,7 +13,7 @@ def print_graph(costs: [DeterministicTensor]):
         if node in names:
             return names[node]
         if node.name:
-            if node.name not in names.values():
+            if node.name not in counters:
                 counters[node.name] = 1
                 name = node.name + "[" + str(0) + "]"
             else:

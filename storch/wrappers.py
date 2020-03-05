@@ -11,8 +11,8 @@ _context_stochastic = False
 _context_deterministic = 0
 _stochastic_parents = []
 _context_name = None
-_context_amt_samples = 0
 _plate_links = []
+_ignore_wrap = False
 
 Plate = Tuple[str, int]
 
@@ -93,8 +93,6 @@ def _unwrap(*args, **kwargs):
     _collect_parents_and_plates(args, parents, plates)
     _collect_parents_and_plates(kwargs, parents, plates)
 
-    storch.wrappers._plate_links = plates
-
     # Get the list of plates with size larger than 1 for the unsqueezing of tensors
     multi_dim_plates = []
     for plate_name, plate_n in plates:
@@ -143,16 +141,20 @@ def _deterministic(fn, is_cost: bool):
             # possible to open a deterministic context, passing distributions with storch.Tensors as parameters,
             # then doing computations on these parameters. This is because these storch.Tensors will not be unwrapped
             # in the deterministic context as the unwrapping only considers lists.
-            # # We are already in a deterministic context, no need to wrap or unwrap as only the outer dependencies matter
-            # return fn(*args, **kwargs)
+            # We are already in a deterministic context, no need to wrap or unwrap as only the outer dependencies matter
+            return fn(*args, **kwargs)
 
         args, kwargs, parents, plates = _unwrap(*args, **kwargs)
 
         if not parents and not is_cost:
             return fn(*args, **kwargs)
+
         storch.wrappers._context_deterministic += 1
-        outputs = fn(*args, **kwargs)
-        storch.wrappers._context_deterministic -= 1
+
+        try:
+            outputs = fn(*args, **kwargs)
+        finally:
+            storch.wrappers._context_deterministic -= 1
         if is_iterable(outputs):
             n_outputs = []
             for o in outputs:
@@ -160,7 +162,6 @@ def _deterministic(fn, is_cost: bool):
             outputs = n_outputs
         else:
             outputs = _process_deterministic(outputs, parents, plates, is_cost, fn.__name__)
-        storch.wrappers._plate_links = []
         return outputs
 
     return wrapper
@@ -211,14 +212,22 @@ def stochastic(fn):
     def wrapper(*args, **kwargs):
         if storch.wrappers._context_stochastic or storch.wrappers._context_deterministic > 0:
             raise RuntimeError("Cannot call storch.stochastic from within a stochastic or deterministic context.")
-        storch.wrappers._context_stochastic = True
-        storch.wrappers._context_name = fn.__name__
-        storch.wrappers._context_amt_samples = 0
+
         # Save the parents
         args, kwargs, parents, plates = _unwrap(*args, **kwargs)
-        storch.wrappers._stochastic_parents = parents
 
-        outputs = fn(*args, **kwargs)
+        storch.wrappers._plate_links = plates
+        storch.wrappers._stochastic_parents = parents
+        storch.wrappers._context_stochastic = True
+        storch.wrappers._context_name = fn.__name__
+
+        try:
+            outputs = fn(*args, **kwargs)
+        finally:
+            storch.wrappers._plate_links = []
+            storch.wrappers._stochastic_parents = []
+            storch.wrappers._context_stochastic = False
+            storch.wrappers._context_name = None
 
         # Add parents to the outputs
         if is_iterable(outputs):
@@ -227,10 +236,6 @@ def stochastic(fn):
                 processed_outputs.append(_process_stochastic(o, parents, plates))
         else:
             processed_outputs = _process_stochastic(outputs, parents, plates)
-        storch.wrappers._context_stochastic = False
-        storch.wrappers._stochastic_parents = []
-        storch.wrappers._context_name = None
-        storch.wrappers._plate_links = []
         return processed_outputs
 
     return wrapper
