@@ -155,6 +155,10 @@ def _deterministic(fn, is_cost: bool):
             outputs = fn(*args, **kwargs)
         finally:
             storch.wrappers._context_deterministic -= 1
+
+        if storch.wrappers._ignore_wrap:
+            return outputs
+
         if is_iterable(outputs):
             n_outputs = []
             for o in outputs:

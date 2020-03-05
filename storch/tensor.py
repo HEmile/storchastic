@@ -21,6 +21,8 @@ Plate = Tuple[str, int]
 class Tensor(torch.Tensor):
     def __init__(self, tensor: torch.Tensor, parents: [Tensor],
                  batch_links: [Plate], name: Optional[str] = None):
+        if isinstance(tensor, Tensor):
+            raise TypeError("storch.Tensors should be constructed with torch.Tensors, not other storch.Tensors.")
         plate_names = set()
         batch_len = 0
         # Check whether this tensor does not violate the constraints imposed by the given batch_links

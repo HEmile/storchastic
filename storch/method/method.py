@@ -52,34 +52,34 @@ class Method(ABC, torch.nn.Module):
         # Unwrap the distributions parameters
         params: Dict[str, torch.Tensor] = get_distr_parameters(distr, filter_requires_grad=False)
         parents: Dict[str, torch.Tensor] = {}
+        # If we are in an @stochastic context, external plates might exist.
         plates: [Plate] = storch.wrappers._plate_links.copy()
         for name, p in params.items():
             if isinstance(p, storch.Tensor):
-                try:
-                    parents[name] = p
-                    for plate in p.batch_links:
-                        if plate not in plates:
-                            plates.append(plate)
-                    setattr(distr, name, p._tensor)
-                    params[name] = p._tensor
-                except AttributeError as e:
-                    if storch._debug:
-                        print("Couldn't unwrap parameter", name, "on distribution", distr)
+                parents[name] = p
+                # The sample should have the batch links of the parameters in the distribution, if present.
+                for plate in p.batch_links:
+                    if plate not in plates:
+                        plates.append(plate)
+                params[name] = p._tensor
 
+        # Will not rewrap in @deterministic, because sampling statements will insert an additional dimensions in the
+        # first batch dimension, causing the rewrapping statement to error as it violates the plating constraints.
+        storch.wrappers._ignore_wrap = True
         tensor: torch.Tensor = self._sample_tensor(distr, n)
+        storch.wrappers._ignore_wrap = False
 
         if n == 1:
             tensor = tensor.squeeze(0)
-        s_tensor = StochasticTensor(tensor, storch.wrappers._stochastic_parents + list(parents.values()), self, plates, distr, len(params) > 0,
-                                    n, sample_name)
+
+        s_tensor = StochasticTensor(tensor, storch.wrappers._stochastic_parents + list(parents.values()), self, plates,
+                                    distr, len(params) > 0, n, sample_name)
+
         for name, param in params.items():
             # TODO: Possibly could find the wrong gradients here if multiple distributions use the same parameter?
             # This maybe requires copying the tensor hm...
             if param.requires_grad:
-                # TODO: This requires_grad check might go wrong if requires_grad is assigned in a different way (like here with len(params) > 0
                 param.register_hook(self._create_hook(s_tensor, param, name))
-            if name in parents and not isinstance(param, storch.Tensor):
-                setattr(distr, name, parents[name])
 
         return s_tensor
 
