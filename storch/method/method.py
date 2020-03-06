@@ -220,8 +220,8 @@ class ScoreFunction(Method):
 
     def estimator(self, tensor: StochasticTensor, cost_node: CostTensor, costs: torch.Tensor) -> torch.Tensor:
         log_prob = tensor.distribution.log_prob(tensor)
-        # Sum out over the even shape
-        log_prob = log_prob.sum(dim=list(range(len(tensor.batch_links), len(log_prob.shape))))
+        # Sum out over the event shape
+        log_prob = log_prob.sum(dim=list(range(tensor.batch_dims, len(log_prob.shape))))
 
         if self.baseline_factory:
             baseline_name = "_b_" + tensor.name + "_" + cost_node.name
