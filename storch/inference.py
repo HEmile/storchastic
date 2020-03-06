@@ -110,6 +110,9 @@ def backward(retain_graph=False, debug=False, print_costs=False, accum_grads=Fal
             mean_cost = reduce_mean(mean_cost, parent.batch_dim_indices())
 
             additive_terms = parent.sampling_method._estimator(parent, c, mean_cost)
+            if isinstance(additive_terms, storch.Tensor):
+                additive_terms = additive_terms._tensor
+
             # This can be None for eg reparameterization. The backwards call for reparameterization happens in the
             # backwards call for the costs themselves.
             if additive_terms is not None:

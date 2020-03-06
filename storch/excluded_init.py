@@ -61,6 +61,11 @@ _excluded_function = {
     "assert_int-or-pair"
 }
 
+_excluded_tensor = {
+    "__getitem__",
+    "__setitem__"
+}
+
 _exception_tensor = {
     "allclose",
     "bernoulli",

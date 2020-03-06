@@ -70,6 +70,7 @@ class VAE(nn.Module):
 
         self.activation = lambda x: F.leaky_relu(x, negative_slope=0.1)
 
+    # @deterministic
     def encode(self, x):
         h1 = self.activation(self.fc1(x))
         h2 = self.activation(self.fc2(h1))
@@ -82,10 +83,6 @@ class VAE(nn.Module):
         return self.fc6(h4).sigmoid()
 
     def KLD(self, p, q):
-        # see Appendix B from VAE paper:
-        # Kingma and Welling. Auto-Encoding Variational Bayes. ICLR, 2014
-        # https://arxiv.org/abs/1312.6114
-
         kld = torch.distributions.kl_divergence(p, q).sum(-1)
         storch.add_cost(kld, "KL-divergence")
         return kld
@@ -153,7 +150,7 @@ def train(epoch):
             writer.add_scalar("train/ELBO", cost, global_step)
             writer.add_scalar("train/loss", loss, global_step)
             writer.add_scalar("train/variance", variance, global_step)
-    avg_train_loss = train_loss / len(train_loader.dataset)
+    avg_train_loss = train_loss / (batch_idx + 1)
     print('====> Epoch: {} Average loss: {:.4f}'.format(
           epoch, avg_train_loss))
     return avg_train_loss
@@ -165,8 +162,9 @@ def test(epoch):
     with torch.no_grad():
         for i, (data, _) in enumerate(test_loader):
             data = data.to(device)
+            data = storch.denote_independent(data.view(-1, 784), 0, "data")
             recon_batch, KLD, _ = model(data)
-            test_loss += (loss_function(recon_batch, data).detach_tensor()).mean() + KLD.detach_tensor()
+            test_loss += (loss_function(recon_batch, data).detach_tensor()).mean() + KLD.detach_tensor().mean()
             if i == 0:
                 n = min(data.size(0), 8)
                 # comparison = storch.cat([data[:n],
@@ -174,7 +172,7 @@ def test(epoch):
                 # deterministic(save_image)(comparison.cpu(),
                 #          'results/reconstruction_' + str(epoch) + '.png', nrow=n)
 
-    test_loss /= len(test_loader.dataset)
+    test_loss /= (i + 1)
     print('====> Test set loss: {:.4f}'.format(test_loss))
     return test_loss
 

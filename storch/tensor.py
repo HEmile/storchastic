@@ -9,7 +9,7 @@ from itertools import product
 from typing import Optional
 from torch import Size
 from storch.exceptions import IllegalStorchExposeError
-from storch.excluded_init import _exception_tensor, _unwrap_only_tensor
+from storch.excluded_init import _exception_tensor, _unwrap_only_tensor, _excluded_tensor
 
 # from storch.typing import BatchTensor
 
@@ -278,9 +278,53 @@ for m in dir(torch.Tensor):
             setattr(torch.Tensor, m, storch._exception_wrapper(v))
         elif m in _unwrap_only_tensor:
             setattr(torch.Tensor, m , storch._unpack_wrapper(v))
-        else:
+        elif m not in _excluded_tensor:
             setattr(torch.Tensor, m, storch.deterministic(v))
 
+# Yes. This code is extremely weird. For some reason, when monkey patching torch.Tensor.__getitem__ and
+# torch.Tensor.__setitem__, bizarre indexing bugs will happen that wouldn't happen when not monkey patching them.
+# Unsqueezing the masking tensor sometimes seems to help...
+# To do this, I also had to reset the torch.Tensor method to its original state. This bug should be fixed sometimes,
+# as this is extremely messy code.
+original_get = torch.Tensor.__getitem__
+def wrap_get(a, b):
+    try:
+        return storch.deterministic(original_get)(a, b)
+    except IndexError:
+        if storch._debug:
+            print("Got indexing error at __getitem__. Trying to resolve this using the unsqueeze hack.")
+
+        @storch.deterministic
+        def _weird_wrap(a, b):
+            if isinstance(b, torch.Tensor):
+                b = b.unsqueeze(0)
+            return original_get(a, b)
+
+        torch.Tensor.__getitem__ = original_get
+        o = _weird_wrap(a, b)
+        torch.Tensor.__getitem__ = wrap_get
+        return o
+torch.Tensor.__getitem__ = wrap_get
+
+original_set = torch.Tensor.__setitem__
+def wrap_set(a, b, v):
+    try:
+        return storch.deterministic(original_set)(a, b, v)
+    except IndexError:
+        if storch._debug:
+            print("Got indexing error at __setitem__. Trying to resolve this using the unsqueeze hack.")
+
+        @storch.deterministic
+        def _weird_wrap(a, b, v):
+            if isinstance(b, torch.Tensor):
+                b = b.unsqueeze(0)
+            return original_set(a, b, v)
+
+        torch.Tensor.__setitem__ = original_set
+        o = _weird_wrap(a, b, v)
+        torch.Tensor.__setitem__ = wrap_set
+        return o
+torch.Tensor.__setitem__ = wrap_set
 
 
 class CostTensor(Tensor):

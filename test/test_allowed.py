@@ -1,4 +1,12 @@
+import torch
+a = torch.tensor([[[[1., .4,.6, .9], [5., 4., 3., .2]]]])
+b = torch.tensor([[[[True, False, True, False], [True, False, True, False]]]])
+
 import storch
+print(torch.Tensor.__getitem__(a, b))
+print(a[b])
+a[b] = 10.
+print(a)
 from torch.distributions import Normal, Categorical, Poisson
 from storch.exceptions import IllegalStorchExposeError
 

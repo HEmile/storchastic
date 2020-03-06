@@ -218,7 +218,7 @@ class ScoreFunction(Method):
         return distr.sample((n, ))
 
     def estimator(self, tensor: StochasticTensor, cost_node: CostTensor, costs: torch.Tensor) -> torch.Tensor:
-        log_prob = tensor.distribution.log_prob(tensor._tensor)
+        log_prob = tensor.distribution.log_prob(tensor)
         # Sum out over the even shape
         log_prob = log_prob.sum(dim=list(range(len(tensor.batch_links), len(log_prob.shape))))
 
