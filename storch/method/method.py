@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from torch.distributions import Distribution, Categorical, OneHotCategorical, Bernoulli, RelaxedOneHotCategorical, RelaxedBernoulli
+from torch.distributions import Distribution, Categorical, OneHotCategorical, Bernoulli, RelaxedOneHotCategorical, RelaxedBernoulli, Independent
 from storch.tensor import CostTensor, StochasticTensor
 import torch
 from typing import Optional, Type, Union, Dict
@@ -10,6 +10,7 @@ from functools import reduce
 from operator import mul
 import storch
 from storch.method.baseline import MovingAverageBaseline, BatchAverageBaseline
+import itertools
 
 class Method(ABC, torch.nn.Module):
     @staticmethod
@@ -66,7 +67,7 @@ class Method(ABC, torch.nn.Module):
         # Will not rewrap in @deterministic, because sampling statements will insert an additional dimensions in the
         # first batch dimension, causing the rewrapping statement to error as it violates the plating constraints.
         storch.wrappers._ignore_wrap = True
-        tensor: torch.Tensor = self._sample_tensor(distr, n)
+        tensor: torch.Tensor = self._sample_tensor(distr, n, parents, plates)
         storch.wrappers._ignore_wrap = False
 
         if n == 1:
@@ -94,7 +95,7 @@ class Method(ABC, torch.nn.Module):
         self._estimation_triples = []
 
     @abstractmethod
-    def _sample_tensor(self, distr: Distribution, n: int) -> torch.Tensor:
+    def _sample_tensor(self, distr: Distribution, n: int, parents: [storch.Tensor], plates: [Plate]) -> torch.Tensor:
         pass
 
     @abstractmethod
@@ -121,7 +122,7 @@ class Infer(Method):
         else:
             self._method = ScoreFunction()
 
-    def _sample_tensor(self, distr: Distribution, n: int) -> torch.Tensor:
+    def _sample_tensor(self, distr: Distribution, n: int, parents: [storch.Tensor], plates: [Plate]) -> torch.Tensor:
         return self._method._sample_tensor(distr, n)
 
     def estimator(self, tensor: StochasticTensor, cost_node: CostTensor, costs: torch.Tensor) -> Optional[torch.Tensor]:
@@ -141,7 +142,7 @@ class Reparameterization(Method):
         super().__init__()
         self._score_method = ScoreFunction()
 
-    def _sample_tensor(self, distr: Distribution, n: int) -> StochasticTensor:
+    def _sample_tensor(self, distr: Distribution, n: int, parents: [storch.Tensor], plates: [Plate]) -> StochasticTensor:
         if not distr.has_rsample:
             raise ValueError("The input distribution has not implemented rsample. If you use a discrete "
                                       "distribution, make sure to use eg GumbelSoftmax.")
@@ -172,7 +173,7 @@ class GumbelSoftmax(Method):
         self.register_buffer("annealing_rate", torch.tensor(annealing_rate))
         self.register_buffer("min_temperature", torch.tensor(min_temperature))
 
-    def _sample_tensor(self, distr: DiscreteDistribution, n: int) -> torch.Tensor:
+    def _sample_tensor(self, distr: DiscreteDistribution, n: int, parents: [storch.Tensor], plates: [Plate]) -> torch.Tensor:
         if isinstance(distr, (Categorical, OneHotCategorical)):
             if self.straight_through:
                 gumbel_distr = RelaxedOneHotCategoricalStraightThrough(self.temperature, probs=distr.probs)
@@ -214,7 +215,7 @@ class ScoreFunction(Method):
             else:
                 raise ValueError("Invalid baseline name", baseline_factory)
 
-    def _sample_tensor(self, distr: Distribution, n: int) -> torch.Tensor:
+    def _sample_tensor(self, distr: Distribution, n: int, parents: [storch.Tensor], plates: [Plate]) -> torch.Tensor:
         return distr.sample((n, ))
 
     def estimator(self, tensor: StochasticTensor, cost_node: CostTensor, costs: torch.Tensor) -> torch.Tensor:
@@ -236,12 +237,24 @@ class Expect(Method):
         super().__init__()
         self.budget = budget
 
-    def _sample_tensor(self, distr: Distribution, n: int) -> torch.Tensor:
+    def _sample_tensor(self, distr: Distribution, n: int, parents: [storch.Tensor], plates: [Plate]) -> torch.Tensor:
         if not distr.has_enumerate_support:
             raise ValueError("Can only calculate the expected value for distributions with enumerable support.")
+        new_distr = Independent(distr, 1)
         support = distr.enumerate_support(expand=True)
-        # print(distr.batch_shape, distr.event_shape)
-        # print(support[9, 1])
+        new_support = new_distr.enumerate_support(expand=True)
+        print(new_support.shape)
+        weird_support = itertools.product(distr.enumerate_support())
+
+        batch_len = len(plates)
+
+        print(distr.batch_shape, distr.event_shape)
+        print(batch_len)
+        print(support.shape)
+        print(weird_support)
+        for weird_thing in weird_support:
+            weird_thing = weird_thing[0]
+            print(weird_thing.shape)
 
     def estimator(self, tensor: StochasticTensor, cost_node: CostTensor, costs: torch.Tensor) -> Optional[torch.Tensor]:
         pass
@@ -251,7 +264,7 @@ class UnorderedSet(Method):
     def __init__(self):
         super().__init__()
 
-    def _sample_tensor(self, distr: Distribution, n: int) -> torch.Tensor:
+    def _sample_tensor(self, distr: Distribution, n: int, parents: [storch.Tensor], plates: [Plate]) -> torch.Tensor:
         pass
 
     def estimator(self, tensor: StochasticTensor, cost_node: CostTensor, costs: torch.Tensor) -> Optional[torch.Tensor]:
