@@ -67,10 +67,10 @@ class Tensor(torch.Tensor):
 
     @staticmethod
     def __new__(cls, *args, **kwargs):
-        tensor = args[0]
         # Pass the input tensor to register this tensor in C. This will initialize an empty (0s?) tensor in the backend.
         # TODO: Does that mean it will require double the memory?
-        return super(Tensor, cls).__new__(cls, device=tensor.device)
+        # return super(Tensor, cls).__new__(cls, device=tensor.device)
+        return super(Tensor, cls).__new__(cls)
 
     def __hash__(self):
         return object.__hash__(self)

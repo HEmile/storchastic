@@ -123,7 +123,7 @@ class Infer(Method):
             self._method = ScoreFunction()
 
     def _sample_tensor(self, distr: Distribution, n: int, parents: [storch.Tensor], plates: [Plate]) -> torch.Tensor:
-        return self._method._sample_tensor(distr, n)
+        return self._method._sample_tensor(distr, n, parents, plates)
 
     def estimator(self, tensor: StochasticTensor, cost_node: CostTensor, costs: torch.Tensor) -> Optional[torch.Tensor]:
         return self._method.estimator(tensor, cost_node, costs)
