@@ -31,8 +31,12 @@ Plate = Tuple[str, int]
 #     return plate_1 is plate_2 or isinstance(plate_1, str) and isinstance(plate_2, str) and plate_1 == plate_2
 
 
+# TODO: This is_iterable thing is a bit annoying: We really only want to unwrap them if they contain storch
+#  Tensors, and then only for some types. Should rethink, maybe. Is unwrapping even necessary if the base torch methods
+#  are all overriden? Maybe, see torch.cat?
 def is_iterable(a: Any):
-    return isinstance(a, Iterable) and not isinstance(a, torch.Tensor) and not isinstance(a, str)
+    return isinstance(a, Iterable) and not isinstance(a, torch.Tensor) and not isinstance(a, str) \
+           and not isinstance(a, torch.Storage)
 
 
 def _collect_parents_and_plates(a: Any, parents: [storch.Tensor], plates: [Plate]):
@@ -143,10 +147,12 @@ def _deterministic(fn, *, unwrap: bool = True, reduce_dims: Optional[Union[str, 
             # # We are already in a deterministic context, no need to wrap or unwrap as only the outer dependencies matter
             # return fn(*args, **kwargs)
 
-        args, kwargs, parents, plates = _handle_args(unwrap, *args, **kwargs)
+        new_args, new_kwargs, parents, plates = _handle_args(unwrap, *args, **kwargs)
 
         if not parents:
             return fn(*args, **kwargs)
+        args = new_args
+        kwargs = new_kwargs
 
         storch.wrappers._context_deterministic += 1
 

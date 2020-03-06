@@ -81,6 +81,7 @@ _exception_tensor = {
     "random_",
     "stride",
     "to_list",
+    "tolist",
     "uniform_"
 }
 
