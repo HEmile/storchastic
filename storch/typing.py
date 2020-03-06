@@ -1,5 +1,6 @@
+from __future__ import annotations
 import torch
-from storch.tensor import Tensor, StochasticTensor, DeterministicTensor
+from storch.tensor import Tensor, StochasticTensor, CostTensor
 from storch.method.baseline import Baseline
 from typing import Union, List, Tuple, Callable
 from torch import Size
@@ -18,4 +19,6 @@ Dims = Union[int, _size]
 
 DiscreteDistribution = Union[Bernoulli, Categorical, OneHotCategorical]
 
-BaselineFactory = Callable[[StochasticTensor, DeterministicTensor], Baseline]
+BaselineFactory = Callable[[StochasticTensor, CostTensor], Baseline]
+
+Plate = Tuple[str, int]

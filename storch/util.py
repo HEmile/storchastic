@@ -1,8 +1,10 @@
-from storch.tensor import Tensor, DeterministicTensor, StochasticTensor
+from typing import Dict
+
+from storch.tensor import Tensor, CostTensor, StochasticTensor
 from torch.distributions import Distribution
 import torch
 
-def print_graph(costs: [DeterministicTensor]):
+def print_graph(costs: [CostTensor]):
     nodes = topological_sort(costs)
     counters = {"s": 1, "c": 1, "d": 1}
     names = {}
@@ -11,7 +13,7 @@ def print_graph(costs: [DeterministicTensor]):
         if node in names:
             return names[node]
         if node.name:
-            if node.name not in names.values():
+            if node.name not in counters:
                 counters[node.name] = 1
                 name = node.name + "[" + str(0) + "]"
             else:
@@ -39,14 +41,17 @@ def print_graph(costs: [DeterministicTensor]):
             print(get_name(p, names) + edge + name)
 
 
-def get_distr_parameters(d: Distribution, filter_requires_grad=True) -> [(str, torch.Tensor)]:
-    params = []
+def get_distr_parameters(d: Distribution, filter_requires_grad=True) -> Dict[str, torch.Tensor]:
+    params = {}
     for k in d.arg_constraints:
         try:
             p = getattr(d, k)
             if isinstance(p, torch.Tensor) and (not filter_requires_grad or p.requires_grad):
-                params.append((k, p))
+                params[k] = p
         except AttributeError:
+            from storch import _debug
+            if _debug:
+                print("Attribute", k, "was not added because we could not get the attribute from the object.")
             pass
     return params
 
@@ -89,11 +94,13 @@ def has_backwards_path(output: Tensor, input: Tensor, depth_first=False):
     if isinstance(output, StochasticTensor):
         outputs = get_distr_parameters(output.distribution)
     else:
-        outputs = [(None, output._tensor)]
+        outputs = {None: output._tensor}
     input = input._tensor
     if not input.requires_grad:
         return False
-    for _, o in outputs:
+    for o in outputs.values():
+        if isinstance(o, Tensor):
+            o = o._tensor
         if o is input:
             # This can happen if the input is a parameter of the output distribution
             return True
@@ -114,7 +121,7 @@ def has_differentiable_path(output: Tensor, input: Tensor):
     return False
 
 
-def topological_sort(costs: [DeterministicTensor]) -> [Tensor]:
+def topological_sort(costs: [CostTensor]) -> [Tensor]:
     """
     Implements reverse kahn's algorithm
     :param costs:
@@ -135,7 +142,12 @@ def topological_sort(costs: [DeterministicTensor]) -> [Tensor]:
             else:
                 children = list(map(lambda ch: ch[0], p._children))
                 edges[p] = children
-            children.remove(n)
+            c = -1
+            for i, _c in enumerate(children):
+                if _c is n:
+                    c = i
+                    break
+            del children[c]
             if not children:
                 s.append(p)
     return l
@@ -156,4 +168,3 @@ def reduce_mean(tensor: torch.Tensor, keep_dims: [int]):
     for dim in keep_dims:
         sum_out_dims.remove(dim)
     return tensor.mean(sum_out_dims)
-

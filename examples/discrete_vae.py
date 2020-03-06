@@ -10,7 +10,7 @@ import torch.utils.data
 from torch import nn, optim
 from torch.nn import functional as F
 from torchvision.utils import save_image
-from storch import deterministic, cost, backward
+from storch import deterministic, backward
 import storch
 from torch.distributions import OneHotCategorical, RelaxedOneHotCategorical
 from examples.dataloader.data_loader import data_loaders
@@ -57,6 +57,8 @@ class VAE(nn.Module):
             self.sampling_method = storch.method.GumbelSoftmax(straight_through=True)
         elif args.method == "score":
             self.sampling_method = storch.method.ScoreFunction(baseline_factory=args.baseline)
+        elif args.method == "expect":
+            self.sampling_method = storch.method.Expect()
         self.latents = args.latents
         self.samples = args.samples
         self.fc1 = nn.Linear(784, 512)
@@ -68,28 +70,27 @@ class VAE(nn.Module):
 
         self.activation = lambda x: F.leaky_relu(x, negative_slope=0.1)
 
+    # @deterministic
     def encode(self, x):
         h1 = self.activation(self.fc1(x))
         h2 = self.activation(self.fc2(h1))
         return self.fc3(h2)
 
-    @deterministic
+    # @deterministic
     def decode(self, z):
         h3 = self.activation(self.fc4(z))
         h4 = self.activation(self.fc5(h3))
         return self.fc6(h4).sigmoid()
 
-    @cost
     def KLD(self, p, q):
-        # see Appendix B from VAE paper:
-        # Kingma and Welling. Auto-Encoding Variational Bayes. ICLR, 2014
-        # https://arxiv.org/abs/1312.6114
-        div = torch.distributions.kl_divergence(p, q)
-        return div.sum()
+        kld = torch.distributions.kl_divergence(p, q).sum(-1)
+        storch.add_cost(kld, "KL-divergence")
+        return kld
 
     def forward(self, x):
-        logits = self.encode(x.view(-1, 784))
+        logits = self.encode(x)
         logits = logits.reshape(logits.shape[:-1] + (self.latents, 10))
+
         q = OneHotCategorical(logits=logits)
         p = OneHotCategorical(probs=torch.ones_like(logits) / (1./10.))
         KLD = self.KLD(q, p)
@@ -103,11 +104,9 @@ optimizer = optim.Adam(model.parameters(), lr=args.lr)
 
 
 # Reconstruction + KL divergence losses summed over all elements and batch
-@cost
 def loss_function(recon_x, x):
-    BCE = storch.nn.b_binary_cross_entropy(recon_x, x.view(-1, 784), reduction="sum")
-
-    return BCE
+    bce = storch.nn.b_binary_cross_entropy(recon_x, x, reduction="sum")
+    return bce
 
 
 def train(epoch):
@@ -118,8 +117,10 @@ def train(epoch):
         optimizer.zero_grad()
         storch.reset()
 
+        # Denote the minibatch dimension as being independent
+        data = storch.denote_independent(data.view(-1, 784), 0, "data")
         recon_batch, KLD, z = model(data)
-        loss_function(recon_batch, data)
+        storch.add_cost(loss_function(recon_batch, data), "reconstruction")
         cond_log = batch_idx % args.log_interval == 0
         cost, loss = backward()
         train_loss += loss.item()
@@ -140,18 +141,16 @@ def train(epoch):
                 squared_diff = (m - mean)**2
                 sse = squared_diff.sum(0)
                 return sse.mean()
-            avg_loss = loss / len(data)
-            avg_cost = cost.item() / len(data)
             variance = _var(grads_logits)
             step = 100. * batch_idx / len(train_loader)
             global_step = 100 * (epoch - 1) + step
             print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}\tCost: {:.6f}\t Logits var {:.4E}'.format(
                 epoch, batch_idx * len(data), len(train_loader.dataset),
-                step, avg_loss, avg_cost, variance))
-            writer.add_scalar("train/ELBO", avg_cost, global_step)
-            writer.add_scalar("train/loss", avg_loss, global_step)
+                step, loss, cost, variance))
+            writer.add_scalar("train/ELBO", cost, global_step)
+            writer.add_scalar("train/loss", loss, global_step)
             writer.add_scalar("train/variance", variance, global_step)
-    avg_train_loss = train_loss / len(train_loader.dataset)
+    avg_train_loss = train_loss / (batch_idx + 1)
     print('====> Epoch: {} Average loss: {:.4f}'.format(
           epoch, avg_train_loss))
     return avg_train_loss
@@ -163,8 +162,9 @@ def test(epoch):
     with torch.no_grad():
         for i, (data, _) in enumerate(test_loader):
             data = data.to(device)
+            data = storch.denote_independent(data.view(-1, 784), 0, "data")
             recon_batch, KLD, _ = model(data)
-            test_loss += (loss_function(recon_batch, data).detach_tensor()).mean() + KLD.detach_tensor()
+            test_loss += (loss_function(recon_batch, data).detach_tensor()).mean() + KLD.detach_tensor().mean()
             if i == 0:
                 n = min(data.size(0), 8)
                 # comparison = storch.cat([data[:n],
@@ -172,7 +172,7 @@ def test(epoch):
                 # deterministic(save_image)(comparison.cpu(),
                 #          'results/reconstruction_' + str(epoch) + '.png', nrow=n)
 
-    test_loss /= len(test_loader.dataset)
+    test_loss /= (i + 1)
     print('====> Test set loss: {:.4f}'.format(test_loss))
     return test_loss
 

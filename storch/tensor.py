@@ -3,28 +3,54 @@ import torch
 import storch
 from torch.distributions import Distribution
 from collections import deque
-from typing import Union, List, Tuple, Dict
+from typing import Union, List, Tuple, Dict, Iterable, Any, Callable
 import builtins
 from itertools import product
 from typing import Optional
+from torch import Size
+from storch.exceptions import IllegalStorchExposeError
+from storch.excluded_init import _exception_tensor, _unwrap_only_tensor, _excluded_tensor
+
+# from storch.typing import BatchTensor
 
 _int = builtins.int
+_size = Union[Size, List[_int], Tuple[_int, ...]]
 
-class Tensor:
+_torch_dict = None
 
-    def __init__(self, tensor: torch.Tensor, parents: [Tensor], batch_links: [StochasticTensor], name: Optional[str] = None):
-        for i, plate in enumerate(batch_links):
-            if len(tensor.shape) <= i:
+Plate = Tuple[str, int]
+
+class Tensor(torch.Tensor):
+    def __init__(self, tensor: torch.Tensor, parents: [Tensor],
+                 batch_links: [Plate], name: Optional[str] = None):
+        if isinstance(tensor, Tensor):
+            raise TypeError("storch.Tensors should be constructed with torch.Tensors, not other storch.Tensors.")
+        plate_names = set()
+        batch_dims = 0
+        # Check whether this tensor does not violate the constraints imposed by the given batch_links
+        for plate in batch_links:
+            plate_name, plate_n = plate
+            if plate_name in plate_names:
+                raise ValueError("Batch links contain two instances of plate " + plate_name + ". This can be caused by "
+                                 "different samples with the same name using a different amount of samples n. "
+                                 "Make sure that these samples use the same number of samples.")
+            plate_names.add(plate_name)
+            if plate_n == 1:  # plate length is 1. Ignore this dimension, as singleton dimensions should not exist.
+                continue
+            if len(tensor.shape) <= batch_dims:
                 raise ValueError(
-                "Got an input tensor with a shape too small for its surrounding batch. Violated at dimension "
-                + str(i) + " and plate shape dimension " + str(len(batch_links)) + ". Instead, it was " + str(
-                    len(tensor.shape)))
-            elif not tensor.shape[i] == plate.n:
+                    "Got an input tensor with a shape too small for its surrounding batch. Violated at dimension "
+                    + str(batch_dims) + " and plate shape dimension " + str(len(batch_links)) + ". Instead, it was " + str(
+                        len(tensor.shape)))
+            elif not tensor.shape[batch_dims] == plate_n:
                 raise ValueError(
-                    "Storch Tensors should take into account their surrounding plates. Violated at dimension " + str(i)
-                    + " and plate size " + str(plate.n) + ". Instead, it was " + str(tensor.shape[i]))
+                    "Storch Tensors should take into account their surrounding plates. Violated at dimension " + str(batch_dims)
+                    + " and plate " + plate_name + " with size " + str(plate_n) + ". "
+                    "Instead, it was " + str(tensor.shape[batch_dims]) + ". Batch links: " + str(batch_links) + " Tensor shape: "
+                    + str(tensor.shape))
+            batch_dims += 1
 
-        self.name = name
+        self._name = name
         self._tensor = tensor
         self._parents = []
         for p in parents:
@@ -34,12 +60,40 @@ class Tensor:
             self._parents.append((p, differentiable_link))
             p._children.append((self, differentiable_link))
         self._children = []
-        self.event_shape = tensor.shape[len(batch_links):]
+        self.batch_dims = batch_dims
+        self.event_shape = tensor.shape[batch_dims:]
+        self.event_dims = len(self.event_shape)
         self.batch_links = batch_links
 
+    @staticmethod
+    def __new__(cls, *args, **kwargs):
+        tensor = args[0]
+        # Pass the input tensor to register this tensor in C. This will initialize an empty (0s?) tensor in the backend.
+        # TODO: Does that mean it will require double the memory?
+        return super(Tensor, cls).__new__(cls, device=tensor.device)
+
+    def __hash__(self):
+        return object.__hash__(self)
+
+    @property
+    def name(self):
+        return self._name
+
+    @property
+    def is_sparse(self):
+        return self._tensor.is_sparse
+
     def __str__(self):
-        t = "Stochastic" if self.stochastic else ("Cost" if self.is_cost else "Deterministic")
-        return t + " " + str(self._tensor)
+        t = (self.name + ": " if self.name else "") + \
+            "Stochastic" if self.stochastic else ("Cost" if self.is_cost else "Deterministic")
+        return t + " " + str(self._tensor) + " Batch links: " + str(self.batch_links)
+
+    def __repr__(self):
+        return object.__repr__(self)
+
+    @storch.deterministic
+    def __eq__(self, other):
+        return self.__eq__(other)
 
     def _walk(self, expand_fn, depth_first=True, only_differentiable=False, repeat_visited=False, walk_fn=lambda x: x):
         visited = set()
@@ -65,7 +119,7 @@ class Tensor:
                         visited.add(w)
                         queue.append(w)
 
-    def walk_parents(self, depth_first=True, only_differentiable=False, repeat_visited=False, walk_fn=lambda x:x):
+    def walk_parents(self, depth_first=True, only_differentiable=False, repeat_visited=False, walk_fn=lambda x: x):
         return self._walk(lambda p: p._parents, depth_first, only_differentiable, repeat_visited, walk_fn)
 
     def walk_children(self, depth_first=True, only_differentiable=False, repeat_visited=False, walk_fn=lambda x: x):
@@ -88,11 +142,26 @@ class Tensor:
 
     @property
     def batch_shape(self) -> torch.Size:
-        return torch.Size(map(lambda s: s.n, self.batch_links))
+        return self._tensor.shape[:self.batch_dims]
 
     @property
     def shape(self) -> torch.Size:
-        return self._tensor.shape
+        return self._tensor.size()
+
+    def is_cuda(self):
+        return self._tensor.is_cuda
+
+    @property
+    def dtype(self):
+        return self._tensor.dtype
+
+    @property
+    def layout(self):
+        return self._tensor.layout
+
+    @property
+    def device(self):
+        return self._tensor.device
 
     @property
     def grad(self):
@@ -101,917 +170,206 @@ class Tensor:
     def dim(self):
         return self._tensor.dim()
 
+    def ndimension(self):
+        return self._tensor.ndimension()
+
+    def register_hook(self, hook: Callable) -> Any:
+        return self._tensor.register_hook(hook)
+
     def event_dim_indices(self):
-        return list(range(len(self.batch_links), self._tensor.dim()))
+        return range(self.batch_dims, self._tensor.dim())
 
     def batch_dim_indices(self):
-        return list(range(len(self.batch_links)))
+        return range(self.batch_dims)
+
+    def get_batch_dim_index(self, batch_name: str):
+        for i, (plate_name, _) in enumerate(self.multi_dim_plates()):
+            if plate_name == batch_name:
+                return i
+        raise IndexError("Tensor has no such batch: " + batch_name + ". Alternatively, the dimension of this batch is 1.")
 
     def iterate_batch_indices(self):
         ranges = list(map(lambda a: list(range(a)), self.batch_shape))
         return product(*ranges)
 
-    # region UnwrappedFunctions
-    # The reason all these functions work and don't go into infinite recursion is because they unwraps
-    # the self input storch.Tensor, so that the self now is the unwrapped node._tensor
+    def multi_dim_plates(self) -> Iterable[Plate]:
+        for plate_name, plate_n in self.batch_links:
+            if plate_n > 1:
+                yield plate_name, plate_n
+
+    def backward(self, gradient: Optional[Tensor]=None, keep_graph: bool=False, create_graph: bool=False) -> None:
+        raise NotImplementedError("Cannot call .backward on storch.Tensor. Instead, register cost nodes using "
+                                  "storch.add_cost, then use storch.backward().")
+
 
     # region OperatorOverloads
-    @storch.deterministic
-    def __add__(self, other):
-        return self.__add__(other)
 
-    @storch.deterministic
-    def __radd__(self, other):
-        return self.__radd__(other)
+    def __len__(self):
+        return self._tensor.__len__()
 
-    @storch.deterministic
-    def __sub__(self, other):
-        return self.__sub__(other)
+    # TODO: Is this safe?
+    def __index__(self):
+        return self._tensor.__index__()
 
-    @storch.deterministic
-    def __mul__(self, other):
-        return self.__mul__(other)
-
-    @storch.deterministic
-    def __rmul__(self, other):
-        return self.__rmul__(other)
-
-    @storch.deterministic
-    def __matmul__(self, other):
-        return self.__matmul__(other)
-
-    @storch.deterministic
-    def __pow__(self, other):
-        return self.__pow__(other)
-
-    @storch.deterministic
-    def __div__(self, other):
-        return self.__div__(other)
-
-    @storch.deterministic
-    def __mod__(self, other):
-        return self.__mod__(other)
-
-    @storch.deterministic
-    def __truediv__(self, other):
-        return self.__truediv__(other)
-
-    @storch.deterministic
-    def __floordiv__(self, other):
-        return self.__floordiv__(other)
-
-    @storch.deterministic
-    def __rfloordiv__(self, other):
-        return self.__rfloordiv__(other)
-
-    @storch.deterministic
-    def __abs__(self):
-        return self.__abs__()
-
-    @storch.deterministic
-    def __and__(self, other):
-        return self.__and__(other)
-
+    # TODO: shouldn't this have @deterministic?
     def eq(self, other):
         return self.eq(other)
 
-    @storch.deterministic
-    def __ge__(self, other):
-        return self.__ge__(other)
+    def __getstate__(self):
+        raise NotImplementedError("Pickle is currently not implemented for storch tensors.")
 
-    @storch.deterministic
-    def __getitem__(self, indices: Union[None, _int, slice, Tensor, List, Tuple]):
-        # TODO: properly test this
-        return self.__getitem__(indices)
+    def __setstate__(self, state):
+        raise NotImplementedError("Pickle is currently not implemented for storch tensors.")
 
-    @storch.deterministic
-    def __gt__(self, other):
-        return self.__gt__(other)
-
-    @storch.deterministic
-    def __invert__(self):
-        return self.__invert__()
-
-    @storch.deterministic
-    def __le__(self, other):
-        return self.__le__(other)
-
-    @storch.deterministic
-    def __lshift__(self, other):
-        return self.__lshift__(other)
-
-    @storch.deterministic
-    def __lt__(self, other):
-        return self.__lt__(other)
-
-    @storch.deterministic
-    def ne(self, other):
-        return self.ne(other)
-
-    @storch.deterministic
-    def __neg__(self):
-        return self.__neg__()
-
-    @storch.deterministic
-    def __or__(self, other):
-        return self.__or__(other)
-
-    @storch.deterministic
-    def __rshift__(self, other):
-        return self.__rshift__(other)
-
-    @storch.deterministic
-    def __xor__(self, other):
-        return self.__xor__(other)
+    def __and__(self, other):
+        if isinstance(other, bool):
+            raise IllegalStorchExposeError("Calling 'and' with a bool exposes the underlying tensor as a bool.")
+        return storch.deterministic(self._tensor.__and__)(other)
 
     def __bool__(self):
-        from storch.exceptions import IllegalConditionalError
-        raise IllegalConditionalError("It is not allowed to convert storch tensors to boolean. Make sure to unwrap "
+        raise IllegalStorchExposeError("It is not allowed to convert storch tensors to boolean. Make sure to unwrap "
                                       "storch tensors to normal torch tensor to use this tensor as a boolean.")
-    #endregion
 
-    # region AlphabeticUnwraps
-    @property
-    @storch.deterministic
-    def T(self):
-        return self.T
-
-    def is_cuda(self):
-        return self._tensor.is_cuda
-
-    def device(self):
-        return self._tensor.device
-
-    @storch.deterministic
-    def abs(self):
-        return self.abs()
-
-    @storch.deterministic
-    def acos(self):
-        return self.acos()
-
-    @storch.deterministic
-    def addbmm(self, batch1, batch2, *, beta=1, alpha=1):
-        return self.addbmm(batch1, batch2, beta=beta, alpha=alpha)
-
-    @storch.deterministic
-    def addcdiv(self, batch1, batch2, *, value=1):
-        return self.addcdiv(batch1, batch2, value=value)
-
-    @storch.deterministic
-    def addcmul(self, batch1, batch2, *, value=1):
-        return self.addcmul(batch1, batch2, value=value)
-
-    @storch.deterministic
-    def addmm(self, batch1, batch2, *, beta=1, alpha=1):
-        return self.addmm(batch1, batch2, beta=beta, alpha=alpha)
-
-    @storch.deterministic
-    def addmv(self, batch1, batch2, *, beta=1, alpha=1):
-        return self.addmv(batch1, batch2, beta=beta, alpha=alpha)
-
-    @storch.deterministic
-    def addr(self, batch1, batch2, *, beta=1, alpha=1):
-        return self.addr(batch1, batch2, beta=beta, alpha=alpha)
-
-    @storch.deterministic
-    def angle(self):
-        return self.angle()
-
-    @storch.deterministic
-    def argmax(self, dim=None, keepdim=False):
-        if dim:
-            return self.argmax(dim, keepdim)
-        return self.argmax()
-
-    @storch.deterministic
-    def argmin(self, dim=None, keepdim=False):
-        if dim:
-            return self.argmin(dim, keepdim)
-        return self.argmin()
-
-    @storch.deterministic
-    def argsort(self, dim=None, keepdim=False):
-        if dim:
-            return self.argsort(dim, keepdim)
-        return self.argsort()
-
-    @storch.deterministic
-    def asin(self):
-        return self.asin()
-
-    @storch.deterministic
-    def as_strided(self, size, stride, storage_offset=0):
-        return self.as_strided(size, stride, storage_offset)
-
-    @storch.deterministic
-    def atan(self):
-        return self.atan()
-
-    @storch.deterministic
-    def atan2(self):
-        return self.atan2()
-
-    @storch.deterministic
-    def baddbmm(self, batch1, batch2, *, beta=1, alpha=1):
-        return self.baddbmm(batch1, batch2, beta=beta, alpha=alpha)
-
-    @storch.deterministic
-    def bincount(self, weights=None, minlength=0):
-        if weights:
-            return self.bincount(weights, minlength)
-        return self.bincount(minlength=minlength)
-
-    @storch.deterministic
-    def bitwise_not(self):
-        return self.bitwise_not()
-
-    @storch.deterministic
-    def bitwise_xor(self):
-        return self.bitwise_xor()
-
-    @storch.deterministic
-    def bmm(self, batch2):
-        return self.bmm(batch2)
-
-    @storch.deterministic
-    def ceil(self):
-        return self.ceil()
-
-    @storch.deterministic
-    def cholesky(self, upper=False):
-        return self.cholesky(upper)
-
-    @storch.deterministic
-    def cholesky_inverse(self, upper=False):
-        return self.cholesky_inverse(upper)
-
-    @storch.deterministic
-    def cholesky_solve(self, input2, upper=False):
-        return self.cholesky_solve(input2, upper)
-
-    @storch.deterministic
-    def chunk(self, chunks, dim=0):
-        return self.chunk(chunks, dim)
-
-    @storch.deterministic
-    def clamp(self, a, b):
-        return self.clamp(a, b)
-
-    @storch.deterministic
-    def clone(self):
-        return self.clone()
-
-    @storch.deterministic
-    def contiguous(self):
-        return self.contiguous()
-
-    @storch.deterministic
-    def conj(self):
-        return self.conj()
-
-    @storch.deterministic
-    def cos(self):
-        return self.cos()
-
-    @storch.deterministic
-    def cosh(self):
-        return self.cosh()
-
-    @storch.deterministic
-    def cpu(self):
-        return self.cpu()
-
-    @storch.deterministic
-    def cross(self, other, dim=-1):
-        return self.cross(other, dim)
-
-    @storch.deterministic
-    def cuda(self, device=None, non_blocking=False):
-        if device:
-            return self.cuda(device, non_blocking)
-        return self.cuda(non_blocking=non_blocking)
-
-    @storch.deterministic
-    def cumprod(self, dim, dtype=None):
-        return self.cumprod(dim, dtype)
-
-    @storch.deterministic
-    def cumsum(self, dim, dtype=None):
-        return self.cumsum(dim, dtype)
-
-    @storch.deterministic
-    def dequantize(self):
-        return self.dequantize()
-
-    @storch.deterministic
-    def det(self):
-        return self.det()
-
-    @storch.deterministic
-    def detach(self):
-        return self.detach()
-
-    @storch.deterministic
-    def diag(self, diagonal=0):
-        return self.diag(diagonal)
-
-    @storch.deterministic
-    def diag_embed(self, offset=0, dim1=-2, dim2=-1):
-        return self.diag_embed(offset, dim1, dim2)
-
-    @storch.deterministic
-    def diag_flat(self, offset=0):
-        return self.diag_flat(offset)
-
-    @storch.deterministic
-    def diagonal(self, offset=0, dim1=-2, dim2=-1):
-        return self.diagonal(offset, dim1, dim2)
-
-    @storch.deterministic
-    def digamma(self):
-        return self.digamma()
-
-    @storch.deterministic
-    def dist(self, other, p=2):
-        return self.dist(other, p)
-
-    @storch.deterministic
-    def dot(self, other):
-        return self.dot(other)
-
-    @storch.deterministic
-    def eig(self, eigenvectors=False):
-        return self.eig(eigenvectors)
-
-    def element_size(self):
-        return self._tensor.element_size()
-
-    @storch.deterministic
-    def erf(self):
-        return self.erf()
-
-    @storch.deterministic
-    def erfc(self):
-        return self.erfc()
-
-    @storch.deterministic
-    def erfinv(self):
-        return self.erfinv()
-
-    @storch.deterministic
-    def exp(self):
-        return self.exp()
-
-    @storch.deterministic
-    def expm1(self):
-        return self.expm1()
-
-    @storch.deterministic
-    def expand(self, *sizes):
-        return self.expand(*sizes)
-
-    @storch.deterministic
-    def expand_as(self, other):
-        return self.expand_as(other)
-
-    @storch.deterministic
-    def fft(self, signal_ndim, normalized=False):
-        return self.fft(signal_ndim, normalized)
-
-    @storch.deterministic
-    def flatten(self, start_dim=0, end_dim=-1):
-        return self.flatten(start_dim, end_dim)
-
-    @storch.deterministic
-    def flip(self, dims):
-        return self.flip(dims)
-
-    @storch.deterministic
-    def floor(self):
-        return self.floor()
-
-    @storch.deterministic
-    def fmod(self, divisor):
-        return self.fmod(divisor)
-
-    @storch.deterministic
-    def frac(self):
-        return self.frac()
-
-    @storch.deterministic
-    def gather(self, dim, index):
-        return self.gather(dim, index)
-
-    @storch.deterministic
-    def geqrf(self):
-        return self.geqrf()
-
-    @storch.deterministic
-    def ger(self, vec2):
-        return self.ger(vec2)
-
-    def get_device(self):
-        return self._tensor.get_device()
-
-    @storch.deterministic
-    def hardshrink(self, lambd=0.5):
-        return self.hardshrink(lambd)
-
-    @storch.deterministic
-    def histc(self, bins=100, min=0, max=0):
-        return self.histc(bins, min, max)
-
-    @storch.deterministic
-    def ifft(self, signal_ndim, normalized=False):
-        return self.ifft(signal_ndim, normalized)
-
-    @storch.deterministic
-    def imag(self):
-        return self.imag()
-
-    @storch.deterministic
-    def index_add(self, dim, index, tensor):
-        return self.index_add(dim, index, tensor)
-
-    @storch.deterministic
-    def index_copy(self, dim, index, tensor):
-        return self.index_copy(dim, index, tensor)
-
-    @storch.deterministic
-    def index_fill(self, dim, index, val):
-        return self.index_fill(dim, index, val)
-
-    @storch.deterministic
-    def index_put(self, indices, value, accumulate=False):
-        return self.index_add(indices, value, accumulate)
-
-    @storch.deterministic
-    def index_select(self, dim, index):
-        return self.index_select(dim, index)
-
-    @storch.deterministic
-    def indices(self):
-        return self.indices()
-
-    @storch.deterministic
-    def inverse(self):
-        return self.inverse()
-
-    @storch.deterministic
-    def irfft(self, signal_ndim, normalized=False, onesided=True, signal_sizes=None):
-        return self.irfft(signal_ndim, normalized, onesided, signal_sizes)
-
-    def is_pinned(self):
-        return self._tensor.is_pinned()
-
-    def is_shared(self):
-        return self._tensor.is_shared()
-
-    @storch.deterministic
-    def kthvalue(self, k, dim=None, keepdim=False):
-        if dim:
-            return self.kthvalue(k, dim, keepdim)
-        return self.kthvalue(k)
-
-    @storch.deterministic
-    def lerp(self):
-        return self.lerp()
-
-    @storch.deterministic
-    def lgamma(self):
-        return self.lgamma()
-
-    @storch.deterministic
-    def log(self):
-        return self.log()
-
-    @storch.deterministic
-    def logdet(self):
-        return self.logdet()
-
-    @storch.deterministic
-    def log10(self):
-        return self.log10()
-
-    @storch.deterministic
-    def log1p(self):
-        return self.log1p()
-
-    @storch.deterministic
-    def log2(self):
-        return self.log2()
-
-    @storch.deterministic
-    def logsumexp(self, dim=None, keepdim=False):
-        if dim:
-            return self.logsumexp(dim, keepdim)
-        return self.logsumexp()
-
-    @storch.deterministic
-    def lstsq(self, A):
-        return self.lstsq(A)
-
-    @storch.deterministic
-    def lu(self, pivot=True, get_infos=False):
-        return self.lu(pivot, get_infos)
-
-    @storch.deterministic
-    def lu_solve(self, LU_data, LU_pivots):
-        return self.lu_solve(LU_data, LU_pivots)
-
-    @storch.deterministic
-    def masked_scatter(self, mask, tensor):
-        return self.masked_scatter(mask, tensor)
-
-    @storch.deterministic
-    def masked_fill(self, mask, value):
-        return self.masked_fill(mask, value)
-
-    @storch.deterministic
-    def masked_select(self, mask):
-        return self.masked_select(mask)
-
-    @storch.deterministic
-    def matmul(self, other):
-        return self.matmul(other)
-
-    @storch.deterministic
-    def matrix_power(self, n):
-        return self.matrix_power(n)
-
-    @storch.deterministic
-    def max(self, dim=None, keepdim=False):
-        if dim:
-            return self.max(dim, keepdim)
-        return self.max()
-
-    @storch.deterministic
-    def mean(self, dim=None, keepdim=False):
-        if dim:
-            return self.mean(dim, keepdim)
-        return self.mean()
-
-    @storch.deterministic
-    def median(self, dim=None, keepdim=False):
-        if dim:
-            return self.median(dim, keepdim)
-        return self.median()
-
-    @storch.deterministic
-    def min(self, dim=None, keepdim=False):
-        if dim:
-            return self.min(dim, keepdim)
-        return self.min()
-
-    @storch.deterministic
-    def mm(self, other):
-        return self.mm(other)
-
-    @storch.deterministic
-    def mode(self, dim=None, keepdim=False):
-        if dim:
-            return self.mode(dim, keepdim)
-        return self.mode()
-
-    @storch.deterministic
-    def mv(self, other):
-        return self.mv(other)
-
-    @storch.deterministic
-    def mvlgamma(self, p):
-        return self.mvlgamma(p)
-
-    @storch.deterministic
-    def narrow(self, dimension, start, length):
-        return self.narrow(dimension, start, length)
-
-    @storch.deterministic
-    def narrow_copy(self, dimension, start, length):
-        return self.narrow_copy(dimension, start, length)
-
-    @storch.deterministic
-    def norm(self, p='fro', dim=None, keepdim=False, dtype=None):
-        return self.norm(p, dim, keepdim, dtype)
-
-    @storch.deterministic
-    def nonzero(self):
-        return self.nonzero()
-
-    @storch.deterministic
-    def orgqr(self, input2):
-        return self.orgqr(input2)
-
-    @storch.deterministic
-    def ormqr(self, input2, input3, left=True, transpose=False):
-        return self.ormqr(input2, input3, left, transpose)
-
-    @storch.deterministic
-    def permute(self, *dims):
-        return self.permute(*dims)
-
-    @storch.deterministic
-    def pin_memory(self):
-        return self.pin_memory()
-
-    @storch.deterministic
-    def pinverse(self):
-        return self.pinverse()
-
-    @storch.deterministic
-    def polygamma(self, n):
-        return self.polygamma(n)
-
-    @storch.deterministic
-    def pow(self, other):
-        return self.pow(other)
-
-    @storch.deterministic
-    def prod(self, dim=None, keepdim=False):
-        if dim:
-            return self.prod(dim, keepdim)
-        return self.prod()
-
-    @storch.deterministic
-    def qr(self, some=True):
-        return self.qr(some)
-
-    @storch.deterministic
-    def q_per_channel_scales(self):
-        return self.q_per_channel_scales()
-
-    @storch.deterministic
-    def q_per_channel_zero_points(self):
-        return self.q_per_channel_zero_points()
-
-    @storch.deterministic
-    def reciprocal(self):
-        return self.reciprocal()
-
-    def register_hook(self, hook):
-        self._tensor.register_hook(hook)
-
-    @storch.deterministic
-    def remainder(self, other):
-        return self.remainder(other)
-
-    @storch.deterministic
-    def real(self):
-        return self.real()
-
-    @storch.deterministic
-    def renorm(self, p, dim, maxnorm):
-        return self.renorm(p, dim, maxnorm)
-
-    @storch.deterministic
-    def repeat(self, *sizes):
-        return self.repeat(*sizes)
-
-    def repeat_interleave(self, repeats, dim=None):
-        return self.repeat_interleave(repeats, dim)
-
-    @storch.deterministic
-    def reshape(self, *shape):
-        return self.reshape(*shape)
-
-    @storch.deterministic
-    def reshape_as(self, other):
-        return self.reshape_as(other)
-
-    def retain_grad(self):
-        self._tensor.retain_grad()
-
-    @storch.deterministic
-    def roll(self, shifts, dim):
-        return self.roll(shifts, dim)
-
-    @storch.deterministic
-    def rot90(self, k, dims):
-        return self.rot90(k, dims)
-
-    @storch.deterministic
-    def round(self):
-        return self.round()
-
-    @storch.deterministic
-    def rsqrt(self):
-        return self.rsqrt()
-
-    @storch.deterministic
-    def scatter(self, dim, index, source):
-        return self.scatter(dim, index, source)
-
-    @storch.deterministic
-    def scatter_add(self, dim, index, source):
-        return self.scatter_add(dim, index, source)
-
-    @storch.deterministic
-    def select(self, dim, index):
-        return self.select(dim, index)
-
-    @storch.deterministic
-    def sigmoid(self):
-        return self.sigmoid()
-
-    @storch.deterministic
-    def sign(self):
-        return self.sign()
-
-    @storch.deterministic
-    def sin(self):
-        return self.sin()
-
-    @storch.deterministic
-    def sinh(self):
-        return self.sinh()
-
-    @storch.deterministic
-    def slogdet(self):
-        return self.slogdet()
-
-    @storch.deterministic
-    def solve(self, other):
-        return self.solve(other)
-
-    @storch.deterministic
-    def sort(self, dim=None, descending=False):
-        if dim:
-            return self.mode(dim, descending)
-        return self.sort(descending=descending)
-
-    @storch.deterministic
-    def sparse_mask(self, mask):
-        return self.sparse_mask(mask)
-
-    @storch.deterministic
-    def sqrt(self):
-        return self.sqrt()
-
-    @storch.deterministic
-    def squeeze(self, dim=None):
-        if dim:
-            return self.squeeze(dim)
-        return self.squeeze()
-
-    @storch.deterministic
-    def std(self, dim=None, keepdim=False, unbiased=True):
-        if dim:
-            return self.std(dim, unbiased, keepdim)
-        return self.std(unbiased=unbiased)
-
-    @storch.deterministic
-    def sum(self, dim=None, keepdim=False):
-        if dim:
-            return self.sum(dim, keepdim)
-        return self.sum()
-
-    @storch.deterministic
-    def sum_to_size(self, *shape):
-        return self.sum_to_size(*shape)
-
-    @storch.deterministic
-    def svd(self, some=True, compute_uv=True):
-        return self.svd(some, compute_uv)
-
-    @storch.deterministic
-    def symeig(self, eigenvectors=False, upper=True):
-        return self.symeig(eigenvectors, upper)
-
-    @storch.deterministic
-    def t(self):
-        return self.t()
-
-    @storch.deterministic
-    def take(self, indices):
-        return self.take(indices)
-
-    @storch.deterministic
-    def tan(self):
-        return self.tan()
-
-    @storch.deterministic
-    def tanh(self):
-        return self.tanh()
-
-    @storch.deterministic
-    def to(self, *args, **kwargs):
-        return self.to(*args, **kwargs)
-
-    @storch.deterministic
-    def topk(self, k, dim=None, largest=True, sorted=True):
-        if dim:
-            return self.topk(k, dim, largest, sorted)
-        return self.sum(k, largest=largest, sorted=sorted)
-
-    @storch.deterministic
-    def to_sparse(self, indices):
-        return self.to_sparse(indices)
-
-    @storch.deterministic
-    def trace(self):
-        return self.trace()
-
-    @storch.deterministic
-    def transpose(self, dim1, dim2):
-        return self.transpose(dim1, dim2)
-
-    @storch.deterministic
-    def triangular_solve(self, A, upper=True, transpose=False, unitriangular=False):
-        return self.triangular_solve(A, upper, transpose, unitriangular)
-
-    @storch.deterministic
-    def tril(self, k=0):
-        return self.tril(k)
-
-    @storch.deterministic
-    def triu(self, k=0):
-        return self.triu(k)
-
-    @storch.deterministic
-    def trunc(self):
-        return self.trunc()
-
-    @storch.deterministic
-    def type(self, dtype=None, non_blocking=False, **kwargs):
-        if dtype:
-            return self.type(dtype, non_blocking, **kwargs)
-        return self.type(non_blocking=False, **kwargs)
-
-    @storch.deterministic
-    def type_as(self, other):
-        return self.type_as(other)
-
-    @storch.deterministic
-    def unbind(self, dim=0):
-        return self.unbind(dim)
-
-    @storch.deterministic
-    def unfold(self, dimension, size, step):
-        return self.unfold(dimension, size, step)
-
-    @storch.deterministic
-    def unique(self, sorted=True, return_inverse=False, return_counts=False, dim=None):
-        if dim:
-            return self.unique(sorted, return_inverse, return_counts, dim)
-        return self.unique(sorted, return_inverse, return_counts)
-
-    @storch.deterministic
-    def unique_consecutive(self, sorted=True, return_inverse=False, return_counts=False, dim=None):
-        if dim:
-            return self.unique_consecutive(sorted, return_inverse, return_counts, dim)
-        return self.unique_consecutive(sorted, return_inverse, return_counts)
-
-    @storch.deterministic
-    def unsqueeze(self, dim=None):
-        if dim:
-            return self.unsqueeze(dim)
-        return self.unsqueeze()
-
-    @storch.deterministic
-    def values(self):
-        return self.values()
-
-    @storch.deterministic
-    def var(self, dim=None, unbiased=True, keepdim=False):
-        if dim:
-            return self.var(dim, unbiased, keepdim)
-        return self.var(unbiased=unbiased, keepdim=keepdim)
-
-    @storch.deterministic
-    def view(self, *shape):
-        return self.view(*shape)
-
-    @storch.deterministic
-    def view_as(self, other):
-        return self.view_as(other)
-
-    #endregion
-
-    #endregion
-
-class DeterministicTensor(Tensor):
-    def __init__(self, tensor: torch.Tensor, parents, batch_links: [StochasticTensor], is_cost: bool, name: Optional[str] = None):
+    def __float__(self):
+        raise IllegalStorchExposeError("It is not allowed to convert storch tensors to float. Make sure to unwrap "
+                                      "storch tensors to normal torch tensor to use this tensor as a float.")
+
+    def __int__(self):
+        raise IllegalStorchExposeError("It is not allowed to convert storch tensors to int. Make sure to unwrap "
+                                      "storch tensors to normal torch tensor to use this tensor as an int.")
+
+    def __long__(self):
+        raise IllegalStorchExposeError("It is not allowed to convert storch tensors to long. Make sure to unwrap "
+                                      "storch tensors to normal torch tensor to use this tensor as a long.")
+
+    def __nonzero__(self) -> builtins.bool:
+        raise IllegalStorchExposeError("It is not allowed to convert storch tensors to boolean. Make sure to unwrap "
+                                       "storch tensors to normal torch tensor to use this tensor as a boolean.")
+
+    def __array__(self):
+        self.numpy()
+
+    def __array_wrap__(self):
+        self.numpy()
+
+    def numpy(self):
+        raise IllegalStorchExposeError(
+            "It is not allowed to convert storch tensors to numpy arrays. Make sure to unwrap "
+            "storch tensors to normal torch tensor to use this tensor as a np.array.")
+
+    def __contains__(self, item):
+        raise IllegalStorchExposeError("It is not allowed to expose storch tensors via in statements.")
+
+    def __deepcopy__(self, memodict={}):
+        raise NotImplementedError("There is currently no deep copying implementation for storch Tensors.")
+
+    def __iter__(self):
+        raise NotImplementedError("Cannot currently iterate over storch Tensors.")
+
+    def detach_(self) -> Tensor:
+        raise NotImplementedError("In place detach is not allowed on storch tensors.")
+    # endregion
+
+
+for m in dir(torch.Tensor):
+    v = getattr(torch.Tensor, m)
+    if isinstance(v, Callable) and m not in Tensor.__dict__ and m not in object.__dict__:
+        if m in _exception_tensor:
+            setattr(torch.Tensor, m, storch._exception_wrapper(v))
+        elif m in _unwrap_only_tensor:
+            setattr(torch.Tensor, m , storch._unpack_wrapper(v))
+        elif m not in _excluded_tensor:
+            setattr(torch.Tensor, m, storch.deterministic(v))
+
+# Yes. This code is extremely weird. For some reason, when monkey patching torch.Tensor.__getitem__ and
+# torch.Tensor.__setitem__, bizarre indexing bugs will happen that wouldn't happen when not monkey patching them.
+# Unsqueezing the masking tensor sometimes seems to help...
+# To do this, I also had to reset the torch.Tensor method to its original state. This bug should be fixed sometimes,
+# as this is extremely messy code.
+original_get = torch.Tensor.__getitem__
+def wrap_get(a, b):
+    try:
+        return storch.deterministic(original_get)(a, b)
+    except IndexError:
+        if storch._debug:
+            print("Got indexing error at __getitem__. Trying to resolve this using the unsqueeze hack.")
+
+        @storch.deterministic
+        def _weird_wrap(a, b):
+            if isinstance(b, torch.Tensor):
+                b = b.unsqueeze(0)
+            return original_get(a, b)
+
+        torch.Tensor.__getitem__ = original_get
+        o = _weird_wrap(a, b)
+        torch.Tensor.__getitem__ = wrap_get
+        return o
+torch.Tensor.__getitem__ = wrap_get
+
+original_set = torch.Tensor.__setitem__
+def wrap_set(a, b, v):
+    try:
+        return storch.deterministic(original_set)(a, b, v)
+    except IndexError:
+        if storch._debug:
+            print("Got indexing error at __setitem__. Trying to resolve this using the unsqueeze hack.")
+
+        @storch.deterministic
+        def _weird_wrap(a, b, v):
+            if isinstance(b, torch.Tensor):
+                b = b.unsqueeze(0)
+            return original_set(a, b, v)
+
+        torch.Tensor.__setitem__ = original_set
+        o = _weird_wrap(a, b, v)
+        torch.Tensor.__setitem__ = wrap_set
+        return o
+torch.Tensor.__setitem__ = wrap_set
+
+
+class CostTensor(Tensor):
+    def __init__(self, tensor: torch.Tensor, parents, batch_links: [Tuple[str, int]], name):
         super().__init__(tensor, parents, batch_links, name)
-        self._is_cost = is_cost
-        if is_cost and torch.is_grad_enabled():
-            storch.inference._cost_tensors.append(self)
-            if not name:
-                raise ValueError("Added a cost node without providing a name")
-
-    @property
-    def stochastic(self) -> bool:
-        return False
 
     @property
     def is_cost(self) -> bool:
-        return self._is_cost
+        return True
+
+
+class IndependentTensor(Tensor):
+    """
+    Used to denote independencies on a Tensor. This could for example be the minibatch dimension. The first dimension
+    of the input tensor is taken to be independent and added as a batch dimension to the storch system.
+    """
+
+    def __init__(self, tensor: torch.Tensor, parents: [Tensor],
+                 batch_links: [Tuple[str, int]], name: str):
+        n = tensor.shape[0]
+        for plate_name, plate_n in batch_links:
+            if plate_name == name:
+                raise ValueError(
+                    "Cannot create independent tensor with name " + name + ". A parent sample has already used"
+                    " this name. Use a different name for this independent dimension.")
+        batch_links.insert(0, (name, n))
+        super().__init__(tensor, parents, batch_links, name)
+        self.n = n
+
+    # TODO: Should IndependentTensors be stochastic? Sometimes, like if it is denoting a minibatch, making them
+    #  stochastic seems like it is correct. Are there other cases?
+    def stochastic(self) -> bool:
+        return True
 
 
 class StochasticTensor(Tensor):
-    def __init__(self, tensor: torch.Tensor, parents, sampling_method: storch.Method, batch_links: [StochasticTensor],
-                 distribution: Distribution, requires_grad: bool, n: int, name: Optional[str] = None):
-        if n > 1:
-            batch_links.insert(0, self)
+    # TODO: Copy original tensor to make sure it cannot change using inplace
+    def __init__(self, tensor: torch.Tensor, parents: [Tensor], sampling_method: storch.Method,
+                 batch_links: [Tuple[str, int]],
+                 distribution: Distribution, requires_grad: bool, n: int, name: str):
+        for plate_name, plate_n in batch_links:
+            if plate_name == name:
+                raise ValueError("Cannot create stochastic tensor with name " + name + ". A parent sample has already used"
+                                " this name. Use a different name for this sample.")
+        batch_links.insert(0, (name, n))
         self.n = n
         self.distribution = distribution
         super().__init__(tensor, parents, batch_links, name)
@@ -1025,6 +383,8 @@ class StochasticTensor(Tensor):
         return True
 
     @property
+    # TODO: Should not manually override it like this. The stochastic "requires_grad" should be a different method, so
+    # that the meaning of requires_grad is consistent everywhere
     def requires_grad(self):
         return self._requires_grad
 
@@ -1061,7 +421,6 @@ class StochasticTensor(Tensor):
             sse = squared_diff.sum(dim=indices)
             r[name] = sse.mean()
         return r
-
 
 
 from storch.util import has_backwards_path

@@ -1,11 +1,13 @@
+from typing import Union, List
+
 import storch
 import torch
 from storch import deterministic
 from torch._C import _infer_size
-from storch.typing import AnyTensor
+import torch.nn.functional as F
 
-
-def b_binary_cross_entropy(input: AnyTensor, target: torch.Tensor, weight=None, reduction: str = 'mean'):
+@deterministic(unwrap=False)
+def b_binary_cross_entropy(input: storch.Tensor, target: storch.Tensor, dims: Union[str, List[str]] = None, weight=None, reduction: str = 'mean'):
     r"""Function that measures the Binary Cross Entropy in a batched way
     between the target and the output.
 
@@ -16,15 +18,6 @@ def b_binary_cross_entropy(input: AnyTensor, target: torch.Tensor, weight=None, 
         target: Tensor of the same shape as input
         weight (Tensor, optional): a manual rescaling weight
                 if provided it's repeated to match input tensor shape
-        size_average (bool, optional): Deprecated (see :attr:`reduction`). By default,
-            the losses are averaged over each loss element in the batch. Note that for
-            some losses, there multiple elements per sample. If the field :attr:`size_average`
-            is set to ``False``, the losses are instead summed for each minibatch. Ignored
-            when reduce is ``False``. Default: ``True``
-        reduce (bool, optional): Deprecated (see :attr:`reduction`). By default, the
-            losses are averaged or summed over observations for each minibatch depending
-            on :attr:`size_average`. When :attr:`reduce` is ``False``, returns a loss per
-            batch element instead and ignores :attr:`size_average`. Default: ``True``
         reduction (string, optional): Specifies the reduction to apply to the output:
             ``'none'`` | ``'mean'`` | ``'sum'``. ``'none'``: no reduction will be applied,
             ``'mean'``: the sum of the output will be divided by the number of
@@ -39,35 +32,21 @@ def b_binary_cross_entropy(input: AnyTensor, target: torch.Tensor, weight=None, 
         >>> loss = b_binary_cross_entropy(F.sigmoid(input), target)
         >>> loss.backward()
     """
-    if isinstance(input, storch.Tensor):
-        indices = input.event_dim_indices()
-        if target.size() != input.event_shape:
-            raise ValueError("Using a target size ({}) that is different to the input size ({}). "
-                             "Please ensure they have the same size.".format(target.size(), input.event_shape))
-    else:
-        offset_dim = input.dim() - target.dim()
-        indices = list(range(input.dim() - target.dim(), input.dim()))
-        for i in range(target.dim()):
-            if input.shape[offset_dim + i] != target.shape[i]:
-                raise ValueError("Input and target are invalid for broadcasting.")
 
+    if not dims:
+        dims = []
+    if isinstance(dims, str):
+        dims = [dims]
 
-    if weight is not None:
-        new_size = _infer_size(target.size(), weight.size())
-        weight = weight.expand(new_size)
-    else:
-        weight = 1.
+    target = target.expand_as(input)
+    unreduced = deterministic(F.binary_cross_entropy)(input, target, weight, reduction="none")
 
-    @deterministic
-    def _loss(input):
-        epsilon = 1e-6
-        input = input + epsilon
-        return -weight * (target * input.log() + (1. - target) * (1. - input).log())
+    # unreduced = _loss(input, target, weight)
+    indices = list(unreduced.event_dim_indices()) + dims
 
-    unreduced = _loss(input)
     if reduction == "mean":
-        return unreduced.mean(dim=indices)
+        return storch.mean(unreduced, indices)
     elif reduction == "sum":
-        return unreduced.sum(dim=indices)
+        return storch.sum(unreduced, indices)
     elif reduction == "none":
         return unreduced
