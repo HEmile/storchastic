@@ -5,11 +5,12 @@ from storch.method import ScoreFunction
 
 torch.manual_seed(0)
 
-mu_prior = torch.tensor([2., -3.], requires_grad=True)
-theta = torch.tensor([4., 5])
+mu_prior = torch.tensor([2.0, -3.0], requires_grad=True)
+theta = torch.tensor([4.0, 5])
 
 method = storch.method.Infer(Normal)
 score_method = storch.method.ScoreFunction()
+expect = storch.method.Expect()
 
 
 def loss(v):
@@ -17,13 +18,25 @@ def loss(v):
 
 
 mu = method("mu", Normal(mu_prior, 1), n=1)
-# k = storch.sample(Categorical(probs=[0.5, 0.5]))
+k = expect(
+    "k",
+    Categorical(
+        probs=torch.tensor([[0.3, 0.3, 0.4], [0.3, 0.3, 0.4]], requires_grad=True)
+    ),
+)
 
-agg_v = 0.
-s1 = 0.
+print(k)
+
+agg_v = 0.0
+s1 = 1.0
 for i in range(2):
-    s1 = method("white_noise_1", Normal(mu, 1), n=2)
-    s2 = method("white_noise_2", Normal(-mu + s1, 1), n=1)
+    k1, k2 = 0, 0
+    if i == 1:
+        k1 = k[:, 0]
+        k2 = k[:, 1]
+    print(k1, k2)
+    s1 = method("white_noise_1", Normal(mu + k1, 1), n=2)
+    s2 = method("white_noise_2", Normal(-mu + s1 * k2, 1), n=1)
     # plus = lambda a, b: a + b
     # plus = storch.deterministic(plus)
     agg_v = agg_v + s1 + s2 * mu

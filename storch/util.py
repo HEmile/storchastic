@@ -4,6 +4,7 @@ from storch.tensor import Tensor, CostTensor, StochasticTensor
 from torch.distributions import Distribution
 import torch
 
+
 def print_graph(costs: [CostTensor]):
     nodes = topological_sort(costs)
     counters = {"s": 1, "c": 1, "d": 1}
@@ -41,17 +42,26 @@ def print_graph(costs: [CostTensor]):
             print(get_name(p, names) + edge + name)
 
 
-def get_distr_parameters(d: Distribution, filter_requires_grad=True) -> Dict[str, torch.Tensor]:
+def get_distr_parameters(
+    d: Distribution, filter_requires_grad=True
+) -> Dict[str, torch.Tensor]:
     params = {}
     for k in d.arg_constraints:
         try:
             p = getattr(d, k)
-            if isinstance(p, torch.Tensor) and (not filter_requires_grad or p.requires_grad):
+            if isinstance(p, torch.Tensor) and (
+                not filter_requires_grad or p.requires_grad
+            ):
                 params[k] = p
         except AttributeError:
             from storch import _debug
+
             if _debug:
-                print("Attribute", k, "was not added because we could not get the attribute from the object.")
+                print(
+                    "Attribute",
+                    k,
+                    "was not added because we could not get the attribute from the object.",
+                )
             pass
     return params
 
@@ -129,7 +139,9 @@ def topological_sort(costs: [CostTensor]) -> [Tensor]:
     """
     for c in costs:
         if not c.is_cost or c._children:
-            raise ValueError("The inputs of the topological sort should only contain cost nodes.")
+            raise ValueError(
+                "The inputs of the topological sort should only contain cost nodes."
+            )
     l = []
     s = costs.copy()
     edges = {}
@@ -154,11 +166,13 @@ def topological_sort(costs: [CostTensor]) -> [Tensor]:
 
 
 def tensor_stats(tensor: torch.Tensor):
-    return "shape {} mean {:.3f} std {:.3f} max {:.3f} min {:.3f}".format(tuple(tensor.shape),
+    return "shape {} mean {:.3f} std {:.3f} max {:.3f} min {:.3f}".format(
+        tuple(tensor.shape),
         tensor.mean().item(),
         tensor.std().item(),
         tensor.max().item(),
-        tensor.min().item())
+        tensor.min().item(),
+    )
 
 
 def reduce_mean(tensor: torch.Tensor, keep_dims: [int]):
@@ -168,3 +182,17 @@ def reduce_mean(tensor: torch.Tensor, keep_dims: [int]):
     for dim in keep_dims:
         sum_out_dims.remove(dim)
     return tensor.mean(sum_out_dims)
+
+
+def reduce_plate(tensor: Tensor, plate: [str, int, torch.Tensor], index: int):
+    plate_weighting = plate[2]
+    # Case: The weight is a single number. First sum, then multiply with the weight (usually taking the mean)
+    if plate_weighting is None or plate_weighting.ndim == 0:
+        return tensor.sum(index) * plate_weighting
+    # Case: The weight is a vector of numbers equal to batch dimension. First multiply the
+    else:
+        onez = [1] * (tensor.ndim - 1)
+        onez.insert(index, -1)
+        onez = tuple(onez)
+        plate_weighting = plate_weighting.view(*onez)
+        return (tensor * plate_weighting).sum(index)
