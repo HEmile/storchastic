@@ -56,17 +56,23 @@ def add_cost(cost: Tensor, name: str):
     return cost
 
 
-def _keep_grads_backwards(
-    surrounding_node: Tensor, backwards_tensor: torch.Tensor
-) -> torch.Tensor:
-    normalize_factor = 1.0 / reduce(mul, surrounding_node.batch_shape)
+def _keep_grads_backwards(backwards_tensor: storch.Tensor) -> torch.Tensor:
+    # normalize_factor = 1.0 / reduce(mul, surrounding_node.batch_shape)
     total_loss = 0.0
-    for indices in surrounding_node.iterate_batch_indices():
+    tensor = backwards_tensor._tensor
+    for indices in backwards_tensor.iterate_batch_indices():
+        # Calculate the weighting for this sample
+        normalize_factor = 1.0
+        for i, plate in enumerate(backwards_tensor.multi_dim_plates()):
+            factor = plate[2]
+            if factor.ndim > 0:
+                factor = factor[indices[i]]
+            normalize_factor *= factor
         # Minimize each pass individually to be able to save gradient statistics over multiple runs
-        loss = backwards_tensor[indices] * normalize_factor
+        loss = tensor[indices] * normalize_factor
         zipped_indices = {}
         for index_batch, index_value in enumerate(indices):
-            zipped_indices[surrounding_node.batch_links[index_batch]] = index_value
+            zipped_indices[backwards_tensor.batch_links[index_batch]] = index_value
         storch.inference._backward_indices = zipped_indices
         loss.backward(retain_graph=True)
         total_loss += loss
@@ -83,7 +89,7 @@ def backward(retain_graph=False, debug=False, print_costs=False, accum_grads=Fal
     hierarchy of multiple samples.
     :return:
     """
-    costs = storch.inference._cost_tensors
+    costs: [storch.Tensor] = storch.inference._cost_tensors
     storch.inference._accum_grad = accum_grads
     if debug:
         print_graph(costs)
@@ -98,7 +104,9 @@ def backward(retain_graph=False, debug=False, print_costs=False, accum_grads=Fal
     stochastic_nodes = set()
     # Loop over different cost nodes
     for c in costs:
-        avg_cost = c._tensor.mean()
+        avg_cost = c._tensor
+        for plate in c.multi_dim_plates():
+            avg_cost = reduce_plate(avg_cost, plate, 0)
         if print_costs:
             print(c.name, ":", avg_cost.item())
         total_cost += avg_cost
@@ -159,7 +167,7 @@ def backward(retain_graph=False, debug=False, print_costs=False, accum_grads=Fal
                 # Now mean_cost has the same shape as parent.batch_shape
                 if accum_grads and len(parent.batch_shape) > 0:
                     # TODO: make work for new reduction algorithm
-                    total_loss += _keep_grads_backwards(parent, cost_per_sample)
+                    total_loss += _keep_grads_backwards(cost_per_sample)
                 else:
                     final_reduced_cost = cost_per_sample._tensor
                     for plate in cost_per_sample.multi_dim_plates():
@@ -170,7 +178,7 @@ def backward(retain_graph=False, debug=False, print_costs=False, accum_grads=Fal
         # Compute gradients for the cost nodes themselves, if they require one.
         if c.requires_grad:
             if accum_grads and len(c.batch_shape) > 0:
-                total_loss += _keep_grads_backwards(c, c._tensor)
+                total_loss += _keep_grads_backwards(c)
             else:
                 accum_loss += avg_cost
                 total_loss += avg_cost

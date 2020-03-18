@@ -33,6 +33,8 @@ class Method(ABC, torch.nn.Module):
             normalize_factor = 1.0
 
         accum_grads = sample._accum_grads
+        n = sample.n
+        plates = sample.batch_links
         del sample, tensor  # For GC reasons
 
         def hook(grad: torch.Tensor):
@@ -40,13 +42,13 @@ class Method(ABC, torch.nn.Module):
                 accum_grads[name] = grad
                 return
             if name not in accum_grads:
-                add_n = [sample.n] if sample.n > 1 else []
+                add_n = [n] if n > 1 else []
                 accum_grads[name] = grad.new_zeros(add_n + event_shape)
             indices = []
-            for link in sample.batch_links:
+            for link in plates:
                 indices.append(storch.inference._backward_indices[link])
             indices = tuple(indices)
-            offset_indices = 1 if sample.n > 1 else 0
+            offset_indices = 1 if n > 1 else 0
             # Unnormalizes the gradient to make them easier to use for computing statistics.
             accum_grads[name][indices] += (
                 grad[indices[offset_indices:]] / normalize_factor
