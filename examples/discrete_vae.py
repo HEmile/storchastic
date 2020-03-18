@@ -188,8 +188,8 @@ def train(epoch):
                     batch_idx * len(data),
                     len(train_loader.dataset),
                     step,
-                    loss,
-                    cost,
+                    loss.item(),
+                    cost.item(),
                     variance,
                 )
             )

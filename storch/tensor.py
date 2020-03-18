@@ -22,8 +22,57 @@ _size = Union[Size, List[_int], Tuple[_int, ...]]
 
 _torch_dict = None
 
-# Plate name, plate size, plate weighting
-Plate = Tuple[str, int, torch.Tensor]
+
+class Plate:
+    def __init__(self, name: str, n: int, weight: Optional[storch.Tensor] = None):
+        self.weight = weight
+        if weight is None:
+            self.weight = torch.tensor(1.0 / n)
+        self.name = name
+        self.n = n
+
+    def __eq__(self, other):
+        if not isinstance(other, Plate):
+            return False
+        if self.name != other.name:
+            return False
+        if self.n != other.n:
+            # TODO: This should maybe return an error...?
+            return False
+        if isinstance(self.weight, storch.Tensor):
+            if not isinstance(other.weight, storch.Tensor):
+                return False
+            if self.weight._tensor is other.weight._tensor:
+                return True
+            return self.weight._tensor.__eq__(other.weight._tensor).all()
+        if isinstance(other.weight, storch.Tensor):
+            return False
+        return True  # Weights are equal if self.n == other.n
+
+    def __str__(self):
+        return self.name + ", " + str(self.n)
+
+    def __repr__(self):
+        return (
+            "("
+            + self.name.__repr__()
+            + ", "
+            + self.n.__repr__()
+            + ", "
+            + self.weight.__repr__()
+            + ")"
+        )
+
+    def reduce(self, tensor: storch.Tensor, detach_weights=True):
+        plate_weighting = self.weight
+        if detach_weights:
+            plate_weighting = self.weight.detach()
+        # Case: The weight is a single number. First sum, then multiply with the weight (usually taking the mean)
+        if plate_weighting.ndim == 0:
+            return storch.sum(tensor, [self.name]) * plate_weighting
+        # Case: The weight is a vector of numbers equal to batch dimension. Assumes it is a storch.Tensor
+        else:
+            return storch.sum(tensor * plate_weighting, [self.name])
 
 
 class Tensor(torch.Tensor):
@@ -31,7 +80,7 @@ class Tensor(torch.Tensor):
         self,
         tensor: torch.Tensor,
         parents: [Tensor],
-        batch_links: [Plate],
+        plates: [Plate],
         name: Optional[str] = None,
     ):
         if isinstance(tensor, Tensor):
@@ -41,41 +90,39 @@ class Tensor(torch.Tensor):
         plate_names = set()
         batch_dims = 0
         # Check whether this tensor does not violate the constraints imposed by the given batch_links
-        for plate in batch_links:
-            plate_name, plate_n, plate_weight = plate
-            if plate_name in plate_names:
+        for plate in plates:
+            if plate.name in plate_names:
                 raise ValueError(
-                    "Batch links contain two instances of plate "
-                    + plate_name
+                    "Plates contain two instances of same plate "
+                    + plate.name
                     + ". This can be caused by different samples with the same name using a different amount of samples n or different weighting of the samples. Make sure that these samples use the same number of samples."
                 )
-            plate_names.add(plate_name)
-            if (
-                plate_n == 1
-            ):  # plate length is 1. Ignore this dimension, as singleton dimensions should not exist.
+            plate_names.add(plate.name)
+            # plate length is 1. Ignore this dimension, as singleton dimensions should not exist.
+            if plate.n == 1:
                 continue
             if len(tensor.shape) <= batch_dims:
                 raise ValueError(
                     "Got an input tensor with a shape too small for its surrounding batch. Violated at dimension "
                     + str(batch_dims)
                     + " and plate shape dimension "
-                    + str(len(batch_links))
+                    + str(len(plates))
                     + ". Instead, it was "
                     + str(len(tensor.shape))
                 )
-            elif not tensor.shape[batch_dims] == plate_n:
+            elif not tensor.shape[batch_dims] == plate.n:
                 raise ValueError(
                     "Storch Tensors should take into account their surrounding plates. Violated at dimension "
                     + str(batch_dims)
                     + " and plate "
-                    + plate_name
+                    + plate.name
                     + " with size "
-                    + str(plate_n)
+                    + str(plate.n)
                     + ". "
                     "Instead, it was "
                     + str(tensor.shape[batch_dims])
                     + ". Batch links: "
-                    + str(batch_links)
+                    + str(plates)
                     + " Tensor shape: "
                     + str(tensor.shape)
                 )
@@ -85,16 +132,17 @@ class Tensor(torch.Tensor):
         self._tensor = tensor
         self._parents = []
         for p in parents:
-            if p.is_cost:
-                raise ValueError("Cost nodes cannot have children.")
+            # TODO: Should I re-add this?
+            # if p.is_cost:
+            #     raise ValueError("Cost nodes cannot have children.")
             differentiable_link = has_backwards_path(self, p)
             self._parents.append((p, differentiable_link))
             p._children.append((self, differentiable_link))
         self._children = []
-        self.batch_dims = batch_dims
+        self.plate_dims = batch_dims
         self.event_shape = tensor.shape[batch_dims:]
         self.event_dims = len(self.event_shape)
-        self.batch_links = batch_links
+        self.plates = plates
 
     @staticmethod
     def __new__(cls, *args, **kwargs):
@@ -120,7 +168,7 @@ class Tensor(torch.Tensor):
             if self.stochastic
             else ("Cost" if self.is_cost else "Deterministic")
         )
-        return t + " " + str(self._tensor) + " Batch links: " + str(self.batch_links)
+        return t + " " + str(self._tensor) + " Batch links: " + str(self.plates)
 
     def __repr__(self):
         return object.__repr__(self)
@@ -208,8 +256,8 @@ class Tensor(torch.Tensor):
         return self._tensor.requires_grad
 
     @property
-    def batch_shape(self) -> torch.Size:
-        return self._tensor.shape[: self.batch_dims]
+    def plate_shape(self) -> torch.Size:
+        return self._tensor.shape[: self.plate_dims]
 
     @property
     def shape(self) -> torch.Size:
@@ -244,29 +292,29 @@ class Tensor(torch.Tensor):
         return self._tensor.register_hook(hook)
 
     def event_dim_indices(self):
-        return range(self.batch_dims, self._tensor.dim())
+        return range(self.plate_dims, self._tensor.dim())
 
-    def batch_dim_indices(self):
-        return range(self.batch_dims)
+    def plate_dim_indices(self):
+        return range(self.plate_dims)
 
-    def get_batch_dim_index(self, batch_name: str):
-        for i, (plate_name, _) in enumerate(self.multi_dim_plates()):
-            if plate_name == batch_name:
+    def get_plate_dim_index(self, plate_name: str):
+        for i, plate in enumerate(self.multi_dim_plates()):
+            if plate.name == plate_name:
                 return i
         raise IndexError(
             "Tensor has no such batch: "
-            + batch_name
+            + plate_name
             + ". Alternatively, the dimension of this batch is 1."
         )
 
-    def iterate_batch_indices(self):
-        ranges = list(map(lambda a: list(range(a)), self.batch_shape))
+    def iterate_plate_indices(self):
+        ranges = list(map(lambda a: list(range(a)), self.plate_shape))
         return product(*ranges)
 
     def multi_dim_plates(self) -> Iterable[Plate]:
-        for plate_name, plate_n, plate_weighting in self.batch_links:
-            if plate_n > 1:
-                yield plate_name, plate_n, plate_weighting
+        for plate in self.plates:
+            if plate.n > 1:
+                yield plate
 
     def backward(
         self,
@@ -443,10 +491,8 @@ torch.Tensor.__setitem__ = wrap_set
 
 
 class CostTensor(Tensor):
-    def __init__(
-        self, tensor: torch.Tensor, parents, batch_links: [Tuple[str, int]], name
-    ):
-        super().__init__(tensor, parents, batch_links, name)
+    def __init__(self, tensor: torch.Tensor, parents, plate_links: [Plate], name):
+        super().__init__(tensor, parents, plate_links, name)
 
     @property
     def is_cost(self) -> bool:
@@ -460,23 +506,20 @@ class IndependentTensor(Tensor):
     """
 
     def __init__(
-        self,
-        tensor: torch.Tensor,
-        parents: [Tensor],
-        batch_links: [Tuple[str, int]],
-        name: str,
+        self, tensor: torch.Tensor, parents: [Tensor], plates: [Plate], name: str,
     ):
         n = tensor.shape[0]
-        for plate_name, plate_n in batch_links:
-            if plate_name == name:
+        for plate in plates:
+            if plate.name == name:
                 raise ValueError(
                     "Cannot create independent tensor with name "
                     + name
                     + ". A parent sample has already used"
                     " this name. Use a different name for this independent dimension."
                 )
-        batch_links.insert(0, (name, n, tensor.new_tensor(1 / n)))
-        super().__init__(tensor, parents, batch_links, name)
+        # TODO: Weighting
+        plates.insert(0, Plate(name, n))
+        super().__init__(tensor, parents, plates, name)
         self.n = n
 
     # TODO: Should IndependentTensors be stochastic? Sometimes, like if it is denoting a minibatch, making them
@@ -490,7 +533,7 @@ class _StochasticTensorBase(Tensor):
         self,
         tensor: torch.Tensor,
         parents: [Tensor],
-        batch_links: [Tuple[str, int]],
+        plates: [Plate],
         name: str,
         sampling_method: storch.Method,
         distribution: Distribution,
@@ -498,7 +541,7 @@ class _StochasticTensorBase(Tensor):
         n: int,
     ):
         self.distribution = distribution
-        super().__init__(tensor, parents, batch_links, name)
+        super().__init__(tensor, parents, plates, name)
         self._requires_grad = requires_grad
         self.n = n
         self.sampling_method = sampling_method
@@ -521,7 +564,7 @@ class _StochasticTensorBase(Tensor):
 
     def total_expected_grad(self) -> Dict[str, torch.Tensor]:
         r = {}
-        indices = self.batch_dim_indices()
+        indices = self.plate_dim_indices()
         for name, grad in self._accum_grads.items():
             tensor = getattr(self.distribution, name)
             if grad.dim() == tensor.dim():
@@ -536,7 +579,7 @@ class _StochasticTensorBase(Tensor):
         :return:
         """
         r = {}
-        indices = self.batch_dim_indices()
+        indices = self.plate_dim_indices()
         for name, grad in self._accum_grads.items():
             tensor = getattr(self.distribution, name)
             if grad.dim() == tensor.dim():
@@ -559,14 +602,14 @@ class StochasticTensor(_StochasticTensorBase):
         tensor: torch.Tensor,
         parents: [Tensor],
         sampling_method: storch.Method,
-        batch_links: [Tuple[str, int]],
+        plates: [Plate],
         distribution: Distribution,
         requires_grad: bool,
         n: int,
         name: str,
     ):
-        for plate_name, _, _ in batch_links:
-            if plate_name == name:
+        for plate in plates:
+            if plate.name == name:
                 raise ValueError(
                     "Cannot create stochastic tensor with name "
                     + name
@@ -575,21 +618,22 @@ class StochasticTensor(_StochasticTensorBase):
 
         # Compute the batch weighting and add the resulting new plate. We have to temporarily assign a dummy
         # batch_links here in case the code inside sampling_method.batch_weighting refers to tensor.batch_links.
-        batch_links.insert(0, (name, n, None))
+        plates.insert(0, Plate(name, n, None))
         super().__init__(
             tensor,
             parents,
-            batch_links,
+            plates,
             name,
             sampling_method,
             distribution,
             requires_grad,
             n,
         )
-        batch_weighting = sampling_method.batch_weighting(self)
+        batch_weighting = sampling_method.plate_weighting(self)
+        plate = Plate(name, self.n, batch_weighting)
+        self.plates[0] = plate
         if isinstance(batch_weighting, storch.Tensor):
-            batch_weighting = batch_weighting._tensor
-        self.batch_links[0] = (name, self.n, batch_weighting)
+            batch_weighting.plates[0] = plate
 
 
 from storch.util import has_backwards_path

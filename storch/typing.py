@@ -21,5 +21,3 @@ Dims = Union[int, _size]
 DiscreteDistribution = Union[Bernoulli, Categorical, OneHotCategorical]
 
 BaselineFactory = Callable[[StochasticTensor, CostTensor], Baseline]
-
-Plate = Tuple[str, int, torch.Tensor]

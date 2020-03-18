@@ -1,6 +1,6 @@
 from typing import Dict
 
-from storch.tensor import Tensor, CostTensor, StochasticTensor
+from storch.tensor import Tensor, CostTensor, StochasticTensor, Plate
 from torch.distributions import Distribution
 import torch
 
@@ -182,17 +182,3 @@ def reduce_mean(tensor: torch.Tensor, keep_dims: [int]):
     for dim in keep_dims:
         sum_out_dims.remove(dim)
     return tensor.mean(sum_out_dims)
-
-
-def reduce_plate(tensor: Tensor, plate: [str, int, torch.Tensor], index: int):
-    plate_weighting = plate[2]
-    # Case: The weight is a single number. First sum, then multiply with the weight (usually taking the mean)
-    if plate_weighting is None or plate_weighting.ndim == 0:
-        return tensor.sum(index) * plate_weighting
-    # Case: The weight is a vector of numbers equal to batch dimension. First multiply the
-    else:
-        onez = [1] * (tensor.ndim - 1)
-        onez.insert(index, -1)
-        onez = tuple(onez)
-        plate_weighting = plate_weighting.view(*onez)
-        return (tensor * plate_weighting).sum(index)

@@ -1,6 +1,8 @@
+from typing import Optional
+
 from storch.tensor import Tensor, StochasticTensor, CostTensor, IndependentTensor
 import torch
-from storch.util import print_graph, reduce_plate
+from storch.util import print_graph
 import storch
 from storch.typing import AnyTensor
 
@@ -35,7 +37,7 @@ def denote_independent(
         if dim != 0:
             t_tensor = t_tensor.transpose(dim, 0)
         name = tensor.name + "_indep_" + plate_name if tensor.name else plate_name
-        return IndependentTensor(t_tensor, tensor.batch_links, [tensor], name)
+        return IndependentTensor(t_tensor, tensor.plates, [tensor], name)
 
 
 def add_cost(cost: Tensor, name: str):
@@ -45,13 +47,15 @@ def add_cost(cost: Tensor, name: str):
         raise ValueError(
             "No name provided to register cost node. Make sure to register an unique name with the cost."
         )
-    cost = CostTensor(cost._tensor, [cost], cost.batch_links, name)
+    cost = CostTensor(cost._tensor, [cost], cost.plates, name)
     if torch.is_grad_enabled():
         storch.inference._cost_tensors.append(cost)
     return cost
 
 
-def backward(retain_graph=False, debug=False, print_costs=False, accum_grads=False):
+def backward(
+    retain_graph=False, debug=False, print_costs=False
+) -> (torch.Tensor, torch.Tensor):
     """
 
     :param retain_graph: If set to False, it will deregister the added cost nodes. Should usually be set to False.
@@ -62,7 +66,6 @@ def backward(retain_graph=False, debug=False, print_costs=False, accum_grads=Fal
     :return:
     """
     costs: [storch.Tensor] = storch.inference._cost_tensors
-    storch.inference._accum_grad = accum_grads
     if debug:
         print_graph(costs)
 
@@ -70,56 +73,54 @@ def backward(retain_graph=False, debug=False, print_costs=False, accum_grads=Fal
     total_cost = 0.0
     # Sum of losses that can be backpropagated through in keepgrads without difficult iterations
     accum_loss = 0.0
-    # Sum of all losses
-    total_loss = 0.0
 
     stochastic_nodes = set()
     # Loop over different cost nodes
     for c in costs:
-        avg_cost = c._tensor
+        avg_cost = c
         for plate in c.multi_dim_plates():
-            avg_cost = reduce_plate(avg_cost, plate, 0)
+            # Do not detach the weights when reducing. This is used in for example expectations to weight the
+            # different costs.
+            avg_cost = plate.reduce(avg_cost, detach_weights=False)
         if print_costs:
-            print(c.name, ":", avg_cost.item())
+            print(c.name, ":", avg_cost._tensor.item())
         total_cost += avg_cost
         for parent in c.walk_parents(depth_first=False):
             # Instance check here instead of parent.stochastic, as backward methods are only used on these.
             if isinstance(parent, StochasticTensor):
                 stochastic_nodes.add(parent)
-            if not isinstance(parent, StochasticTensor) or not parent.requires_grad:
+            if (
+                not isinstance(parent, StochasticTensor)
+                or not parent.requires_grad
+                or not parent.sampling_method.adds_loss(parent, c)
+            ):
                 continue
 
             # Transpose the parent stochastic tensor, so that its shape is the same as the cost but the event shape, and
             # possibly extra dimensions...?
             parent_tensor = parent._tensor
-            reduced_cost = c._tensor
+            reduced_cost = c
             parent_plates = list(parent.multi_dim_plates())
-            index_c = 0
-            for plate in c.batch_links:
-                if plate[1] <= 1:
-                    continue
-                if plate in parent_plates:
-                    index_p = parent_plates.index(plate)
-                    if index_c != index_p:
-                        parent_tensor = parent_tensor.transpose(index_p, index_c)
-                        parent_plates[index_p], parent_plates[index_c] = (
-                            parent_plates[index_c],
-                            parent_plates[index_p],
-                        )
+            # Reduce all plates that are in the cost node but not in the parent node
+            for plate in c.multi_dim_plates():
+                if plate not in parent_plates:
+                    reduced_cost = plate.reduce(c, detach_weights=True)
 
-                    index_c += 1
-                # The parent plate does not contain this plate. If the size of the sample is larger than one, reduce
-                # the cost tensor to keep the tensors aligned.
-                else:
-                    reduced_cost = reduce_plate(reduced_cost, plate, index_c)
-                    # c_links.remove(plate)
-
-            # Add empty (k=1) plates
-            for plate in parent.batch_links:
+            # Align the parent tensor so that the plate dimensions are in the same order as the cost tensor
+            for index_c, plate in enumerate(reduced_cost.multi_dim_plates()):
+                index_p = parent_plates.index(plate)
+                if index_c != index_p:
+                    parent_tensor = parent_tensor.transpose(index_p, index_c)
+                    parent_plates[index_p], parent_plates[index_c] = (
+                        parent_plates[index_c],
+                        parent_plates[index_p],
+                    )
+            # Add empty (k=1) plates to new parent
+            for plate in parent.plates:
                 if plate not in parent_plates:
                     parent_plates.append(plate)
-            new_cost = storch.Tensor(reduced_cost, [], parent_plates, c.name)
-            new_cost._parents = c._parents
+
+            # Create new storch Tensors with different order of plates for the cost and parent
             new_parent = storch.tensor._StochasticTensorBase(
                 parent_tensor,
                 [],
@@ -130,26 +131,38 @@ def backward(retain_graph=False, debug=False, print_costs=False, accum_grads=Fal
                 parent._requires_grad,
                 parent.n,
             )
+            print("_---------------------------------_")
+            print("new_parent", new_parent)
+            print("new_cost", reduced_cost)
+            # Fake the new parent to be the old parent within the graph by mimicing its place in the graph
             new_parent._parents = parent._parents
-            cost_per_sample = parent.sampling_method._estimator(new_parent, new_cost)
-
-            # This can be None for eg reparameterization. The backwards call for reparameterization happens in the
+            for p, has_link in new_parent._parents:
+                p._children.append((new_parent, has_link))
+            new_parent._children = parent._children
+            print(parent.sampling_method)
+            cost_per_sample = parent.sampling_method._estimator(
+                new_parent, reduced_cost
+            )
+            print("estimator", cost_per_sample)
+            # The backwards call for reparameterization happens in the
             # backwards call for the costs themselves.
-            if cost_per_sample is not None:
-                # Now mean_cost has the same shape as parent.batch_shape
-                final_reduced_cost = cost_per_sample._tensor
-                for plate in cost_per_sample.multi_dim_plates():
-                    final_reduced_cost = reduce_plate(final_reduced_cost, plate, 0)
-                accum_loss += final_reduced_cost
-                total_loss += final_reduced_cost
+            # Now mean_cost has the same shape as parent.batch_shape
+            final_reduced_cost = cost_per_sample
+            for plate in cost_per_sample.multi_dim_plates():
+                final_reduced_cost = plate.reduce(
+                    final_reduced_cost, detach_weights=True
+                )
+            if final_reduced_cost.ndim == 1:
+                final_reduced_cost = final_reduced_cost.squeeze(0)
+            print("final cost", final_reduced_cost)
+            accum_loss += final_reduced_cost
 
         # Compute gradients for the cost nodes themselves, if they require one.
-        if c.requires_grad:
+        if avg_cost.requires_grad:
             accum_loss += avg_cost
-            total_loss += avg_cost
 
-    if isinstance(accum_loss, torch.Tensor) and accum_loss.requires_grad:
-        accum_loss.backward()
+    if isinstance(accum_loss, storch.Tensor) and accum_loss._tensor.requires_grad:
+        accum_loss._tensor.backward(retain_graph=retain_graph)
 
     for s_node in stochastic_nodes:
         s_node.sampling_method._update_parameters()
@@ -157,7 +170,7 @@ def backward(retain_graph=False, debug=False, print_costs=False, accum_grads=Fal
     if not retain_graph:
         reset()
 
-    return total_cost, total_loss
+    return total_cost._tensor, accum_loss._tensor
 
 
 def reset():

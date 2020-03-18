@@ -21,11 +21,9 @@ mu = method("mu", Normal(mu_prior, 1), n=1)
 k = expect(
     "k",
     Categorical(
-        probs=torch.tensor([[0.3, 0.3, 0.4], [0.3, 0.3, 0.4]], requires_grad=True)
+        probs=torch.tensor([[0.1, 0.3, 0.6], [0.1, 0.8, 0.1]], requires_grad=True)
     ),
 )
-
-print(k)
 
 agg_v = 0.0
 s1 = 1.0
@@ -34,12 +32,11 @@ for i in range(2):
     if i == 1:
         k1 = k[:, 0]
         k2 = k[:, 1]
-    print(k1, k2)
-    s1 = method("white_noise_1", Normal(mu + k1, 1), n=2)
+    s1 = score_method("white_noise_1", Normal(mu + k1, 1), n=2)
     s2 = method("white_noise_2", Normal(-mu + s1 * k2, 1), n=1)
     # plus = lambda a, b: a + b
     # plus = storch.deterministic(plus)
     agg_v = agg_v + s1 + s2 * mu
     storch.add_cost(loss(agg_v), "loss")
 
-storch.backward(debug=True, accum_grads=False)
+storch.backward(debug=False, print_costs=True)

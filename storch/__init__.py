@@ -1,7 +1,13 @@
 from typing import Callable
 
-from .wrappers import deterministic, stochastic, reduce, _exception_wrapper, _unpack_wrapper
-from .tensor import Tensor, CostTensor, StochasticTensor
+from .wrappers import (
+    deterministic,
+    stochastic,
+    reduce,
+    _exception_wrapper,
+    _unpack_wrapper,
+)
+from .tensor import Tensor, CostTensor, StochasticTensor, Plate
 from .method import *
 from .inference import backward, add_cost, reset, denote_independent
 from .util import print_graph
@@ -9,7 +15,12 @@ from .storch import *
 import storch.typing
 import storch.nn
 from inspect import isclass
-from .excluded_init import _excluded_init, _exception_init, _unwrap_only_init, _excluded_function
+from .excluded_init import (
+    _excluded_init,
+    _exception_init,
+    _unwrap_only_init,
+    _excluded_function,
+)
 
 _debug = False
 
@@ -27,8 +38,12 @@ for m, v in torch.__dict__.items():
         torch.__dict__[m] = _exception_wrapper(v)
     elif m in _unwrap_only_init:
         torch.__dict__[m] = _unpack_wrapper(v)
-    elif not isclass(v) and not str.startswith(m, "_cufft_") \
-            and not str.startswith(m, "rand") and m not in _excluded_init:
+    elif (
+        not isclass(v)
+        and not str.startswith(m, "_cufft_")
+        and not str.startswith(m, "rand")
+        and m not in _excluded_init
+    ):
         torch.__dict__[m] = deterministic(v)
 
 let_through = False

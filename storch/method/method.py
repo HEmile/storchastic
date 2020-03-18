@@ -7,17 +7,15 @@ from torch.distributions import (
     RelaxedOneHotCategorical,
     RelaxedBernoulli,
 )
-from storch.tensor import CostTensor, StochasticTensor
+from storch.tensor import CostTensor, StochasticTensor, Plate
 import torch
-from typing import Optional, Type, Union, Dict, Callable
+from typing import Optional, Type, Union, Dict
 from storch.util import has_differentiable_path, get_distr_parameters
 from pyro.distributions import (
     RelaxedBernoulliStraightThrough,
     RelaxedOneHotCategoricalStraightThrough,
 )
-from storch.typing import DiscreteDistribution, BaselineFactory, Plate
-from functools import reduce
-from operator import mul
+from storch.typing import DiscreteDistribution, BaselineFactory
 import storch
 from storch.method.baseline import MovingAverageBaseline, BatchAverageBaseline
 import itertools
@@ -58,7 +56,7 @@ class Method(ABC, torch.nn.Module):
             if isinstance(p, storch.Tensor):
                 parents[name] = p
                 # The sample should have the batch links of the parameters in the distribution, if present.
-                for plate in p.batch_links:
+                for plate in p.plates:
                     if plate not in plates:
                         plates.append(plate)
                 params[name] = p._tensor
@@ -94,7 +92,6 @@ class Method(ABC, torch.nn.Module):
     def _estimator(
         self, tensor: StochasticTensor, cost_node: CostTensor
     ) -> Optional[storch.Tensor]:
-        # For docs: costs here is aligned with the StochasticTensor, that's why there's two different things.
         self._estimation_pairs.append((tensor, cost_node))
         return self.estimator(tensor, cost_node)
 
@@ -109,28 +106,38 @@ class Method(ABC, torch.nn.Module):
     ) -> (torch.Tensor, int):
         pass
 
-    @abstractmethod
-    # Estimators should optionally return a torch.Tensor that is going to be added to the total cost function
-    # In the case of for example reparameterization, None can be returned to denote that no cost function is added
     def estimator(
         self, tensor: StochasticTensor, cost_node: CostTensor
     ) -> Optional[storch.Tensor]:
-        pass
+        # Estimators should optionally return a torch.Tensor that is going to be added to the total cost function.
+        # In the case of for example reparameterization, None is returned to denote that no cost function is added.
+        # When adding a loss function, adds_loss should return True
+        return None
 
     def update_parameters(
         self, result_triples: [(StochasticTensor, CostTensor, torch.Tensor)]
     ) -> None:
         pass
 
-    def batch_weighting(self, tensor: storch.StochasticTensor) -> torch.Tensor:
+    def plate_weighting(
+        self, tensor: storch.StochasticTensor
+    ) -> Optional[storch.Tensor]:
         # Weight by the size of the sample. Overload this if your gradient estimation uses some kind of weighting
         # of the different events, like importance sampling or computing the expectation.
-        return tensor._tensor.new_tensor(1 / tensor.n)
+        # If None is returned, it is assumed the samples are iid monte carlo samples.
+        return None
+
+    def adds_loss(self, tensor: StochasticTensor, cost_node: CostTensor) -> bool:
+        """
+        Returns true if the estimator will add an additional loss function for the derivative of the parameters
+        of the stochastic tensor with respect to the cost node.
+        """
+        return False
 
 
 class Infer(Method):
     """
-    Method that automatically chooses the standard best gradient estimator for a distribution type.
+    Method that automatically chooses reparameterization if it is available, otherwise the score function.
     """
 
     def __init__(self, distribution_type: Type[Distribution]):
@@ -143,6 +150,7 @@ class Infer(Method):
             self._method = GumbelSoftmax()
         else:
             self._method = ScoreFunction()
+        self._score_method = ScoreFunction()
 
     def _sample_tensor(
         self, distr: Distribution, n: int, parents: [storch.Tensor], plates: [Plate]
@@ -152,12 +160,21 @@ class Infer(Method):
     def estimator(
         self, tensor: StochasticTensor, cost_node: CostTensor
     ) -> Optional[torch.Tensor]:
-        return self._method.estimator(tensor, cost_node)
+        return self._score_method.estimator(tensor, cost_node)
 
     def update_parameters(
         self, result_triples: [(StochasticTensor, CostTensor, torch.Tensor)]
     ):
         self._method.update_parameters(result_triples)
+        self._score_method.update_parameters(result_triples)
+
+    def adds_loss(self, tensor: StochasticTensor, cost_node: CostTensor) -> bool:
+        if has_differentiable_path(cost_node, tensor):
+            # There is a differentiable path, so we will just use reparameterization here.
+            return False
+        else:
+            # No automatic baselines. Use the score function.
+            return True
 
 
 class Reparameterization(Method):
@@ -166,10 +183,6 @@ class Reparameterization(Method):
     differentiability requirements of cost nodes. Can only be used for reparameterizable distributions.
     Default option for reparameterizable distributions.
     """
-
-    def __init__(self):
-        super().__init__()
-        self._score_method = ScoreFunction()
 
     def _sample_tensor(
         self, distr: Distribution, n: int, parents: [storch.Tensor], plates: [Plate]
@@ -181,23 +194,18 @@ class Reparameterization(Method):
             )
         return distr.rsample((n,)), n
 
-    def estimator(
-        self, tensor: StochasticTensor, cost_node: CostTensor
-    ) -> Optional[storch.Tensor]:
+    def adds_loss(self, tensor: StochasticTensor, cost_node: CostTensor) -> bool:
         if has_differentiable_path(cost_node, tensor):
             # There is a differentiable path, so we will just use reparameterization here.
-            return None
-        else:
-            # No automatic baselines
-            return self._score_method.estimator(tensor, cost_node)
-
-    def update_parameters(
-        self, result_triples: [(StochasticTensor, CostTensor, torch.Tensor)]
-    ):
-        self._score_method.update_parameters(result_triples)
+            return False
+        raise ValueError(
+            "There is no differentiable path between the cost tensor and the stochastic tensor. "
+            "We cannot use reparameterization. Use a different gradient estimator, or make sure your"
+            "code is differentiable."
+        )
 
 
-class GumbelSoftmax(Method):
+class GumbelSoftmax(Reparameterization):
     """
     Method that automatically chooses between Gumbel Softmax relaxation and the score function depending on the
     differentiability requirements of cost nodes. Can only be used for reparameterizable distributions.
@@ -244,15 +252,6 @@ class GumbelSoftmax(Method):
             raise ValueError("Using Gumbel Softmax with non-discrete distribution")
         return gumbel_distr.rsample((n,)), n
 
-    def estimator(
-        self, tensor: StochasticTensor, cost_node: CostTensor
-    ) -> Optional[storch.Tensor]:
-        if has_differentiable_path(cost_node, tensor):
-            return None
-        else:
-            s = ScoreFunction()
-            return s.estimator(tensor, cost_node)
-
     def update_parameters(
         self, result_triples: [(StochasticTensor, CostTensor, torch.Tensor)]
     ):
@@ -289,7 +288,7 @@ class ScoreFunction(Method):
     def estimator(self, tensor: StochasticTensor, cost: CostTensor) -> storch.Tensor:
         log_prob = tensor.distribution.log_prob(tensor)
         # Sum out over the event shape
-        log_prob = log_prob.sum(dim=list(range(tensor.batch_dims, len(log_prob.shape))))
+        log_prob = log_prob.sum(dim=list(range(tensor.plate_dims, len(log_prob.shape))))
 
         if self.baseline_factory:
             baseline_name = "_b_" + tensor.name + "_" + cost.name
@@ -298,6 +297,9 @@ class ScoreFunction(Method):
             baseline = getattr(self, baseline_name)
             cost = cost - baseline.compute_baseline(tensor, cost)
         return log_prob * cost.detach()
+
+    def adds_loss(self, tensor: StochasticTensor, cost_node: CostTensor) -> bool:
+        return True
 
 
 class Expect(Method):
@@ -345,16 +347,13 @@ class Expect(Method):
             enumerate_tensor[i] = torch.cat(t, dim=0)
         return enumerate_tensor.detach(), enumerate_tensor.shape[0]
 
-    def estimator(
-        self, tensor: StochasticTensor, cost: CostTensor
+    def plate_weighting(
+        self, tensor: storch.StochasticTensor
     ) -> Optional[storch.Tensor]:
-        return cost.detach()
-
-    def batch_weighting(self, tensor: storch.StochasticTensor) -> torch.Tensor:
         # Weight by the probability of each possible event
         log_probs = tensor.distribution.log_prob(tensor)
         return log_probs.sum(
-            dim=list(range(tensor.batch_dims, len(log_probs.shape)))
+            dim=list(range(tensor.plate_dims, len(log_probs.shape)))
         ).exp()
 
 
