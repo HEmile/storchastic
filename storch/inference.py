@@ -2,15 +2,10 @@ from storch.tensor import Tensor, StochasticTensor, CostTensor, IndependentTenso
 import torch
 from storch.util import print_graph, reduce_plate
 import storch
-from operator import mul
-from storch.typing import AnyTensor, Dims
+from storch.typing import AnyTensor
 
-from functools import reduce
-from typing import Dict, Optional
 
 _cost_tensors: [CostTensor] = []
-_backward_indices: Dict[StochasticTensor, int] = {}
-_accum_grad: bool = False
 
 
 def denote_independent(
@@ -54,29 +49,6 @@ def add_cost(cost: Tensor, name: str):
     if torch.is_grad_enabled():
         storch.inference._cost_tensors.append(cost)
     return cost
-
-
-def _keep_grads_backwards(backwards_tensor: storch.Tensor) -> torch.Tensor:
-    # normalize_factor = 1.0 / reduce(mul, surrounding_node.batch_shape)
-    total_loss = 0.0
-    tensor = backwards_tensor._tensor
-    for indices in backwards_tensor.iterate_batch_indices():
-        # Calculate the weighting for this sample
-        normalize_factor = 1.0
-        for i, plate in enumerate(backwards_tensor.multi_dim_plates()):
-            factor = plate[2]
-            if factor.ndim > 0:
-                factor = factor[indices[i]]
-            normalize_factor *= factor
-        # Minimize each pass individually to be able to save gradient statistics over multiple runs
-        loss = tensor[indices] * normalize_factor
-        zipped_indices = {}
-        for index_batch, index_value in enumerate(indices):
-            zipped_indices[backwards_tensor.batch_links[index_batch]] = index_value
-        storch.inference._backward_indices = zipped_indices
-        loss.backward(retain_graph=True)
-        total_loss += loss
-    return total_loss
 
 
 def backward(retain_graph=False, debug=False, print_costs=False, accum_grads=False):
@@ -165,23 +137,16 @@ def backward(retain_graph=False, debug=False, print_costs=False, accum_grads=Fal
             # backwards call for the costs themselves.
             if cost_per_sample is not None:
                 # Now mean_cost has the same shape as parent.batch_shape
-                if accum_grads and len(parent.batch_shape) > 0:
-                    # TODO: make work for new reduction algorithm
-                    total_loss += _keep_grads_backwards(cost_per_sample)
-                else:
-                    final_reduced_cost = cost_per_sample._tensor
-                    for plate in cost_per_sample.multi_dim_plates():
-                        final_reduced_cost = reduce_plate(final_reduced_cost, plate, 0)
-                    accum_loss += final_reduced_cost
-                    total_loss += final_reduced_cost
+                final_reduced_cost = cost_per_sample._tensor
+                for plate in cost_per_sample.multi_dim_plates():
+                    final_reduced_cost = reduce_plate(final_reduced_cost, plate, 0)
+                accum_loss += final_reduced_cost
+                total_loss += final_reduced_cost
 
         # Compute gradients for the cost nodes themselves, if they require one.
         if c.requires_grad:
-            if accum_grads and len(c.batch_shape) > 0:
-                total_loss += _keep_grads_backwards(c)
-            else:
-                accum_loss += avg_cost
-                total_loss += avg_cost
+            accum_loss += avg_cost
+            total_loss += avg_cost
 
     if isinstance(accum_loss, torch.Tensor) and accum_loss.requires_grad:
         accum_loss.backward()

@@ -25,34 +25,12 @@ import itertools
 
 class Method(ABC, torch.nn.Module):
     @staticmethod
-    def _create_hook(sample: StochasticTensor, tensor: torch.tensor, name: str):
-        event_shape = list(tensor.shape)
-        if len(sample.batch_shape) > 0:
-            normalize_factor = 1.0 / reduce(mul, sample.batch_shape)
-        else:
-            normalize_factor = 1.0
-
+    def _create_hook(sample: StochasticTensor, name: str):
         accum_grads = sample._accum_grads
-        n = sample.n
-        plates = sample.batch_links
-        del sample, tensor  # For GC reasons
+        del sample  # Remove from hook closure for GC reasons
 
         def hook(grad: torch.Tensor):
-            if not storch.inference._accum_grad:
-                accum_grads[name] = grad
-                return
-            if name not in accum_grads:
-                add_n = [n] if n > 1 else []
-                accum_grads[name] = grad.new_zeros(add_n + event_shape)
-            indices = []
-            for link in plates:
-                indices.append(storch.inference._backward_indices[link])
-            indices = tuple(indices)
-            offset_indices = 1 if n > 1 else 0
-            # Unnormalizes the gradient to make them easier to use for computing statistics.
-            accum_grads[name][indices] += (
-                grad[indices[offset_indices:]] / normalize_factor
-            )
+            accum_grads[name] = grad
 
         return hook
 
@@ -109,7 +87,7 @@ class Method(ABC, torch.nn.Module):
             # TODO: Possibly could find the wrong gradients here if multiple distributions use the same parameter?
             # This maybe requires copying the tensor hm...
             if param.requires_grad:
-                param.register_hook(self._create_hook(s_tensor, param, name))
+                param.register_hook(self._create_hook(s_tensor, name))
 
         return s_tensor
 
