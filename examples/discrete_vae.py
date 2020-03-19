@@ -163,15 +163,20 @@ def train(epoch):
 
         optimizer.step()
         if cond_log:
-            grads_logits = []
-            for i in range(10):
-                optimizer.zero_grad()
-                recon_batch, _, z = model(data)
-                storch.add_cost(loss_function(recon_batch, data), "reconstruction")
-                backward()
-                grads_logits.append(z.grad["logits"].unsqueeze(0))
+            # Variance of expect method is 0 by definition.
+            if args.method == "expect":
+                variance = 0.0
+            else:
+                grads_logits = []
+                for i in range(10):
+                    optimizer.zero_grad()
+                    recon_batch, _, z = model(data)
+                    storch.add_cost(loss_function(recon_batch, data), "reconstruction")
+                    backward()
+                    grads_logits.append(z.grad["logits"].unsqueeze(0))
 
-            variance = torch.cat(grads_logits).var(0).mean()
+                variance = torch.cat(grads_logits).var(0).mean()
+
             step = 100.0 * batch_idx / len(train_loader)
             global_step = 100 * (epoch - 1) + step
             print(
