@@ -1,8 +1,9 @@
 from typing import Dict
 
-from storch.tensor import Tensor, CostTensor, StochasticTensor
+from storch.tensor import Tensor, CostTensor, StochasticTensor, Plate
 from torch.distributions import Distribution
 import torch
+
 
 def print_graph(costs: [CostTensor]):
     nodes = topological_sort(costs)
@@ -41,17 +42,26 @@ def print_graph(costs: [CostTensor]):
             print(get_name(p, names) + edge + name)
 
 
-def get_distr_parameters(d: Distribution, filter_requires_grad=True) -> Dict[str, torch.Tensor]:
+def get_distr_parameters(
+    d: Distribution, filter_requires_grad=True
+) -> Dict[str, torch.Tensor]:
     params = {}
     for k in d.arg_constraints:
         try:
             p = getattr(d, k)
-            if isinstance(p, torch.Tensor) and (not filter_requires_grad or p.requires_grad):
+            if isinstance(p, torch.Tensor) and (
+                not filter_requires_grad or p.requires_grad
+            ):
                 params[k] = p
         except AttributeError:
             from storch import _debug
+
             if _debug:
-                print("Attribute", k, "was not added because we could not get the attribute from the object.")
+                print(
+                    "Attribute",
+                    k,
+                    "was not added because we could not get the attribute from the object.",
+                )
             pass
     return params
 
@@ -129,7 +139,9 @@ def topological_sort(costs: [CostTensor]) -> [Tensor]:
     """
     for c in costs:
         if not c.is_cost or c._children:
-            raise ValueError("The inputs of the topological sort should only contain cost nodes.")
+            raise ValueError(
+                "The inputs of the topological sort should only contain cost nodes."
+            )
     l = []
     s = costs.copy()
     edges = {}
@@ -154,11 +166,13 @@ def topological_sort(costs: [CostTensor]) -> [Tensor]:
 
 
 def tensor_stats(tensor: torch.Tensor):
-    return "shape {} mean {:.3f} std {:.3f} max {:.3f} min {:.3f}".format(tuple(tensor.shape),
+    return "shape {} mean {:.3f} std {:.3f} max {:.3f} min {:.3f}".format(
+        tuple(tensor.shape),
         tensor.mean().item(),
         tensor.std().item(),
         tensor.max().item(),
-        tensor.min().item())
+        tensor.min().item(),
+    )
 
 
 def reduce_mean(tensor: torch.Tensor, keep_dims: [int]):

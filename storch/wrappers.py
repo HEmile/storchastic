@@ -15,30 +15,24 @@ _context_name = None
 _plate_links = []
 _ignore_wrap = False
 
-Plate = Tuple[str, int]
-
-# def plate_in(plate: Plate, l: [Plate]):
-#     # Not using "plate in plates" because __eq__ is overriden, which opens a deterministic context, which
-#     # calls this method again, causing infinite recursion
-#     for _plate in l:
-#         if plate_equal(plate, _plate):
-#             return True
-#     return False
-#
-#
-# def plate_equal(plate_1: Plate, plate_2: Plate):
-#     # Only doing == check on strings, as storch.Tensor's cannot reduce to bool
-#     return plate_1 is plate_2 or isinstance(plate_1, str) and isinstance(plate_2, str) and plate_1 == plate_2
-
-
+# TODO: This is_iterable thing is a bit annoying: We really only want to unwrap them if they contain storch
+#  Tensors, and then only for some types. Should rethink, maybe. Is unwrapping even necessary if the base torch methods
+#  are all overriden? Maybe, see torch.cat?
 def is_iterable(a: Any):
-    return isinstance(a, Iterable) and not isinstance(a, torch.Tensor) and not isinstance(a, str)
+    return (
+        isinstance(a, Iterable)
+        and not isinstance(a, torch.Tensor)
+        and not isinstance(a, str)
+        and not isinstance(a, torch.Storage)
+    )
 
 
-def _collect_parents_and_plates(a: Any, parents: [storch.Tensor], plates: [Plate]):
+def _collect_parents_and_plates(
+    a: Any, parents: [storch.Tensor], plates: [storch.Plate]
+):
     if isinstance(a, storch.Tensor):
         parents.append(a)
-        for plate in a.batch_links:
+        for plate in a.plates:
             if plate not in plates:
                 plates.append(plate)
     elif is_iterable(a):
@@ -49,16 +43,18 @@ def _collect_parents_and_plates(a: Any, parents: [storch.Tensor], plates: [Plate
             _collect_parents_and_plates(_a, parents, plates)
 
 
-def _unsqueeze_and_unwrap(a: Any, multi_dim_plates: [Plate]):
+def _unsqueeze_and_unwrap(a: Any, multi_dim_plates: [storch.Plate]):
     if isinstance(a, storch.Tensor):
         tensor = a._tensor
+        if len(tensor.shape) == a.plate_dims:
+            tensor = tensor.unsqueeze(-1)
 
         # It can be possible that the ordering of the plates does not align with the ordering of the inputs.
         # This part corrects this.
         amt_recognized = 0
         links: [Plate] = list(a.multi_dim_plates())
         for i, plate in enumerate(multi_dim_plates):
-            if plate in a.batch_links:
+            if plate in a.plates:
                 if plate != links[amt_recognized]:
                     # The plate is also in the tensor, but not in the ordering expected. So switch that ordering
                     j = links.index(plate)
@@ -67,7 +63,7 @@ def _unsqueeze_and_unwrap(a: Any, multi_dim_plates: [Plate]):
                 amt_recognized += 1
 
         for i, plate in enumerate(multi_dim_plates):
-            if plate not in a.batch_links:
+            if plate not in a.plates:
                 tensor = tensor.unsqueeze(i)
         return tensor
     elif is_iterable(a):
@@ -88,7 +84,7 @@ def _unsqueeze_and_unwrap(a: Any, multi_dim_plates: [Plate]):
 
 def _handle_args(unwrap=True, *args, **kwargs):
     parents: [storch.Tensor] = []
-    plates: [Plate] = []
+    plates: [storch.Plate] = []
 
     # Collect parent tensors and plates
     _collect_parents_and_plates(args, parents, plates)
@@ -96,9 +92,9 @@ def _handle_args(unwrap=True, *args, **kwargs):
 
     # Get the list of plates with size larger than 1 for the unsqueezing of tensors
     multi_dim_plates = []
-    for plate_name, plate_n in plates:
-        if plate_n > 1:
-            multi_dim_plates.append((plate_name, plate_n))
+    for plate in plates:
+        if plate.n > 1:
+            multi_dim_plates.append(plate)
     if unwrap:
         # Unsqueeze and align batched dimensions so that batching works easily.
         unsqueezed_args = []
@@ -111,27 +107,36 @@ def _handle_args(unwrap=True, *args, **kwargs):
     return args, kwargs, parents, plates
 
 
-def _process_deterministic(o: Any, parents: [storch.Tensor], plates: [Plate], name: str):
+def _process_deterministic(
+    o: Any, parents: [storch.Tensor], plates: [storch.Plate], name: str
+):
     if o is None:
         return
     if isinstance(o, storch.Tensor):
         if o.stochastic:
-            raise RuntimeError("Creation of stochastic storch Tensor within deterministic context")
+            raise RuntimeError(
+                "Creation of stochastic storch Tensor within deterministic context"
+            )
         # TODO: Does this require shape checking? Parent/Plate checking?
         return o
     if isinstance(o, torch.Tensor):  # Explicitly _not_ a storch.Tensor
         t = storch.Tensor(o, parents, plates, name=name)
         return t
-    raise NotImplementedError("Handling of other types of return values is currently not implemented: ", o)
+    raise NotImplementedError(
+        "Handling of other types of return values is currently not implemented: ", o
+    )
 
 
-def _deterministic(fn, *, unwrap: bool = True, reduce_dims: Optional[Union[str, List[str]]] = None):
+def _deterministic(
+    fn, *, unwrap: bool = True, reduce_dims: Optional[Union[str, List[str]]] = None
+):
     @wraps(fn)
     def wrapper(*args, **kwargs):
         if storch.wrappers._context_stochastic:
             # TODO check if we can re-add this
             raise NotImplementedError(
-                "It is currently not allowed to open a deterministic context in a stochastic context")
+                "It is currently not allowed to open a deterministic context in a stochastic context"
+            )
             # if storch.wrappers._context_deterministic > 0:
             #     if is_cost:
             #         raise RuntimeError("Cannot call storch.cost from within a deterministic context.")
@@ -143,10 +148,12 @@ def _deterministic(fn, *, unwrap: bool = True, reduce_dims: Optional[Union[str, 
             # # We are already in a deterministic context, no need to wrap or unwrap as only the outer dependencies matter
             # return fn(*args, **kwargs)
 
-        args, kwargs, parents, plates = _handle_args(unwrap, *args, **kwargs)
+        new_args, new_kwargs, parents, plates = _handle_args(unwrap, *args, **kwargs)
 
         if not parents:
             return fn(*args, **kwargs)
+        args = new_args
+        kwargs = new_kwargs
 
         storch.wrappers._context_deterministic += 1
 
@@ -161,11 +168,15 @@ def _deterministic(fn, *, unwrap: bool = True, reduce_dims: Optional[Union[str, 
         if reduce_dims:
             if isinstance(reduce_dims, str):
                 reduce_dims = [reduce_dims]
-            plates = [p for p in plates if p[0] not in reduce_dims]
+            plates = [p for p in plates if p.name not in reduce_dims]
         if is_iterable(outputs):
             n_outputs = []
             for o in outputs:
-                n_outputs.append(_process_deterministic(o, parents, plates, fn.__name__ + str(len(n_outputs))))
+                n_outputs.append(
+                    _process_deterministic(
+                        o, parents, plates, fn.__name__ + str(len(n_outputs))
+                    )
+                )
             outputs = n_outputs
         else:
             outputs = _process_deterministic(outputs, parents, plates, fn.__name__)
@@ -185,18 +196,23 @@ def reduce(fn, dims: Union[str, List[str]]):
         print("Reducing dims", dims)
     return _deterministic(fn, reduce_dims=dims)
 
+
 def _self_deterministic(fn, self: storch.Tensor):
     fn = deterministic(fn)
+
     @wraps(fn)
     def wrapper(*args, **kwargs):
         # Inserts the self object at the beginning of the passed arguments. In essence, it "fakes" the self reference.
         args = list(args)
         args.insert(0, self)
         return fn(*args, **kwargs)
+
     return wrapper
 
 
-def _process_stochastic(output: torch.Tensor, parents: [storch.Tensor], plates: [Plate]):
+def _process_stochastic(
+    output: torch.Tensor, parents: [storch.Tensor], plates: [storch.Plate]
+):
     if isinstance(output, storch.Tensor):
         if not output.stochastic:
             # TODO: Calls _add_parents so something is going wrong here
@@ -205,11 +221,13 @@ def _process_stochastic(output: torch.Tensor, parents: [storch.Tensor], plates: 
             output._add_parents(storch.wrappers._stochastic_parents)
         return output
     if isinstance(output, torch.Tensor):
-        t = storch.DeterministicTensor(output, parents, plates, False)
+        t = storch.Tensor(output, parents, plates)
         return t
     else:
-        raise TypeError("All outputs of functions wrapped in @storch.stochastic "
-                        "should be Tensors. At " + str(output))
+        raise TypeError(
+            "All outputs of functions wrapped in @storch.stochastic "
+            "should be Tensors. At " + str(output)
+        )
 
 
 def stochastic(fn):
@@ -219,10 +237,16 @@ def stochastic(fn):
     :param fn:
     :return:
     """
+
     @wraps(fn)
     def wrapper(*args, **kwargs):
-        if storch.wrappers._context_stochastic or storch.wrappers._context_deterministic > 0:
-            raise RuntimeError("Cannot call storch.stochastic from within a stochastic or deterministic context.")
+        if (
+            storch.wrappers._context_stochastic
+            or storch.wrappers._context_deterministic > 0
+        ):
+            raise RuntimeError(
+                "Cannot call storch.stochastic from within a stochastic or deterministic context."
+            )
 
         # Save the parents
         args, kwargs, parents, plates = _handle_args(*args, **kwargs)
@@ -256,10 +280,14 @@ def _exception_wrapper(fn):
     def wrapper(*args, **kwargs):
         for a in args:
             if isinstance(a, storch.Tensor):
-                raise IllegalStorchExposeError("It is not allowed to call this method using storch.Tensor, likely "
-                                               "because it exposes its wrapped tensor to Python.")
+                raise IllegalStorchExposeError(
+                    "It is not allowed to call this method using storch.Tensor, likely "
+                    "because it exposes its wrapped tensor to Python."
+                )
         return fn(*args, **kwargs)
+
     return wrapper
+
 
 def _unpack_wrapper(fn):
     def wrapper(*args, **kwargs):
@@ -270,4 +298,5 @@ def _unpack_wrapper(fn):
             else:
                 new_args.append(a)
         return fn(*tuple(new_args), **kwargs)
+
     return wrapper
