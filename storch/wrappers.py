@@ -128,7 +128,7 @@ def _process_deterministic(
 
 
 def _deterministic(
-    fn, *, unwrap: bool = True, reduce_dims: Optional[Union[str, List[str]]] = None
+    fn, *, unwrap: bool = True, reduce_plates: Optional[Union[str, List[str]]] = None
 ):
     @wraps(fn)
     def wrapper(*args, **kwargs):
@@ -164,11 +164,11 @@ def _deterministic(
 
         if storch.wrappers._ignore_wrap:
             return outputs
-        nonlocal reduce_dims
-        if reduce_dims:
-            if isinstance(reduce_dims, str):
-                reduce_dims = [reduce_dims]
-            plates = [p for p in plates if p.name not in reduce_dims]
+        nonlocal reduce_plates
+        if reduce_plates:
+            if isinstance(reduce_plates, str):
+                reduce_plates = [reduce_plates]
+            plates = [p for p in plates if p.name not in reduce_plates]
         if is_iterable(outputs):
             n_outputs = []
             for o in outputs:
@@ -186,15 +186,31 @@ def _deterministic(
 
 
 def deterministic(fn=None, *, unwrap=True):
+    """
+    Wraps the input function around a deterministic storch wrapper.
+    This wrapper unwraps :class:`~storch.Tensor` objects to :class:`~torch.Tensor` objects, aligning the tensors
+    according to the plates, then runs `fn` on the unwrapped Tensors.
+    :param fn: Function to wrap.
+    :param unwrap: Set to False to prevent unwrapping :classs:`~storch.Tensor` objects.
+    :return: The wrapped function `fn`.
+    """
     if fn:
         return _deterministic(fn, unwrap=unwrap)
     return lambda _f: _deterministic(_f, unwrap=unwrap)
 
 
-def reduce(fn, dims: Union[str, List[str]]):
+def reduce(fn, plates: Union[str, List[str]]):
+    """
+        Wraps the input function around a deterministic storch wrapper.
+        This wrapper unwraps :class:`~storch.Tensor` objects to :class:`~torch.Tensor` objects, aligning the tensors
+        according to the plates, then runs `fn` on the unwrapped Tensors. It will reduce the plates given by `plates`.
+        :param fn: Function to wrap.
+        :param unwrap: Set to False to prevent unwrapping :classs:`~storch.Tensor` objects.
+        :return: The wrapped function `fn`.
+        """
     if storch._debug:
-        print("Reducing dims", dims)
-    return _deterministic(fn, reduce_dims=dims)
+        print("Reducing plates", plates)
+    return _deterministic(fn, reduce_plates=plates)
 
 
 def _self_deterministic(fn, self: storch.Tensor):

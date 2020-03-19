@@ -18,6 +18,7 @@ Guide
 
    license
    help
+   storch
 
 
 

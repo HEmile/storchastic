@@ -29,9 +29,9 @@ def _convert_indices(
 
 def mean(tensor: storch.Tensor, dims=List[Union[str, int]]) -> storch.Tensor:
     indices, reduced_batches = _convert_indices(tensor, dims)
-    return storch.reduce(torch.mean, dims=reduced_batches)(tensor, indices)
+    return storch.reduce(torch.mean, plates=reduced_batches)(tensor, indices)
 
 
 def sum(tensor: storch.Tensor, dims=List[Union[str, int]]) -> storch.Tensor:
     indices, reduced_batches = _convert_indices(tensor, dims)
-    return storch.reduce(torch.sum, dims=reduced_batches)(tensor, indices)
+    return storch.reduce(torch.sum, plates=reduced_batches)(tensor, indices)
