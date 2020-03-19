@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 import torch
+import storch
 from storch.tensor import StochasticTensor, CostTensor
 
 
@@ -15,6 +16,7 @@ class Baseline(ABC, torch.nn.Module):
 
 
 class MovingAverageBaseline(Baseline):
+    # TODO: Moving Average baseline does not take surrounding plates into account
     def __init__(self, exponential_decay=0.95):
         super().__init__()
         self.register_buffer("exponential_decay", torch.tensor(exponential_decay))
@@ -40,6 +42,7 @@ class BatchAverageBaseline(Baseline):
             raise ValueError(
                 "Can only use the batch average baseline if multiple samples are used."
             )
-        # TODO: Check dimensions/indexing of 0
-        costs = costs.detach_tensor().detach()
-        return (costs.sum(0) - costs) / (costs.shape[0] - 1)
+        costs = costs.detach()
+        sum_costs = storch.sum(costs, tensor.name)
+        baseline = (sum_costs - costs) / (tensor.n - 1)
+        return baseline

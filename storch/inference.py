@@ -4,14 +4,16 @@ from storch.tensor import Tensor, StochasticTensor, CostTensor, IndependentTenso
 import torch
 from storch.util import print_graph
 import storch
-from storch.typing import AnyTensor
 
 
 _cost_tensors: [CostTensor] = []
 
 
 def denote_independent(
-    tensor: AnyTensor, dim: int, plate_name: str
+    tensor: torch.Tensor,
+    dim: int,
+    plate_name: str,
+    weight: Optional[storch.Tensor] = None,
 ) -> IndependentTensor:
     """
     Denote the given dimensions on the tensor as being independent, that is, batched dimensions.
@@ -28,16 +30,16 @@ def denote_independent(
         raise RuntimeError(
             "Cannot create independent tensors within a deterministic or stochastic context."
         )
-    if isinstance(tensor, torch.Tensor):
-        if dim != 0:
-            tensor = tensor.transpose(dim, 0)
-        return IndependentTensor(tensor, [], [], plate_name)
-    else:
+    if isinstance(tensor, storch.Tensor):
         t_tensor = tensor._tensor
         if dim != 0:
             t_tensor = t_tensor.transpose(dim, 0)
         name = tensor.name + "_indep_" + plate_name if tensor.name else plate_name
-        return IndependentTensor(t_tensor, tensor.plates, [tensor], name)
+        return IndependentTensor(t_tensor, tensor.plates, [tensor], name, weight)
+    else:
+        if dim != 0:
+            tensor = tensor.transpose(dim, 0)
+        return IndependentTensor(tensor, [], [], plate_name, weight)
 
 
 def add_cost(cost: Tensor, name: str):
@@ -131,19 +133,14 @@ def backward(
                 parent._requires_grad,
                 parent.n,
             )
-            print("_---------------------------------_")
-            print("new_parent", new_parent)
-            print("new_cost", reduced_cost)
             # Fake the new parent to be the old parent within the graph by mimicing its place in the graph
             new_parent._parents = parent._parents
             for p, has_link in new_parent._parents:
                 p._children.append((new_parent, has_link))
             new_parent._children = parent._children
-            print(parent.sampling_method)
             cost_per_sample = parent.sampling_method._estimator(
                 new_parent, reduced_cost
             )
-            print("estimator", cost_per_sample)
             # The backwards call for reparameterization happens in the
             # backwards call for the costs themselves.
             # Now mean_cost has the same shape as parent.batch_shape
@@ -154,7 +151,6 @@ def backward(
                 )
             if final_reduced_cost.ndim == 1:
                 final_reduced_cost = final_reduced_cost.squeeze(0)
-            print("final cost", final_reduced_cost)
             accum_loss += final_reduced_cost
 
         # Compute gradients for the cost nodes themselves, if they require one.

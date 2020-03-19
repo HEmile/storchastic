@@ -183,13 +183,13 @@ def train(epoch):
             step = 100.0 * batch_idx / len(train_loader)
             global_step = 100 * (epoch - 1) + step
             print(
-                "Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}\tCost: {:.6f}\t Logits var {:.4E}".format(
+                "Train Epoch: {} [{}/{} ({:.0f}%)]\tCost: {:.6f}\tAdditive Loss: {:.6f}\t Logits var {:.4E}".format(
                     epoch,
                     batch_idx * len(data),
                     len(train_loader.dataset),
                     step,
-                    loss.item(),
                     cost.item(),
+                    (loss - cost).item(),
                     variance,
                 )
             )

@@ -506,7 +506,12 @@ class IndependentTensor(Tensor):
     """
 
     def __init__(
-        self, tensor: torch.Tensor, parents: [Tensor], plates: [Plate], name: str,
+        self,
+        tensor: torch.Tensor,
+        parents: [Tensor],
+        plates: [Plate],
+        name: str,
+        weight: Optional[storch.Tensor],
     ):
         n = tensor.shape[0]
         for plate in plates:
@@ -518,7 +523,7 @@ class IndependentTensor(Tensor):
                     " this name. Use a different name for this independent dimension."
                 )
         # TODO: Weighting
-        plates.insert(0, Plate(name, n))
+        plates.insert(0, Plate(name, n, weight))
         super().__init__(tensor, parents, plates, name)
         self.n = n
 
