@@ -167,19 +167,11 @@ def train(epoch):
             for i in range(10):
                 optimizer.zero_grad()
                 recon_batch, _, z = model(data)
-                loss_function(recon_batch, data)
+                storch.add_cost(loss_function(recon_batch, data), "reconstruction")
                 backward()
-                expected_grad = z.total_expected_grad()
-                grads_logits.append(expected_grad["logits"].unsqueeze(0))
+                grads_logits.append(z.grad["logits"].unsqueeze(0))
 
-            def _var(t):
-                m = torch.cat(t)
-                mean = m.mean(0)
-                squared_diff = (m - mean) ** 2
-                sse = squared_diff.sum(0)
-                return sse.mean()
-
-            variance = _var(grads_logits)
+            variance = torch.cat(grads_logits).var(0).mean()
             step = 100.0 * batch_idx / len(train_loader)
             global_step = 100 * (epoch - 1) + step
             print(

@@ -550,7 +550,7 @@ class _StochasticTensorBase(Tensor):
         self._requires_grad = requires_grad
         self.n = n
         self.sampling_method = sampling_method
-        self._accum_grads = {}
+        self.param_grads = {}
         self._grad = None
 
     @property
@@ -565,39 +565,7 @@ class _StochasticTensorBase(Tensor):
 
     @property
     def grad(self):
-        return self._accum_grads
-
-    def total_expected_grad(self) -> Dict[str, torch.Tensor]:
-        r = {}
-        indices = self.plate_dim_indices()
-        for name, grad in self._accum_grads.items():
-            tensor = getattr(self.distribution, name)
-            if grad.dim() == tensor.dim():
-                r[name] = grad
-            else:
-                r[name] = grad.mean(dim=indices)
-        return r
-
-    def total_variance_grad(self) -> Dict[str, torch.Tensor]:
-        """
-        Computes the total variance on the gradient of the parameters of this distribution over all simulations .
-        :return:
-        """
-        r = {}
-        indices = self.plate_dim_indices()
-        for name, grad in self._accum_grads.items():
-            tensor = getattr(self.distribution, name)
-            if grad.dim() == tensor.dim():
-                raise ValueError(
-                    "There are no batched dimensions to take statistics over. Make sure to call backwards "
-                    "with accum_grad=True"
-                )
-            expected = grad.mean(dim=indices)
-            diff = grad - expected
-            squared_diff = diff * diff
-            sse = squared_diff.sum(dim=indices)
-            r[name] = sse.mean()
-        return r
+        return self.param_grads
 
 
 class StochasticTensor(_StochasticTensorBase):

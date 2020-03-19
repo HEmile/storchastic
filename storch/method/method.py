@@ -24,7 +24,7 @@ import itertools
 class Method(ABC, torch.nn.Module):
     @staticmethod
     def _create_hook(sample: StochasticTensor, name: str):
-        accum_grads = sample._accum_grads
+        accum_grads = sample.param_grads
         del sample  # Remove from hook closure for GC reasons
 
         def hook(grad: torch.Tensor):
