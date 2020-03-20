@@ -8,9 +8,9 @@ from torch.distributions import Bernoulli, Categorical, OneHotCategorical
 
 # from storch.seq import BlackboxTensor
 
-_size = Union[Size, List[int], Tuple[int, ...]]
+_Size = Union[Size, List[int], Tuple[int, ...]]
 
-Dims = Union[int, _size]
+Dims = Union[int, _Size]
 
 # AnyBlackboxTensor = Union[BlackboxTensor, torch.Tensor]
 

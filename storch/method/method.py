@@ -9,13 +9,13 @@ from torch.distributions import (
 )
 from storch.tensor import CostTensor, StochasticTensor, Plate
 import torch
-from typing import Optional, Type, Union, Dict
+from typing import Optional, Type, Union, Dict, Tuple
 from storch.util import has_differentiable_path, get_distr_parameters
 from pyro.distributions import (
     RelaxedBernoulliStraightThrough,
     RelaxedOneHotCategoricalStraightThrough,
 )
-from storch.typing import DiscreteDistribution, BaselineFactory
+from storch.typing import DiscreteDistribution, BaselineFactory, Dims
 import storch
 from storch.method.baseline import MovingAverageBaseline, BatchAverageBaseline
 import itertools
@@ -37,13 +37,15 @@ class Method(ABC, torch.nn.Module):
         self._estimation_pairs = []
         self.register_buffer("iterations", torch.tensor(0, dtype=torch.long))
 
-    def forward(
-        self, sample_name: str, distr: Distribution, n: int = 1
-    ) -> StochasticTensor:
-        return self.sample(sample_name, distr, n)
+    def forward(self, *args, **kwargs) -> StochasticTensor:
+        return self.sample(*args, **kwargs)
 
     def sample(
-        self, sample_name: str, distr: Distribution, n: int = 1
+        self,
+        sample_name: str,
+        distr: Distribution,
+        n: int = 1,
+        event_shape: Dims = None,
     ) -> StochasticTensor:
         # Unwrap the distributions parameters
         params: Dict[str, torch.Tensor] = get_distr_parameters(
@@ -61,12 +63,52 @@ class Method(ABC, torch.nn.Module):
                         plates.append(plate)
                 params[name] = p._tensor
 
+        sample_shape = [n]
+        if event_shape:
+            if isinstance(event_shape, int):
+                sample_shape += [event_shape]
+            else:
+                sample_shape += event_shape
+        sample_shape = tuple(sample_shape)
+
         # Will not rewrap in @deterministic, because sampling statements will insert an additional dimensions in the
         # first batch dimension, causing the rewrapping statement to error as it violates the plating constraints.
         storch.wrappers._ignore_wrap = True
-        tensor, batch_size = self._sample_tensor(distr, n, parents, plates)
+        tensor = self._sample_tensor(distr, sample_shape, parents, plates)
         storch.wrappers._ignore_wrap = False
 
+        # Transpose the tensor so that the event shape is just right of the plate shape
+        if event_shape and plates:
+            index_to_plate = {}
+            index = 0
+            for plate in plates:
+                if plate.n > 1:
+                    index_to_plate[len(sample_shape) + 1 + index] = plate
+                    index += 1
+            batch_dims = len(index_to_plate) + 1
+            # There are sample_shape - 1 event shapes, as the first dimension is the new plate dimension
+            for i in reversed(range(len(sample_shape) - 1)):
+                # i + 1 contains the newly inserted event dimension, batch_dims + i now is a plate
+                tensor = tensor.transpose(1 + i, batch_dims + i)
+                if batch_dims + i in index_to_plate:
+                    if i + 1 in index_to_plate:
+                        raise IndexError(
+                            "This really should not happen. Please report on github."
+                        )
+                    index_to_plate[i + 1] = index_to_plate[batch_dims + i]
+                    del index_to_plate[batch_dims + 1]
+
+            # Reconstruct plates
+            sorted_keys = sorted(index_to_plate.keys())
+            new_plates = []
+            for i in sorted_keys:
+                new_plates.append(index_to_plate[i])
+            for plate in plates:
+                if plate not in new_plates:
+                    new_plates.append(plate)
+            plates = new_plates
+
+        batch_size = tensor.shape[0]
         if batch_size == 1 and tensor.shape[0] == 1:
             tensor = tensor.squeeze(0)
 
@@ -102,8 +144,12 @@ class Method(ABC, torch.nn.Module):
 
     @abstractmethod
     def _sample_tensor(
-        self, distr: Distribution, n: int, parents: [storch.Tensor], plates: [Plate]
-    ) -> (torch.Tensor, int):
+        self,
+        distr: Distribution,
+        sample_shape: Tuple[int, ...],
+        parents: [storch.Tensor],
+        plates: [Plate],
+    ) -> torch.Tensor:
         pass
 
     def estimator(
@@ -153,9 +199,13 @@ class Infer(Method):
         self._score_method = ScoreFunction()
 
     def _sample_tensor(
-        self, distr: Distribution, n: int, parents: [storch.Tensor], plates: [Plate]
-    ) -> (torch.Tensor, int):
-        return self._method._sample_tensor(distr, n, parents, plates)
+        self,
+        distr: Distribution,
+        sample_shape: Tuple[int, ...],
+        parents: [storch.Tensor],
+        plates: [Plate],
+    ) -> torch.Tensor:
+        return self._method._sample_tensor(distr, sample_shape, parents, plates)
 
     def estimator(
         self, tensor: StochasticTensor, cost_node: CostTensor
@@ -185,14 +235,18 @@ class Reparameterization(Method):
     """
 
     def _sample_tensor(
-        self, distr: Distribution, n: int, parents: [storch.Tensor], plates: [Plate]
-    ) -> (torch.Tensor, int):
+        self,
+        distr: Distribution,
+        sample_shape: Tuple[int, ...],
+        parents: [storch.Tensor],
+        plates: [Plate],
+    ) -> torch.Tensor:
         if not distr.has_rsample:
             raise ValueError(
                 "The input distribution has not implemented rsample. If you use a discrete "
                 "distribution, make sure to use eg GumbelSoftmax."
             )
-        return distr.rsample((n,)), n
+        return distr.rsample(sample_shape)
 
     def adds_loss(self, tensor: StochasticTensor, cost_node: CostTensor) -> bool:
         if has_differentiable_path(cost_node, tensor):
@@ -228,10 +282,10 @@ class GumbelSoftmax(Reparameterization):
     def _sample_tensor(
         self,
         distr: DiscreteDistribution,
-        n: int,
+        sample_shape: Tuple[int, ...],
         parents: [storch.Tensor],
         plates: [Plate],
-    ) -> (torch.Tensor, int):
+    ) -> torch.Tensor:
         if isinstance(distr, (Categorical, OneHotCategorical)):
             if self.straight_through:
                 gumbel_distr = RelaxedOneHotCategoricalStraightThrough(
@@ -250,7 +304,7 @@ class GumbelSoftmax(Reparameterization):
                 gumbel_distr = RelaxedBernoulli(self.temperature, probs=distr.probs)
         else:
             raise ValueError("Using Gumbel Softmax with non-discrete distribution")
-        return gumbel_distr.rsample((n,)), n
+        return gumbel_distr.rsample(sample_shape)
 
     def update_parameters(
         self, result_triples: [(StochasticTensor, CostTensor, torch.Tensor)]
@@ -281,9 +335,13 @@ class ScoreFunction(Method):
                 raise ValueError("Invalid baseline name", baseline_factory)
 
     def _sample_tensor(
-        self, distr: Distribution, n: int, parents: [storch.Tensor], plates: [Plate]
-    ) -> (torch.Tensor, int):
-        return distr.sample((n,)), n
+        self,
+        distr: Distribution,
+        sample_shape: Tuple[int, ...],
+        parents: [storch.Tensor],
+        plates: [Plate],
+    ) -> torch.Tensor:
+        return distr.sample(sample_shape)
 
     def estimator(self, tensor: StochasticTensor, cost: CostTensor) -> storch.Tensor:
         log_prob = tensor.distribution.log_prob(tensor)
@@ -308,8 +366,12 @@ class Expect(Method):
         self.budget = budget
 
     def _sample_tensor(
-        self, distr: Distribution, n: int, parents: [storch.Tensor], plates: [Plate]
-    ) -> (torch.Tensor, int):
+        self,
+        distr: Distribution,
+        sample_shape: Tuple[int, ...],
+        parents: [storch.Tensor],
+        plates: [Plate],
+    ) -> torch.Tensor:
         # TODO: Currently very inefficient as it isn't batched
         if not distr.has_enumerate_support:
             raise ValueError(
@@ -320,9 +382,11 @@ class Expect(Method):
         expect_size = support.shape[0]
 
         batch_len = len(plates)
-        sizes = support.shape[
-            batch_len + 1 : len(support.shape) - len(distr.event_shape)
-        ]
+        sizes = (
+            # Might give problems with indexing?
+            sample_shape[1:]
+            + support.shape[batch_len + 1 : len(support.shape) - len(distr.event_shape)]
+        )
         amt_samples_used = expect_size
         cross_products = None
         for dim in sizes:
@@ -338,14 +402,14 @@ class Expect(Method):
             )
 
         enumerate_tensor = support.new_zeros(
-            [amt_samples_used] + list(support.shape[1:])
+            [amt_samples_used] + list(sample_shape[1:]) + list(support.shape[1:])
         )
         support_non_expanded = support_non_expanded.squeeze().unsqueeze(1)
         for i, t in enumerate(
             itertools.product(support_non_expanded, repeat=cross_products)
         ):
             enumerate_tensor[i] = torch.cat(t, dim=0)
-        return enumerate_tensor.detach(), enumerate_tensor.shape[0]
+        return enumerate_tensor.detach()
 
     def plate_weighting(
         self, tensor: storch.StochasticTensor
@@ -362,7 +426,11 @@ class UnorderedSet(Method):
         super().__init__()
 
     def _sample_tensor(
-        self, distr: Distribution, n: int, parents: [storch.Tensor], plates: [Plate]
+        self,
+        distr: Distribution,
+        sample_shape: Tuple[int, ...],
+        parents: [storch.Tensor],
+        plates: [Plate],
     ) -> torch.Tensor:
         pass
 
