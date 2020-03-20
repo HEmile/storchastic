@@ -9,7 +9,8 @@ from torch.distributions import (
 )
 from storch.tensor import CostTensor, StochasticTensor, Plate
 import torch
-from typing import Optional, Type, Union, Dict
+import torch.nn.functional as F
+from typing import Optional, Type, Union, Dict, Callable
 from storch.util import has_differentiable_path, get_distr_parameters
 from pyro.distributions import (
     RelaxedBernoulliStraightThrough,
@@ -370,3 +371,74 @@ class UnorderedSet(Method):
         self, tensor: StochasticTensor, cost_node: CostTensor
     ) -> Optional[storch.Tensor]:
         pass
+
+
+class Baseline(torch.nn.Module):
+    def __init__(self, in_dim):
+        super().__init__()
+
+        self.fc1 = torch.nn.Linear(in_dim, 50)
+        self.fc2 = torch.nn.Linear(50, 1)
+
+    def forward(self, x):
+        return self.fc2(F.relu(self.fc1(x)))
+
+
+class LAX(Method):
+    """
+    Implements the LAX estimator from Grathwohl et al, 2018.
+    Code inspired by https://github.com/duvenaud/relax/blob/master/pytorch_toy.py
+    """
+
+    def __init__(
+        self, c_phi: Callable[[torch.Tensor], torch.Tensor] = None, in_dim=None
+    ):
+        super().__init__()
+        if c_phi:
+            self.c_phi = c_phi
+        else:
+            self.c_phi = Baseline(in_dim)
+
+    def _sample_tensor(
+        self, distr: Distribution, n: int, parents: [storch.Tensor], plates: [Plate]
+    ) -> (torch.Tensor, int):
+        return distr.rsample((n,)), n
+
+    def estimator(
+        self, tensor: StochasticTensor, cost_node: CostTensor
+    ) -> Optional[storch.Tensor]:
+        output_baseline = self.c_phi(tensor)
+        log_prob = tensor.distribution.log_prob(tensor)
+        log_prob = log_prob.sum(dim=list(range(tensor.plate_dims, len(log_prob.shape))))
+
+        # Compute the derivative with respect to the distributional parameters through the baseline.
+        derivs = []
+        for param in get_distr_parameters(
+            tensor.distribution, filter_requires_grad=True
+        ).values():
+            if isinstance(param, storch.Tensor):
+                param = param._tensor
+            d_log_prob = torch.autograd.grad(
+                [log_prob._tensor],
+                [param],
+                create_graph=True,
+                grad_outputs=torch.ones_like(log_prob),
+            )[0]
+            d_output_baseline = torch.autograd.grad(
+                [output_baseline._tensor],
+                [param],
+                create_graph=True,
+                grad_outputs=torch.ones_like(output_baseline),
+            )[0]
+            derivs.append((param, d_log_prob, d_output_baseline))
+        diff = (cost_node - output_baseline)._tensor
+        var_loss = 0.0
+        for param, d_log_prob, d_output_baseline in derivs:
+            d_param = diff * d_log_prob + d_output_baseline
+            param.backward(d_param)
+            var_loss += (d_param ** 2).mean()
+
+        var_loss.backward()
+
+    def adds_loss(self, tensor: StochasticTensor, cost_node: CostTensor) -> bool:
+        return True

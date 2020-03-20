@@ -11,13 +11,14 @@ theta = torch.tensor([4.0, 5])
 method = storch.method.Infer(Normal)
 score_method = storch.method.ScoreFunction()
 expect = storch.method.Expect()
+lax_method = storch.method.LAX(in_dim=2)
 
 
 def loss(v):
     return torch.nn.MSELoss(reduction="none")(v, theta).mean(dim=-1)
 
 
-mu = method("mu", Normal(mu_prior, 1), n=1)
+mu = lax_method("mu", Normal(mu_prior, 1), n=1)
 k = expect(
     "k",
     Categorical(
