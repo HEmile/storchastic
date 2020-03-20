@@ -48,7 +48,7 @@ parser.add_argument(
     "--method",
     type=str,
     default="gumbel",
-    help="Method in {gumbel, gumbel_straight, score}",
+    help="Method in {gumbel, gumbel_straight, score, unordered}",
 )
 parser.add_argument(
     "--baseline",
@@ -95,6 +95,8 @@ class VAE(nn.Module):
             )
         elif args.method == "expect":
             self.sampling_method = storch.method.Expect()
+        elif args.method == "unordered":
+            self.sampling_method = storch.method.UnorderedSet()
         self.latents = args.latents
         self.samples = args.samples
         self.fc1 = nn.Linear(784, 512)

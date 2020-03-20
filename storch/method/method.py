@@ -6,6 +6,7 @@ from torch.distributions import (
     Bernoulli,
     RelaxedOneHotCategorical,
     RelaxedBernoulli,
+    Gumbel,
 )
 from storch.tensor import CostTensor, StochasticTensor, Plate
 import torch
@@ -358,15 +359,34 @@ class Expect(Method):
 
 
 class UnorderedSet(Method):
-    def __init__(self):
+    """
+    Implements Kool et al, 2020
+    Code adapted from https://github.com/wouterkool/estimating-gradients-without-replacement/blob/master/bernoulli/baselines_lib.py
+    and https://github.com/wouterkool/stochastic-beam-search/commit/34c43a33fd6747eb2e66a0c3cf66c0c5583a9119#diff-990a7aab49cbc338a03360e239583594
+    """
+
+    def __init__(self, sampling_temperature=1.0):
         super().__init__()
+        self.sampling_temperature = sampling_temperature
+
+    def _stochastic_beam(self, logits):
+        pass
+
+    def gumbel_top_k(self, logits, k):
+        g = Gumbel(logits, 1.0).rsample()
+        _, ind = g.topk(k, -1)
+        return ind
 
     def _sample_tensor(
         self, distr: Distribution, n: int, parents: [storch.Tensor], plates: [Plate]
     ) -> torch.Tensor:
-        pass
+        # Sample using the Gumbel-Top-k trick
+        ind = self.gumbel_top_k(distr.logits, n)
+        print(ind[0])
+        print(ind.shape)
+        return None
 
-    def estimator(
-        self, tensor: StochasticTensor, cost_node: CostTensor
+    def plate_weighting(
+        self, tensor: storch.StochasticTensor
     ) -> Optional[storch.Tensor]:
         pass
