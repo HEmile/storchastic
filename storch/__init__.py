@@ -45,6 +45,9 @@ for m, v in torch.__dict__.items():
         and m not in _excluded_init
     ):
         torch.__dict__[m] = deterministic(v)
+    else:
+        continue
+    # torch.__dict__[m].__module__ = "torch"
 
 let_through = False
 for m, v in torch.nn.functional.__dict__.items():
