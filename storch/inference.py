@@ -141,17 +141,19 @@ def backward(
             cost_per_sample = parent.sampling_method._estimator(
                 new_parent, reduced_cost
             )
-            # The backwards call for reparameterization happens in the
-            # backwards call for the costs themselves.
-            # Now mean_cost has the same shape as parent.batch_shape
-            final_reduced_cost = cost_per_sample
-            for plate in cost_per_sample.multi_dim_plates():
-                final_reduced_cost = plate.reduce(
-                    final_reduced_cost, detach_weights=True
-                )
-            if final_reduced_cost.ndim == 1:
-                final_reduced_cost = final_reduced_cost.squeeze(0)
-            accum_loss += final_reduced_cost
+
+            if cost_per_sample is not None:
+                # The backwards call for reparameterization happens in the
+                # backwards call for the costs themselves.
+                # Now mean_cost has the same shape as parent.batch_shape
+                final_reduced_cost = cost_per_sample
+                for plate in cost_per_sample.multi_dim_plates():
+                    final_reduced_cost = plate.reduce(
+                        final_reduced_cost, detach_weights=True
+                    )
+                if final_reduced_cost.ndim == 1:
+                    final_reduced_cost = final_reduced_cost.squeeze(0)
+                accum_loss += final_reduced_cost
 
         # Compute gradients for the cost nodes themselves, if they require one.
         if avg_cost.requires_grad:

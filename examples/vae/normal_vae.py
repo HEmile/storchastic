@@ -21,7 +21,7 @@ class NormalVAE(VAE):
         if args.method == "reparameterization":
             return storch.method.Reparameterization()
         elif args.method == "lax":
-            return storch.method.LAX()
+            return storch.method.LAX(in_dim=args.latents)
         elif args.method == "score":
             return storch.method.ScoreFunction(baseline_factory=args.baseline)
 

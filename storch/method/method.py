@@ -413,9 +413,11 @@ class LAX(Method):
 
         # Compute the derivative with respect to the distributional parameters through the baseline.
         derivs = []
+        state = "phase 1"
         for param in get_distr_parameters(
             tensor.distribution, filter_requires_grad=True
         ).values():
+            # param.register_hook(lambda g: print(state))
             if isinstance(param, storch.Tensor):
                 param = param._tensor
             d_log_prob = torch.autograd.grad(
@@ -431,14 +433,31 @@ class LAX(Method):
                 grad_outputs=torch.ones_like(output_baseline),
             )[0]
             derivs.append((param, d_log_prob, d_output_baseline))
+
         diff = (cost_node - output_baseline)._tensor
         var_loss = 0.0
+        state = "phase 2"
         for param, d_log_prob, d_output_baseline in derivs:
             d_param = diff * d_log_prob + d_output_baseline
-            param.backward(d_param)
+            param.backward(d_param, retain_graph=True)
+            # Taking the mean here might weight things wrongly.
             var_loss += (d_param ** 2).mean()
 
-        var_loss.backward()
+        c_phi_params = []
+        state = "phase 3"
+
+        # _grad_outputs = []
+        for param in self.c_phi.parameters(recurse=True):
+            if param.requires_grad:
+                c_phi_params.append(param)
+                # _grad_outputs.append(torch.ones_like(param))
+        d_variance = torch.autograd.grad([var_loss], c_phi_params)
+        # # Bug: Currently, var_loss also goes backward into the logits.
+        # var_loss.backward(retain_graph=True)
+        state = "phase 4"
+        for i in range(len(c_phi_params)):
+            c_phi_params[i].backward(d_variance[i])
+        state = "phase 5"
 
     def adds_loss(self, tensor: StochasticTensor, cost_node: CostTensor) -> bool:
         return True

@@ -134,7 +134,7 @@ def main(vae: Type[VAE]):
     parser.add_argument(
         "--baseline",
         type=str,
-        default="batch_average",
+        default="none",
         help="What baseline to use for the score function.",
     )
     parser.add_argument(
