@@ -540,7 +540,7 @@ class _StochasticTensorBase(Tensor):
         parents: [Tensor],
         plates: [Plate],
         name: str,
-        sampling_method: storch.Method,
+        sampling_method: Optional[storch.Method],
         distribution: Distribution,
         requires_grad: bool,
         n: int,

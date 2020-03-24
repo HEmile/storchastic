@@ -40,12 +40,12 @@ class Method(ABC, torch.nn.Module):
 
     def forward(
         self, sample_name: str, distr: Distribution, n: int = 1
-    ) -> StochasticTensor:
+    ) -> storch.tensor._StochasticTensorBase:
         return self.sample(sample_name, distr, n)
 
     def sample(
         self, sample_name: str, distr: Distribution, n: int = 1
-    ) -> StochasticTensor:
+    ) -> storch.tensor._StochasticTensorBase:
         # Unwrap the distributions parameters
         params: Dict[str, torch.Tensor] = get_distr_parameters(
             distr, filter_requires_grad=False
@@ -88,6 +88,20 @@ class Method(ABC, torch.nn.Module):
             if param.requires_grad:
                 param.register_hook(self._create_hook(s_tensor, name))
 
+        edited_sample = self.post_sample(s_tensor)
+        if edited_sample is not None:
+            new_s_tensor = storch.tensor._StochasticTensorBase(
+                edited_sample._tensor,
+                [s_tensor],
+                s_tensor.plates,
+                s_tensor.name,
+                None,
+                s_tensor.distribution,
+                False,
+                s_tensor.n,
+            )
+            new_s_tensor.param_grads = s_tensor.param_grads
+            return new_s_tensor
         return s_tensor
 
     def _estimator(
@@ -116,7 +130,7 @@ class Method(ABC, torch.nn.Module):
         return None
 
     def update_parameters(
-        self, result_triples: [(StochasticTensor, CostTensor, torch.Tensor)]
+        self, result_triples: [(StochasticTensor, CostTensor)]
     ) -> None:
         pass
 
@@ -134,6 +148,9 @@ class Method(ABC, torch.nn.Module):
         of the stochastic tensor with respect to the cost node.
         """
         return False
+
+    def post_sample(self, tensor: storch.StochasticTensor) -> Optional[storch.Tensor]:
+        return None
 
 
 class Infer(Method):
@@ -388,6 +405,7 @@ class LAX(Method):
     """
     Implements the LAX estimator from Grathwohl et al, 2018.
     Code inspired by https://github.com/duvenaud/relax/blob/master/pytorch_toy.py
+    For caveats, see Tucker et al https://arxiv.org/abs/1802.10031. Variance reduction is not guaranteed.
     """
 
     def __init__(
@@ -402,22 +420,29 @@ class LAX(Method):
     def _sample_tensor(
         self, distr: Distribution, n: int, parents: [storch.Tensor], plates: [Plate]
     ) -> (torch.Tensor, int):
-        return distr.rsample((n,)), n
+        sample = distr.rsample((n,))
+        return sample, n
+
+    def post_sample(self, tensor: storch.StochasticTensor) -> Optional[storch.Tensor]:
+        return tensor.detach()
 
     def estimator(
         self, tensor: StochasticTensor, cost_node: CostTensor
     ) -> Optional[storch.Tensor]:
+        # Input rsampled value into c_phi
         output_baseline = self.c_phi(tensor)
-        log_prob = tensor.distribution.log_prob(tensor)
+
+        # Compute log probability. Make sure not to use the rsampled value: We want to compute the distribution
+        # not through the sample but only through the distributional parameters.
+        log_prob = tensor.distribution.log_prob(tensor.detach())
         log_prob = log_prob.sum(dim=list(range(tensor.plate_dims, len(log_prob.shape))))
 
         # Compute the derivative with respect to the distributional parameters through the baseline.
         derivs = []
-        state = "phase 1"
         for param in get_distr_parameters(
             tensor.distribution, filter_requires_grad=True
         ).values():
-            # param.register_hook(lambda g: print(state))
+            # param.register_hook(hook)
             if isinstance(param, storch.Tensor):
                 param = param._tensor
             d_log_prob = torch.autograd.grad(
@@ -436,28 +461,23 @@ class LAX(Method):
 
         diff = (cost_node - output_baseline)._tensor
         var_loss = 0.0
-        state = "phase 2"
         for param, d_log_prob, d_output_baseline in derivs:
+            # Compute total derivative with respect to the parameter
             d_param = diff * d_log_prob + d_output_baseline
+            # Compute backwards from the parameters using its total derivative
             param.backward(d_param, retain_graph=True)
-            # Taking the mean here might weight things wrongly.
+            # TODO: Taking the mean here weights things wrongly. Should reduce the plates instead
             var_loss += (d_param ** 2).mean()
 
         c_phi_params = []
-        state = "phase 3"
 
-        # _grad_outputs = []
         for param in self.c_phi.parameters(recurse=True):
             if param.requires_grad:
                 c_phi_params.append(param)
-                # _grad_outputs.append(torch.ones_like(param))
         d_variance = torch.autograd.grad([var_loss], c_phi_params)
-        # # Bug: Currently, var_loss also goes backward into the logits.
-        # var_loss.backward(retain_graph=True)
-        state = "phase 4"
         for i in range(len(c_phi_params)):
             c_phi_params[i].backward(d_variance[i])
-        state = "phase 5"
+        return None
 
     def adds_loss(self, tensor: StochasticTensor, cost_node: CostTensor) -> bool:
         return True
