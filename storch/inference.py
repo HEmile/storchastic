@@ -79,14 +79,12 @@ def backward(
     stochastic_nodes = set()
     # Loop over different cost nodes
     for c in costs:
-        avg_cost = c
-        for plate in c.multi_dim_plates():
-            # Do not detach the weights when reducing. This is used in for example expectations to weight the
-            # different costs.
-            avg_cost = plate.reduce(avg_cost, detach_weights=False)
+        # Do not detach the weights when reducing. This is used in for example expectations to weight the
+        # different costs.
+        reduced_cost = storch.reduce_plates(c, detach_weights=False)
         if print_costs:
-            print(c.name, ":", avg_cost._tensor.item())
-        total_cost += avg_cost
+            print(c.name, ":", reduced_cost._tensor.item())
+        total_cost += reduced_cost
         for parent in c.walk_parents(depth_first=False):
             # Instance check here instead of parent.stochastic, as backward methods are only used on these.
             if isinstance(parent, StochasticTensor):
@@ -103,10 +101,11 @@ def backward(
             parent_tensor = parent._tensor
             reduced_cost = c
             parent_plates = list(parent.multi_dim_plates())
+
             # Reduce all plates that are in the cost node but not in the parent node
             for plate in c.multi_dim_plates():
                 if plate not in parent_plates:
-                    reduced_cost = plate.reduce(c, detach_weights=True)
+                    reduced_cost = plate.reduce(reduced_cost, detach_weights=True)
 
             # Align the parent tensor so that the plate dimensions are in the same order as the cost tensor
             for index_c, plate in enumerate(reduced_cost.multi_dim_plates()):
@@ -146,18 +145,16 @@ def backward(
                 # The backwards call for reparameterization happens in the
                 # backwards call for the costs themselves.
                 # Now mean_cost has the same shape as parent.batch_shape
-                final_reduced_cost = cost_per_sample
-                for plate in cost_per_sample.multi_dim_plates():
-                    final_reduced_cost = plate.reduce(
-                        final_reduced_cost, detach_weights=True
-                    )
+                final_reduced_cost = storch.reduce_plates(
+                    cost_per_sample, detach_weights=True
+                )
                 if final_reduced_cost.ndim == 1:
                     final_reduced_cost = final_reduced_cost.squeeze(0)
                 accum_loss += final_reduced_cost
 
         # Compute gradients for the cost nodes themselves, if they require one.
-        if avg_cost.requires_grad:
-            accum_loss += avg_cost
+        if reduced_cost.requires_grad:
+            accum_loss += reduced_cost
 
     if isinstance(accum_loss, storch.Tensor) and accum_loss._tensor.requires_grad:
         accum_loss._tensor.backward(retain_graph=retain_graph)

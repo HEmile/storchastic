@@ -1,4 +1,4 @@
-from typing import List, Union
+from typing import List, Union, Optional
 
 import storch
 import torch
@@ -35,3 +35,36 @@ def mean(tensor: storch.Tensor, dims=List[Union[str, int]]) -> storch.Tensor:
 def sum(tensor: storch.Tensor, dims=List[Union[str, int]]) -> storch.Tensor:
     indices, reduced_batches = _convert_indices(tensor, dims)
     return storch.reduce(torch.sum, plates=reduced_batches)(tensor, indices)
+
+
+def reduce_plates(
+    tensor: torch.Tensor,
+    plates: Optional[List[storch.Plate]] = None,
+    detach_weights=True,
+) -> storch.Tensor:
+    """
+    Reduce the tensor along the given plates. This takes into account how different samples are weighted, and should
+    nearly always be used instead of reducing plate dimensions using the mean or the sum.
+    :param tensor: Tensor to reduce
+    :param plates: Plate dimensions to reduce
+    :param detach_weights: Whether to detach the weighting of the samples from the graph
+    :return: The reduced tensor
+    """
+    if not isinstance(tensor, storch.Tensor):
+        if not plates:
+            raise ValueError("Make sure to pass plates when passing a torch.Tensor.")
+        index_tensor = 0
+        for plate in plates:
+            if plate.n > 1:
+                if tensor.shape[index_tensor] != plate.n:
+                    raise ValueError(
+                        "Received a tensor that does not align with the given plates."
+                    )
+                index_tensor += 1
+        tensor = storch.Tensor(tensor, [], plates)
+    elif not plates:
+        plates = tensor.plates
+    for plate in plates:
+        if plate.n > 1:
+            tensor = plate.reduce(tensor, detach_weights=detach_weights)
+    return tensor
