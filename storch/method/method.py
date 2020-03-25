@@ -459,22 +459,25 @@ class LAX(Method):
             )[0]
             derivs.append((param, d_log_prob, d_output_baseline))
 
-        diff = (cost_node - output_baseline)._tensor
+        diff = cost_node - output_baseline
         var_loss = 0.0
         for param, d_log_prob, d_output_baseline in derivs:
             # Compute total derivative with respect to the parameter
             d_param = diff * d_log_prob + d_output_baseline
+            # Reduce the plate of this sample in case multiple samples are taken
+            d_param = storch.reduce_plates(d_param, plate_names=[tensor.name])
             # Compute backwards from the parameters using its total derivative
-            param.backward(d_param, retain_graph=True)
-            # TODO: Taking the mean here weights things wrongly. Should reduce the plates instead
-            var_loss += (d_param ** 2).mean()
+            param.backward(d_param._tensor, retain_graph=True)
+            # Compute the gradient variance
+            variance = (d_param ** 2).sum(d_param.event_dim_indices())
+            var_loss += storch.reduce_plates(variance)
 
         c_phi_params = []
 
         for param in self.c_phi.parameters(recurse=True):
             if param.requires_grad:
                 c_phi_params.append(param)
-        d_variance = torch.autograd.grad([var_loss], c_phi_params)
+        d_variance = torch.autograd.grad([var_loss._tensor], c_phi_params)
         for i in range(len(c_phi_params)):
             c_phi_params[i].backward(d_variance[i])
         return None

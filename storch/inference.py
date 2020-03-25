@@ -82,9 +82,14 @@ def backward(
         # Do not detach the weights when reducing. This is used in for example expectations to weight the
         # different costs.
         reduced_cost = storch.reduce_plates(c, detach_weights=False)
+
         if print_costs:
             print(c.name, ":", reduced_cost._tensor.item())
         total_cost += reduced_cost
+        # Compute gradients for the cost nodes themselves, if they require one.
+        if reduced_cost.requires_grad:
+            accum_loss += reduced_cost
+
         for parent in c.walk_parents(depth_first=False):
             # Instance check here instead of parent.stochastic, as backward methods are only used on these.
             if isinstance(parent, StochasticTensor):
@@ -151,10 +156,6 @@ def backward(
                 if final_reduced_cost.ndim == 1:
                     final_reduced_cost = final_reduced_cost.squeeze(0)
                 accum_loss += final_reduced_cost
-
-        # Compute gradients for the cost nodes themselves, if they require one.
-        if reduced_cost.requires_grad:
-            accum_loss += reduced_cost
 
     if isinstance(accum_loss, storch.Tensor) and accum_loss._tensor.requires_grad:
         accum_loss._tensor.backward(retain_graph=retain_graph)

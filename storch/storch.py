@@ -39,17 +39,22 @@ def sum(tensor: storch.Tensor, dims=List[Union[str, int]]) -> storch.Tensor:
 
 def reduce_plates(
     tensor: torch.Tensor,
+    *,
     plates: Optional[List[storch.Plate]] = None,
+    plate_names: Optional[List[str]] = None,
     detach_weights=True,
 ) -> storch.Tensor:
     """
     Reduce the tensor along the given plates. This takes into account how different samples are weighted, and should
     nearly always be used instead of reducing plate dimensions using the mean or the sum.
     :param tensor: Tensor to reduce
-    :param plates: Plate dimensions to reduce
+    :param plates: Plates to reduce. Cannot be used together with plate_names
+    :param plate_names: Names of plates to reduce. Cannot be used togeter with plates
     :param detach_weights: Whether to detach the weighting of the samples from the graph
     :return: The reduced tensor
     """
+    if plates and plate_names:
+        raise ValueError("Provide only one of plates and plate_names.")
     if not isinstance(tensor, storch.Tensor):
         if not plates:
             raise ValueError("Make sure to pass plates when passing a torch.Tensor.")
@@ -62,8 +67,14 @@ def reduce_plates(
                     )
                 index_tensor += 1
         tensor = storch.Tensor(tensor, [], plates)
-    elif not plates:
-        plates = tensor.plates
+    else:
+        if plate_names:
+            plates = []
+            for plate in tensor.plates:
+                if plate.name in plate_names:
+                    plates.append(plate)
+        elif not plates:
+            plates = tensor.plates
     for plate in plates:
         if plate.n > 1:
             tensor = plate.reduce(tensor, detach_weights=detach_weights)
