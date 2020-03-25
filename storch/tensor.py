@@ -510,21 +510,22 @@ class IndependentTensor(Tensor):
         tensor: torch.Tensor,
         parents: [Tensor],
         plates: [Plate],
-        name: str,
+        tensor_name: str,
+        plate_name: str,
         weight: Optional[storch.Tensor],
     ):
         n = tensor.shape[0]
         for plate in plates:
-            if plate.name == name:
+            if plate.name == plate_name:
                 raise ValueError(
                     "Cannot create independent tensor with name "
-                    + name
+                    + plate_name
                     + ". A parent sample has already used"
                     " this name. Use a different name for this independent dimension."
                 )
         # TODO: Weighting
-        plates.insert(0, Plate(name, n, weight))
-        super().__init__(tensor, parents, plates, name)
+        plates.insert(0, Plate(plate_name, n, weight))
+        super().__init__(tensor, parents, plates, tensor_name)
         self.n = n
 
     # TODO: Should IndependentTensors be stochastic? Sometimes, like if it is denoting a minibatch, making them

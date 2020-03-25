@@ -10,7 +10,7 @@ from torch.distributions import (
 from storch.tensor import CostTensor, StochasticTensor, Plate
 import torch
 import torch.nn.functional as F
-from typing import Optional, Type, Union, Dict, Callable
+from typing import Optional, Type, Union, Dict, Callable, List
 from storch.util import has_differentiable_path, get_distr_parameters
 from pyro.distributions import (
     RelaxedBernoulliStraightThrough,
@@ -24,12 +24,17 @@ import itertools
 
 class Method(ABC, torch.nn.Module):
     @staticmethod
-    def _create_hook(sample: StochasticTensor, name: str):
+    def _create_hook(sample: StochasticTensor, name: str, plates: List[Plate]):
         accum_grads = sample.param_grads
         del sample  # Remove from hook closure for GC reasons
 
         def hook(grad: torch.Tensor):
-            accum_grads[name] = grad
+            if name in accum_grads:
+                accum_grads[name] = storch.Tensor(
+                    accum_grads[name]._tensor + grad, [], plates, name + "_grad"
+                )
+            else:
+                accum_grads[name] = storch.Tensor(grad, [], plates, name + "_grad")
 
         return hook
 
@@ -47,7 +52,7 @@ class Method(ABC, torch.nn.Module):
         self, sample_name: str, distr: Distribution, n: int = 1
     ) -> storch.tensor._StochasticTensorBase:
         # Unwrap the distributions parameters
-        params: Dict[str, torch.Tensor] = get_distr_parameters(
+        params: Dict[str, storch.Tensor] = get_distr_parameters(
             distr, filter_requires_grad=False
         )
         parents: Dict[str, torch.Tensor] = {}
@@ -60,7 +65,6 @@ class Method(ABC, torch.nn.Module):
                 for plate in p.plates:
                     if plate not in plates:
                         plates.append(plate)
-                params[name] = p._tensor
 
         # Will not rewrap in @deterministic, because sampling statements will insert an additional dimensions in the
         # first batch dimension, causing the rewrapping statement to error as it violates the plating constraints.
@@ -86,7 +90,12 @@ class Method(ABC, torch.nn.Module):
             # TODO: Possibly could find the wrong gradients here if multiple distributions use the same parameter?
             # This maybe requires copying the tensor hm...
             if param.requires_grad:
-                param.register_hook(self._create_hook(s_tensor, name))
+                hook_plates = []
+                if isinstance(param, storch.Tensor):
+                    hook_plates = param.plates
+                param._tensor.register_hook(
+                    self._create_hook(s_tensor, name, hook_plates)
+                )
 
         edited_sample = self.post_sample(s_tensor)
         if edited_sample is not None:

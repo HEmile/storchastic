@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, List
 
 from storch.tensor import Tensor, StochasticTensor, CostTensor, IndependentTensor
 import torch
@@ -17,7 +17,7 @@ def denote_independent(
 ) -> IndependentTensor:
     """
     Denote the given dimensions on the tensor as being independent, that is, batched dimensions.
-    It will automatically put these dimensions to the right.
+    It will automatically put these dimensions to the left.
     :param tensor:
     :param dims:
     :param plate_name: Name of the plate. Reused if called again
@@ -34,12 +34,43 @@ def denote_independent(
         t_tensor = tensor._tensor
         if dim != 0:
             t_tensor = t_tensor.transpose(dim, 0)
-        name = tensor.name + "_indep_" + plate_name if tensor.name else plate_name
-        return IndependentTensor(t_tensor, tensor.plates, [tensor], name, weight)
+        tensor_name = (
+            tensor.name + "_indep_" + plate_name if tensor.name else plate_name
+        )
+        return IndependentTensor(
+            t_tensor, [tensor], tensor.plates, tensor_name, plate_name, weight
+        )
     else:
         if dim != 0:
             tensor = tensor.transpose(dim, 0)
-        return IndependentTensor(tensor, [], [], plate_name, weight)
+        return IndependentTensor(tensor, [], [], plate_name, plate_name, weight)
+
+
+def gather_samples(
+    samples: List[storch.Tensor],
+    plate_name: str,
+    weight: Optional[storch.Tensor] = None,
+) -> IndependentTensor:
+    if (
+        storch.wrappers._context_stochastic
+        or storch.wrappers._context_deterministic > 0
+    ):
+        raise RuntimeError(
+            "Cannot create independent tensors within a deterministic or stochastic context."
+        )
+    collect_tensors = []
+    for sample in samples:
+        sample = sample._tensor
+        if not sample.shape[0] == 1:
+            sample = sample.unsqueeze(0)
+        collect_tensors.append(sample)
+    cat_tensors = torch.cat(collect_tensors, 0)
+    tensor_name = (
+        samples[0].name + "_indep_" + plate_name if samples[0].name else plate_name
+    )
+    return IndependentTensor(
+        cat_tensors, samples, samples[0].plates.copy(), tensor_name, plate_name, weight
+    )
 
 
 def add_cost(cost: Tensor, name: str):

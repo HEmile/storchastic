@@ -46,10 +46,13 @@ def train(epoch, model, train_loader, device, optimizer, args, writer):
                     storch.add_cost(loss_function(recon_batch, data), "reconstruction")
                     backward()
                     for n, grad in z.grad.items():
-                        grads[n].append(grad.unsqueeze(0))
+                        grads[n].append(grad)
                 variances = {}
                 for n, gradz in grads.items():
-                    variances[n] = torch.cat(gradz).var(0).mean()
+                    # Create a new independent dimension for the different gradient samples
+                    grad_samples = storch.gather_samples(gradz, "variance")
+                    # Compute the variance over this independent dimension
+                    variances[n] = storch.variance(grad_samples, "variance")._tensor
 
             step = 100.0 * batch_idx / len(train_loader)
             global_step = 100 * (epoch - 1) + step

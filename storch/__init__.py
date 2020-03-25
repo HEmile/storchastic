@@ -9,7 +9,7 @@ from .wrappers import (
 )
 from .tensor import Tensor, CostTensor, StochasticTensor, Plate
 from .method import *
-from .inference import backward, add_cost, reset, denote_independent
+from .inference import backward, add_cost, reset, denote_independent, gather_samples
 from .util import print_graph
 from .storch import *
 import storch.typing
