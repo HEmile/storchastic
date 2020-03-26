@@ -1,7 +1,25 @@
-from typing import Dict
+from typing import Dict, Optional, List
 
-from storch.tensor import Tensor, CostTensor, StochasticTensor, Plate
-from torch.distributions import Distribution
+from pyro.distributions import (
+    RelaxedOneHotCategoricalStraightThrough,
+    RelaxedBernoulliStraightThrough,
+)
+
+from storch.tensor import (
+    Tensor,
+    CostTensor,
+    StochasticTensor,
+    Plate,
+    _StochasticTensorBase,
+)
+from torch.distributions import (
+    Distribution,
+    RelaxedOneHotCategorical,
+    Categorical,
+    OneHotCategorical,
+    Bernoulli,
+    RelaxedBernoulli,
+)
 import torch
 
 
@@ -182,3 +200,81 @@ def reduce_mean(tensor: torch.Tensor, keep_dims: [int]):
     for dim in keep_dims:
         sum_out_dims.remove(dim)
     return tensor.mean(sum_out_dims)
+
+
+def rsample_gumbel(
+    distr: Distribution,
+    n: int,
+    temperature: torch.Tensor,
+    straight_through: bool = False,
+) -> torch.Tensor:
+    if isinstance(distr, (Categorical, OneHotCategorical)):
+        if straight_through:
+            gumbel_distr = RelaxedOneHotCategoricalStraightThrough(
+                temperature, probs=distr.probs
+            )
+        else:
+            gumbel_distr = RelaxedOneHotCategorical(temperature, probs=distr.probs)
+    elif isinstance(distr, Bernoulli):
+        if straight_through:
+            gumbel_distr = RelaxedBernoulliStraightThrough(
+                temperature, probs=distr.probs
+            )
+        else:
+            gumbel_distr = RelaxedBernoulli(temperature, probs=distr.probs)
+    else:
+        raise ValueError("Using Gumbel Softmax with non-discrete distribution")
+    return gumbel_distr.rsample((n,))
+
+
+def split(
+    tensor: Tensor,
+    plate: Plate,
+    *,
+    amt_slices: Optional[int] = None,
+    slices: Optional[List[slice]] = None,
+    create_plates=True
+) -> List[Tensor]:
+    """
+    Splits the plate dimension on the tensor into several tensors and returns those tensors. Note: It removes the
+    tensors from the computation graph and therefore should only be used when creating estimators, when logging or debugging, or
+    if you know what you're doing.
+    """
+    if not slices:
+        slice_length = plate.n / amt_slices
+        slices = []
+        for i in range(amt_slices):
+            slices.append(slice(i * slice_length, (i + 1) * slice_length))
+
+    new_plates = tensor.plates.copy()
+
+    index = tensor.get_plate_dim_index(plate.name)
+    plates_index = new_plates.index(plate)
+    if not create_plates and tensor.plate_dims != index + 1:
+        for _plate in reversed(tensor.plates):
+            if _plate.n > 1:
+                # Overwrite old plate
+                new_plates.remove(_plate)
+                new_plates[plates_index] = _plate
+                break
+    empty_indices = [None] * (index - 1)
+    sliced_tensors = []
+    for _slice in slices:
+        indices = empty_indices + [_slice]
+        new_tensor = tensor._tensor[indices]
+        if create_plates:
+            n = _slice.stop - _slice.start
+            final_plates = new_plates.copy()
+            final_plates[plates_index] = Plate(plate.name, n)
+            if n == 1:
+                new_tensor = new_tensor.unsqueeze(index)
+            new_tensor = Tensor(new_tensor, [], final_plates, tensor.name)
+        else:
+            new_tensor = Tensor(
+                new_tensor.transpose(index, tensor.plate_dims - 1),
+                [],
+                new_plates,
+                tensor.name,
+            )
+        sliced_tensors.append(new_tensor)
+    return sliced_tensors

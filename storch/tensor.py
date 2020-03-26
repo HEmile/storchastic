@@ -294,20 +294,23 @@ class Tensor(torch.Tensor):
     def event_dim_indices(self):
         return range(self.plate_dims, self._tensor.dim())
 
-    def plate_dim_indices(self):
-        return range(self.plate_dims)
+    def get_plate(self, plate_name: str) -> Plate:
+        for plate in self.plates():
+            if plate.name == plate_name:
+                return plate
+        raise IndexError("Tensor has no such plate: " + plate_name + ".")
 
-    def get_plate_dim_index(self, plate_name: str):
+    def get_plate_dim_index(self, plate_name: str) -> int:
         for i, plate in enumerate(self.multi_dim_plates()):
             if plate.name == plate_name:
                 return i
         raise IndexError(
-            "Tensor has no such batch: "
+            "Tensor has no such plate: "
             + plate_name
             + ". Alternatively, the dimension of this batch is 1."
         )
 
-    def iterate_plate_indices(self):
+    def iterate_plate_indices(self) -> Iterable[List[int]]:
         ranges = list(map(lambda a: list(range(a)), self.plate_shape))
         return product(*ranges)
 
