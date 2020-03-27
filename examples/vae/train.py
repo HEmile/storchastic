@@ -205,12 +205,13 @@ def main(vae: Type[VAE]):
         writer.flush()
         if test_loss < best_test_loss:
             best_test_loss = test_loss
-        with torch.no_grad():
-            im_sample = model.prior([args.latents]).sample((64,))
-            im_sample = model.decode(im_sample).cpu()
-            save_image(
-                im_sample.view(64, 1, 28, 28), "results/sample_" + str(epoch) + ".png",
-            )
+        # TODO: Sampling currently doesn't work because of model.prior requiring the posterior.
+        # with torch.no_grad():
+        #     im_sample = model.prior([args.latents]).sample((64,))
+        #     im_sample = model.decode(im_sample).cpu()
+        #     save_image(
+        #         im_sample.view(64, 1, 28, 28), "results/sample_" + str(epoch) + ".png",
+        #     )
     measures = {
         "hparams/best_train_loss": best_train_loss,
         "hparams/best_test_loss": best_test_loss,
