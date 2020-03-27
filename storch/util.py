@@ -1,4 +1,4 @@
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Tuple
 
 from pyro.distributions import (
     RelaxedOneHotCategoricalStraightThrough,
@@ -234,7 +234,7 @@ def split(
     amt_slices: Optional[int] = None,
     slices: Optional[List[slice]] = None,
     create_plates=True
-) -> List[Tensor]:
+) -> Tuple[Tensor, ...]:
     """
     Splits the plate dimension on the tensor into several tensors and returns those tensors. Note: It removes the
     tensors from the computation graph and therefore should only be used when creating estimators, when logging or debugging, or
@@ -277,4 +277,4 @@ def split(
                 tensor.name,
             )
         sliced_tensors.append(new_tensor)
-    return sliced_tensors
+    return tuple(sliced_tensors)

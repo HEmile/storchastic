@@ -19,11 +19,11 @@ class NormalVAE(VAE):
 
     def initialize_method(self, args) -> storch.method.Method:
         if args.method == "reparameterization":
-            return storch.method.Reparameterization()
+            return storch.Reparameterization()
         elif args.method == "lax":
-            return storch.method.LAX(in_dim=args.latents)
+            return storch.LAX(in_dim=args.latents)
         elif args.method == "score":
-            return storch.method.ScoreFunction(baseline_factory=args.baseline)
+            return storch.ScoreFunction(baseline_factory=args.baseline)
 
     def prior(self, shape: List[int]) -> Distribution:
         return Normal(torch.zeros(shape), torch.ones(shape))

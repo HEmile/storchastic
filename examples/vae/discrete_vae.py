@@ -17,13 +17,21 @@ class DiscreteVAE(VAE):
 
     def initialize_method(self, args) -> storch.method.Method:
         if args.method == "gumbel":
-            return storch.method.GumbelSoftmax()
+            return storch.GumbelSoftmax()
         elif args.method == "gumbel_straight":
-            return storch.method.GumbelSoftmax(straight_through=True)
+            return storch.GumbelSoftmax(straight_through=True)
         elif args.method == "score":
-            return storch.method.ScoreFunction(baseline_factory=args.baseline)
+            return storch.ScoreFunction(baseline_factory=args.baseline)
         elif args.method == "expect":
-            return storch.method.Expect()
+            return storch.Expect()
+        elif args.method == "relax":
+            return storch.RELAX(in_dim=(args.latents, 10))
+        elif args.method == "rebar":
+            return storch.REBAR()
+        elif args.method == "relax_rebar":
+            return storch.RELAX(in_dim=(args.latents, 10), rebar=True)
+        else:
+            raise ValueError("Invalid method passed to program arguments.")
 
     def prior(self, shape: List[int]):
         return OneHotCategorical(probs=torch.ones(shape + [10]) / (1.0 / 10.0))

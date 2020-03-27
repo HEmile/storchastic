@@ -4,6 +4,6 @@ from storch.method.method import (
     Infer,
     Method,
     Expect,
-    LAX,
 )
+from storch.method.relax import RELAX, REBAR, LAX
 from storch.method.baseline import Baseline, MovingAverageBaseline

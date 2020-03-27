@@ -1,7 +1,9 @@
-from typing import List, Union, Optional
+from typing import List, Union, Optional, Tuple
 
 import storch
 import torch
+
+from storch import deterministic
 
 
 def _convert_indices(
@@ -123,3 +125,37 @@ def variance(
     mean = variance_plate.reduce(tensor, detach_weights=detach_weights)
     variance = ((tensor - mean) ** 2).sum(tensor.event_dim_indices())
     return reduce_plates(variance, detach_weights=detach_weights)
+
+
+def grad(
+    outputs,
+    inputs,
+    grad_outputs=None,
+    retain_graph: Optional[bool] = None,
+    create_graph: bool = False,
+    only_inputs: bool = True,
+    allow_unused: bool = False,
+) -> Tuple[storch.Tensor, ...]:
+    """
+    Helper method for computing torch.autograd.grad on storch tensors. Returns storch Tensors as well.
+    """
+    args, _, _, _ = storch.wrappers._handle_args(
+        True, False, outputs, inputs, grad_outputs
+    )
+    _outputs, _inputs, _grad_outputs = tuple(args)
+    grads = torch.autograd.grad(
+        _outputs,
+        _inputs,
+        grad_outputs=_grad_outputs,
+        retain_graph=retain_graph,
+        create_graph=create_graph,
+        only_inputs=only_inputs,
+        allow_unused=allow_unused,
+    )
+    storch_grad = []
+    for i, grad in enumerate(grads):
+        input = inputs[i]
+        storch_grad.append(
+            storch.Tensor(grad, outputs + [input], input.plates, input.name + "_grad")
+        )
+    return tuple(storch_grad)

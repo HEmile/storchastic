@@ -295,7 +295,7 @@ class Tensor(torch.Tensor):
         return range(self.plate_dims, self._tensor.dim())
 
     def get_plate(self, plate_name: str) -> Plate:
-        for plate in self.plates():
+        for plate in self.plates:
             if plate.name == plate_name:
                 return plate
         raise IndexError("Tensor has no such plate: " + plate_name + ".")
@@ -324,6 +324,7 @@ class Tensor(torch.Tensor):
         gradient: Optional[Tensor] = None,
         keep_graph: bool = False,
         create_graph: bool = False,
+        retain_graph: bool = False,
     ) -> None:
         raise NotImplementedError(
             "Cannot call .backward on storch.Tensor. Instead, register cost nodes using "
