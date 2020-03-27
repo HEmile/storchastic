@@ -25,8 +25,8 @@ class NormalVAE(VAE):
         elif args.method == "score":
             return storch.ScoreFunction(baseline_factory=args.baseline)
 
-    def prior(self, shape: List[int]) -> Distribution:
-        return Normal(torch.zeros(shape), torch.ones(shape))
+    def prior(self, posterior: Distribution) -> Distribution:
+        return Normal(torch.zeros_like(posterior.loc), torch.ones_like(posterior.scale))
 
     def variational_posterior(self, params) -> Distribution:
         mean, std = params

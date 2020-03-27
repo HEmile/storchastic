@@ -44,8 +44,7 @@ class VAE(nn.Module):
     def encode(self, x):
         h1 = self.activation(self.fc1(x))
         h2 = self.activation(self.fc2(h1))
-        logits = self.fc3(h2)
-        return self.logits_to_params(logits, self.latents)
+        return self.fc3(h2)
 
     @deterministic
     def decode(self, z):
@@ -57,16 +56,17 @@ class VAE(nn.Module):
     def forward(
         self, x: storch.Tensor
     ) -> (storch.Tensor, storch.Tensor, storch.Tensor):
-        params = self.encode(x)
-        prior = self.prior(list(x.shape[:-1]) + [self.latents])
+        logits = self.encode(x)
+        params = self.logits_to_params(logits, self.latents)
         var_posterior = self.variational_posterior(params)
+        prior = self.prior(var_posterior)
 
         KLD = self.KLD(var_posterior, prior)
         storch.add_cost(KLD, "KL-divergence")
         z = self.sampling_method("z", var_posterior, n=self.samples)
         return self.decode(z), KLD, z
 
-    def prior(self, shape: List[int]) -> Distribution:
+    def prior(self, posterior: Distribution) -> Distribution:
         pass
 
     def variational_posterior(self, params) -> Distribution:

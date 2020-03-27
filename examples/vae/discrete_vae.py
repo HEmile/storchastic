@@ -4,7 +4,7 @@ from examples.vae import VAE, main
 import torch.nn as nn
 import torch
 import storch
-from torch.distributions import OneHotCategorical
+from torch.distributions import OneHotCategorical, Distribution
 
 
 class DiscreteVAE(VAE):
@@ -33,8 +33,8 @@ class DiscreteVAE(VAE):
         else:
             raise ValueError("Invalid method passed to program arguments.")
 
-    def prior(self, shape: List[int]):
-        return OneHotCategorical(probs=torch.ones(shape + [10]) / (1.0 / 10.0))
+    def prior(self, posterior: Distribution):
+        return OneHotCategorical(probs=torch.ones_like(posterior.probs) / 10.0)
 
     def variational_posterior(self, logits):
         return OneHotCategorical(logits=logits)
