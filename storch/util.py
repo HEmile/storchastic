@@ -241,7 +241,7 @@ def split(
     if you know what you're doing.
     """
     if not slices:
-        slice_length = plate.n / amt_slices
+        slice_length = int(plate.n / amt_slices)
         slices = []
         for i in range(amt_slices):
             slices.append(slice(i * slice_length, (i + 1) * slice_length))
@@ -267,7 +267,7 @@ def split(
             final_plates = new_plates.copy()
             final_plates[plates_index] = Plate(plate.name, n)
             if n == 1:
-                new_tensor = new_tensor.unsqueeze(index)
+                new_tensor = new_tensor.squeeze(index)
             new_tensor = Tensor(new_tensor, [], final_plates, tensor.name)
         else:
             new_tensor = Tensor(

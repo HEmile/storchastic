@@ -157,7 +157,7 @@ class RELAX(Method):
         if self.rebar:
             hard_sample = self._discretize(relaxed_sample, distr)
             cond_sample = self._conditional_gumbel_rsample(hard_sample, distr)
-            return torch.cat([relaxed_sample, hard_sample, cond_sample], 0), 3 * n
+            return torch.cat([hard_sample, relaxed_sample, cond_sample], 0), 3 * n
         else:
             return relaxed_sample, n
         # sample relaxed if not rebar else sample z then return -> (H(z), z, z|H(z) and n*3
@@ -165,7 +165,10 @@ class RELAX(Method):
     def post_sample(self, tensor: storch.StochasticTensor) -> Optional[storch.Tensor]:
         if self.rebar:
             # Make sure the r-sampled gumbels don't backpropagate in the normal backward pass
-            return tensor.detach()
+            # TODO: This doesn't work. We need to record the gradients with respect to the cost, as they are used in
+            # the estimator. By detaching it, they are no longer recorded. However, not detaching means the normal loss
+            # will capture it... Need to rethink this.
+            return tensor
         else:
             # Return H(z) for the function evaluation if using RELAX
             return self._discretize(tensor, tensor.distribution)
@@ -176,7 +179,7 @@ class RELAX(Method):
         # if REBAR: only weight over the true samples, put the relaxed samples to weight 0. This also makes sure
         # that they will not be backpropagated through in the cost backwards pass
         if self.rebar:
-            n = tensor.n / 3
+            n = int(tensor.n / 3)
             weighting = tensor.new_zeros((3 * n,))
             weighting[:n] = tensor.new_tensor(1.0 / n)
             return weighting
@@ -306,10 +309,10 @@ class RELAX(Method):
 
         # Minimize variance over the parameters of c_phi and the temperature (should it also minimize eta?)
         c_phi_params = [self.temperature]
-
-        for c_phi_param in self.c_phi.parameters(recurse=True):
-            if c_phi_param.requires_grad:
-                c_phi_params.append(c_phi_param)
+        if isinstance(self.c_phi, torch.nn.Module):
+            for c_phi_param in self.c_phi.parameters(recurse=True):
+                if c_phi_param.requires_grad:
+                    c_phi_params.append(c_phi_param)
         d_variance = torch.autograd.grad([var_loss._tensor], c_phi_params)
         for i in range(len(c_phi_params)):
             c_phi_params[i].backward(d_variance[i])
