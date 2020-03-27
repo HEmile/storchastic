@@ -181,10 +181,6 @@ def main(vae: Type[VAE]):
     args = parser.parse_args()
     args.cuda = not args.no_cuda and torch.cuda.is_available()
 
-    writer = SummaryWriter(comment="discrete_vae_" + args.method)
-    print(args)
-    writer.add_text("hyperparameters", str(args), global_step=0)
-
     torch.manual_seed(args.seed)
 
     device = torch.device("cuda" if args.cuda else "cpu")
@@ -192,6 +188,10 @@ def main(vae: Type[VAE]):
     train_loader, test_loader = data_loaders(args)
 
     model = vae(args).to(device)
+    writer = SummaryWriter(comment=model.name() + "_" + args.method)
+    print(args)
+    writer.add_text("hyperparameters", str(args), global_step=0)
+
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
 
     best_train_loss = 1000.0

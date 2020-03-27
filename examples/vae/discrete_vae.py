@@ -45,6 +45,9 @@ class DiscreteVAE(VAE):
     def shape_latent(self, z, latents):
         return z.reshape(z.shape[:-2] + (latents * 10,))
 
+    def name(self):
+        return "discrete_vae"
+
 
 if __name__ == "__main__":
     main(DiscreteVAE)

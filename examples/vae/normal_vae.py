@@ -36,6 +36,9 @@ class NormalVAE(VAE):
         # mean, std
         return logits[..., :latents], torch.exp(0.5 * logits[..., latents:])
 
+    def name(self):
+        return "normal_vae"
+
 
 if __name__ == "__main__":
     main(NormalVAE)

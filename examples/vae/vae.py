@@ -80,3 +80,6 @@ class VAE(nn.Module):
 
     def KLD(self, var_posterior: Distribution, prior: Distribution) -> storch.Tensor:
         return torch.distributions.kl_divergence(var_posterior, prior).sum(-1)
+
+    def name(self):
+        return "vae"
