@@ -78,7 +78,8 @@ class Plate:
             return storch.sum(weighted_tensor, [self.name])
         # Case: The weight is a vector of numbers equal to batch dimension. Assumes it is a storch.Tensor
         else:
-            return storch.sum(tensor * plate_weighting, [self.name])
+            weighted_tensor = tensor * plate_weighting
+            return storch.sum(weighted_tensor, [self.name])
 
 
 class Tensor(torch.Tensor):
@@ -293,6 +294,10 @@ class Tensor(torch.Tensor):
 
     def ndimension(self):
         return self._tensor.ndimension()
+
+    @property
+    def ndim(self):
+        return self._tensor.ndim
 
     def register_hook(self, hook: Callable) -> Any:
         return self._tensor.register_hook(hook)

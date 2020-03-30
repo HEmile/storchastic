@@ -8,10 +8,10 @@ torch.manual_seed(0)
 mu_prior = torch.tensor([2.0, -3.0], requires_grad=True)
 theta = torch.tensor([4.0, 5])
 
-method = storch.method.Infer(Normal)
-score_method = storch.method.ScoreFunction()
-expect = storch.method.Expect()
-lax_method = storch.method.LAX(in_dim=2)
+method = storch.Infer(Normal)
+score_method = storch.ScoreFunction()
+expect = storch.Expect()
+lax_method = storch.LAX(in_dim=2)
 
 
 def loss(v):

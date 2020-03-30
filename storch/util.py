@@ -1,4 +1,4 @@
-from typing import Dict, Optional, List, Tuple
+from typing import Dict, Optional, List, Tuple, Union
 
 from pyro.distributions import (
     RelaxedOneHotCategoricalStraightThrough,

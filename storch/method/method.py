@@ -1,9 +1,5 @@
 from abc import ABC, abstractmethod
-from torch.distributions import (
-    Distribution,
-    OneHotCategorical,
-    Bernoulli,
-)
+from torch.distributions import Distribution, OneHotCategorical, Bernoulli, Categorical
 
 from storch.tensor import CostTensor, StochasticTensor, Plate
 import torch
@@ -25,7 +21,14 @@ class Method(ABC, torch.nn.Module):
         accum_grads = sample.param_grads
         del sample  # Remove from hook closure for GC reasons
 
-        def hook(grad: torch.Tensor):
+        def hook(*args):
+            # For some reason, this args unpacking is required for compatbility with registring on a .grad_fn...?
+            # TODO: I'm sure there could be something wrong here
+            grad = args[-1]
+            if isinstance(grad, tuple):
+                grad = grad[0]
+
+            # print(grad)
             if name in accum_grads:
                 accum_grads[name] = storch.Tensor(
                     accum_grads[name]._tensor + grad, [], plates, name + "_grad"
@@ -88,11 +91,28 @@ class Method(ABC, torch.nn.Module):
             # This maybe requires copying the tensor hm...
             if param.requires_grad:
                 hook_plates = []
-                if isinstance(param, storch.Tensor):
+                if (
+                    name == "logits"
+                    and (
+                        isinstance(distr, OneHotCategorical)
+                        or isinstance(distr, Categorical)
+                    )
+                    and param is distr._param
+                ):
+                    # We only care about the input parameter. Ie, it returns both probs and logits, but only
+                    # the one the user used to create the Distribution is of interest.
+                    # These distributions first normalize their logits/probs. This causes incorrect gradient statistics.
+                    # By taking a step back in the computation graph, we retrieve the correct parameter.
+                    if isinstance(param, storch.Tensor):
+                        hook_plates = param.plates
+                        param = param._tensor
+                    to_hook = param.grad_fn.next_functions[0][0]
+                elif isinstance(param, storch.Tensor):
                     hook_plates = param.plates
-                param._tensor.register_hook(
-                    self._create_hook(s_tensor, name, hook_plates)
-                )
+                    to_hook = param._tensor
+                else:
+                    to_hook = param
+                to_hook.register_hook(self._create_hook(s_tensor, name, hook_plates))
 
         edited_sample = self.post_sample(s_tensor)
         if edited_sample is not None:
@@ -302,6 +322,7 @@ class ScoreFunction(Method):
                 setattr(self, baseline_name, self.baseline_factory(tensor, cost))
             baseline = getattr(self, baseline_name)
             cost = cost - baseline.compute_baseline(tensor, cost)
+        # print(cost)
         return log_prob * cost.detach()
 
     def adds_loss(self, tensor: StochasticTensor, cost_node: CostTensor) -> bool:
@@ -330,7 +351,7 @@ class Expect(Method):
             batch_len + 1 : len(support.shape) - len(distr.event_shape)
         ]
         amt_samples_used = expect_size
-        cross_products = None
+        cross_products = 1 if not sizes else None
         for dim in sizes:
             amt_samples_used = amt_samples_used ** dim
             if not cross_products:
@@ -358,9 +379,11 @@ class Expect(Method):
     ) -> Optional[storch.Tensor]:
         # Weight by the probability of each possible event
         log_probs = tensor.distribution.log_prob(tensor)
-        return log_probs.sum(
-            dim=list(range(tensor.plate_dims, len(log_probs.shape)))
-        ).exp()
+        if log_probs.plate_dims < len(log_probs.shape):
+            log_probs = log_probs.sum(
+                dim=list(range(tensor.plate_dims, len(log_probs.shape)))
+            )
+        return log_probs.exp()
 
 
 class UnorderedSet(Method):

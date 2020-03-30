@@ -75,7 +75,10 @@ def gather_samples(
 
 def add_cost(cost: Tensor, name: str):
     if cost.event_shape != ():
-        raise ValueError("Can only register cost functions with empty event shapes")
+        if cost.event_shape == (1,):
+            cost = cost.squeeze(-1)
+        else:
+            raise ValueError("Can only register cost functions with empty event shapes")
     if not name:
         raise ValueError(
             "No name provided to register cost node. Make sure to register an unique name with the cost."

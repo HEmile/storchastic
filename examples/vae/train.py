@@ -39,16 +39,6 @@ def train(epoch, model, train_loader, device, optimizer, args, writer):
             # Variance of expect method is 0 by definition.
             variances = {}
             if args.method != "expect":
-
-                grads = {n: [] for n in z.grad}
-                variance_samples = 10
-                for i in range(variance_samples):
-                    optimizer.zero_grad()
-                    recon_batch, _, z = model(data)
-                    storch.add_cost(loss_function(recon_batch, data), "reconstruction")
-                    backward()
-                    for n, grad in z.grad.items():
-                        grads[n].append(grad)
                 if args.latents < 3:
                     old_method = model.sampling_method
                     model.sampling_method = Expect()
@@ -57,17 +47,28 @@ def train(epoch, model, train_loader, device, optimizer, args, writer):
                     storch.add_cost(loss_function(recon_batch, data), "reconstruction")
                     backward()
                     expect_grad = z.grad["logits"]
-                    # print(z.grad["logits"])
-                    # print(method_grad)
 
+                    optimizer.zero_grad()
                     model.sampling_method = old_method
+                grads = {n: [] for n in z.grad}
+                variance_samples = 100
+                for i in range(variance_samples):
+                    optimizer.zero_grad()
+                    recon_batch, _, z = model(data)
+                    storch.add_cost(loss_function(recon_batch, data), "reconstruction")
+                    backward()
+                    for param_name, grad in z.grad.items():
+                        grads[param_name].append(grad)
+
                 variances = {}
-                for n, gradz in grads.items():
+                for param_name, gradz in grads.items():
                     # Create a new independent dimension for the different gradient samples
                     grad_samples = storch.gather_samples(gradz, "variance")
                     # Compute the variance over this independent dimension
-                    variances[n] = storch.variance(grad_samples, "variance")._tensor
-                    if n == "logits" and args.latents < 3:
+                    variances[param_name] = storch.variance(
+                        grad_samples, "variance"
+                    )._tensor
+                    if param_name == "logits" and args.latents < 3:
                         mean = storch.reduce_plates(
                             grad_samples, plate_names=["variance"]
                         )
@@ -96,8 +97,8 @@ def train(epoch, model, train_loader, device, optimizer, args, writer):
             )
             writer.add_scalar("train/ELBO", cost, global_step)
             writer.add_scalar("train/loss", loss, global_step)
-            for n, var in variances.items():
-                writer.add_scalar("train/variance/" + n, var, global_step)
+            for param_name, var in variances.items():
+                writer.add_scalar("train/variance/" + param_name, var, global_step)
     avg_train_loss = train_loss / (batch_idx + 1)
     print("====> Epoch: {} Average loss: {:.4f}".format(epoch, avg_train_loss))
     return avg_train_loss
