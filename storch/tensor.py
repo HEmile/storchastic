@@ -70,6 +70,17 @@ class Plate:
         # Case: The weight is a single number. First sum, then multiply with the weight (usually taking the mean)
         if plate_weighting.ndim == 0:
             return storch.sum(tensor, [self.name]) * plate_weighting
+<<<<<<< Updated upstream
+=======
+        # Case: There is a weight for each plate which is not dependent on the other batch dimensions
+        elif plate_weighting.ndim == 1:
+            index = tensor.get_plate_dim_index(self.name)
+            plate_weighting = plate_weighting[
+                (...,) + (None,) * (tensor.ndim - index - 1)
+            ]
+            weighted_tensor = tensor * plate_weighting
+            return storch.sum(weighted_tensor, [self.name])
+>>>>>>> Stashed changes
         # Case: The weight is a vector of numbers equal to batch dimension. Assumes it is a storch.Tensor
         else:
             return storch.sum(tensor * plate_weighting, [self.name])
