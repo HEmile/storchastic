@@ -9,7 +9,7 @@ from .wrappers import (
 )
 from .tensor import Tensor, CostTensor, StochasticTensor, Plate
 from .method import *
-from .inference import backward, add_cost, reset, denote_independent
+from .inference import backward, add_cost, reset, denote_independent, gather_samples
 from .util import print_graph
 from .storch import *
 import storch.typing
@@ -45,6 +45,9 @@ for m, v in torch.__dict__.items():
         and m not in _excluded_init
     ):
         torch.__dict__[m] = deterministic(v)
+    else:
+        continue
+    # torch.__dict__[m].__module__ = "torch"
 
 let_through = False
 for m, v in torch.nn.functional.__dict__.items():

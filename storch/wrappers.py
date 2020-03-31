@@ -29,30 +29,46 @@ def is_iterable(a: Any):
 
 def _collect_parents_and_plates(
     a: Any, parents: [storch.Tensor], plates: [storch.Plate]
-):
+) -> int:
     if isinstance(a, storch.Tensor):
         parents.append(a)
         for plate in a.plates:
             if plate not in plates:
                 plates.append(plate)
+        return a.event_dims
     elif is_iterable(a):
+        max_event_dim = 0
         for _a in a:
-            _collect_parents_and_plates(_a, parents, plates)
+            max_event_dim = max(
+                max_event_dim, _collect_parents_and_plates(_a, parents, plates)
+            )
+        return max_event_dim
     elif isinstance(a, Mapping):
+        max_event_dim = 0
         for _a in a.values():
-            _collect_parents_and_plates(_a, parents, plates)
+            max_event_dim = max(
+                max_event_dim, _collect_parents_and_plates(_a, parents, plates)
+            )
+        return max_event_dim
+    return 0
 
 
-def _unsqueeze_and_unwrap(a: Any, multi_dim_plates: [storch.Plate]):
+def _unsqueeze_and_unwrap(
+    a: Any, multi_dim_plates: [storch.Plate], align_tensors: bool, event_dims: int
+):
     if isinstance(a, storch.Tensor):
         tensor = a._tensor
-        if len(tensor.shape) == a.plate_dims:
-            tensor = tensor.unsqueeze(-1)
+        if not align_tensors:
+            return tensor
+        # Automatically **RIGHT** broadcast. Ensure each tensor has an equal amount of event dims by inserting dimensions to the right
+        # TODO: What do we think about this design?
+        if a.event_dims < event_dims:
+            tensor = tensor[(...,) + (None,) * (event_dims - a.event_dims)]
 
         # It can be possible that the ordering of the plates does not align with the ordering of the inputs.
         # This part corrects this.
         amt_recognized = 0
-        links: [Plate] = list(a.multi_dim_plates())
+        links: [storch.Plate] = list(a.multi_dim_plates())
         for i, plate in enumerate(multi_dim_plates):
             if plate in a.plates:
                 if plate != links[amt_recognized]:
@@ -69,27 +85,31 @@ def _unsqueeze_and_unwrap(a: Any, multi_dim_plates: [storch.Plate]):
     elif is_iterable(a):
         l = []
         for _a in a:
-            l.append(_unsqueeze_and_unwrap(_a, multi_dim_plates))
+            l.append(
+                _unsqueeze_and_unwrap(_a, multi_dim_plates, align_tensors, event_dims)
+            )
         if isinstance(a, tuple):
             return tuple(l)
         return l
     elif isinstance(a, Mapping):
         d = {}
         for k, _a in a.items():
-            d[k] = _unsqueeze_and_unwrap(_a, multi_dim_plates)
+            d[k] = _unsqueeze_and_unwrap(
+                _a, multi_dim_plates, align_tensors, event_dims
+            )
         return d
     else:
         return a
 
 
-def _handle_args(unwrap=True, *args, **kwargs):
+def _handle_args(unwrap=True, align_tensors=True, *args, **kwargs):
     parents: [storch.Tensor] = []
     plates: [storch.Plate] = []
-
-    # Collect parent tensors and plates
-    _collect_parents_and_plates(args, parents, plates)
-    _collect_parents_and_plates(kwargs, parents, plates)
-
+    max_event_dim = max(
+        # Collect parent tensors and plates
+        _collect_parents_and_plates(args, parents, plates),
+        _collect_parents_and_plates(kwargs, parents, plates),
+    )
     # Get the list of plates with size larger than 1 for the unsqueezing of tensors
     multi_dim_plates = []
     for plate in plates:
@@ -99,10 +119,14 @@ def _handle_args(unwrap=True, *args, **kwargs):
         # Unsqueeze and align batched dimensions so that batching works easily.
         unsqueezed_args = []
         for t in args:
-            unsqueezed_args.append(_unsqueeze_and_unwrap(t, multi_dim_plates))
+            unsqueezed_args.append(
+                _unsqueeze_and_unwrap(t, multi_dim_plates, align_tensors, max_event_dim)
+            )
         unsqueezed_kwargs = {}
         for k, v in kwargs.items():
-            unsqueezed_kwargs[k] = _unsqueeze_and_unwrap(v, multi_dim_plates)
+            unsqueezed_kwargs[k] = _unsqueeze_and_unwrap(
+                v, multi_dim_plates, align_tensors, max_event_dim
+            )
         return unsqueezed_args, unsqueezed_kwargs, parents, plates
     return args, kwargs, parents, plates
 
@@ -128,7 +152,11 @@ def _process_deterministic(
 
 
 def _deterministic(
-    fn, *, unwrap: bool = True, reduce_plates: Optional[Union[str, List[str]]] = None
+    fn,
+    *,
+    unwrap: bool = True,
+    align_tensors=True,
+    reduce_plates: Optional[Union[str, List[str]]] = None
 ):
     @wraps(fn)
     def wrapper(*args, **kwargs):
@@ -148,7 +176,9 @@ def _deterministic(
             # # We are already in a deterministic context, no need to wrap or unwrap as only the outer dependencies matter
             # return fn(*args, **kwargs)
 
-        new_args, new_kwargs, parents, plates = _handle_args(unwrap, *args, **kwargs)
+        new_args, new_kwargs, parents, plates = _handle_args(
+            unwrap, align_tensors, *args, **kwargs
+        )
 
         if not parents:
             return fn(*args, **kwargs)
@@ -185,7 +215,7 @@ def _deterministic(
     return wrapper
 
 
-def deterministic(fn=None, *, unwrap=True):
+def deterministic(fn=None, *, unwrap=True, align_tensors=True):
     """
     Wraps the input function around a deterministic storch wrapper.
     This wrapper unwraps :class:`~storch.Tensor` objects to :class:`~torch.Tensor` objects, aligning the tensors
@@ -195,8 +225,8 @@ def deterministic(fn=None, *, unwrap=True):
     :return: The wrapped function `fn`.
     """
     if fn:
-        return _deterministic(fn, unwrap=unwrap)
-    return lambda _f: _deterministic(_f, unwrap=unwrap)
+        return _deterministic(fn, unwrap=unwrap, align_tensors=align_tensors)
+    return lambda _f: _deterministic(_f, unwrap=unwrap, align_tensors=align_tensors)
 
 
 def reduce(fn, plates: Union[str, List[str]]):

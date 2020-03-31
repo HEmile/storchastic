@@ -70,9 +70,16 @@ class Plate:
         # Case: The weight is a single number. First sum, then multiply with the weight (usually taking the mean)
         if plate_weighting.ndim == 0:
             return storch.sum(tensor, [self.name]) * plate_weighting
+        # Case: There is a weight for each plate which is not dependent on the other batch dimensions
+        elif plate_weighting.ndim == 1:
+            index = tensor.get_plate_dim_index(self.name)
+            plate_weighting = plate_weighting[(...,) + (None,) * (tensor.ndim - index)]
+            weighted_tensor = tensor * plate_weighting
+            return storch.sum(weighted_tensor, [self.name])
         # Case: The weight is a vector of numbers equal to batch dimension. Assumes it is a storch.Tensor
         else:
-            return storch.sum(tensor * plate_weighting, [self.name])
+            weighted_tensor = tensor * plate_weighting
+            return storch.sum(weighted_tensor, [self.name])
 
 
 class Tensor(torch.Tensor):
@@ -288,26 +295,33 @@ class Tensor(torch.Tensor):
     def ndimension(self):
         return self._tensor.ndimension()
 
+    @property
+    def ndim(self):
+        return self._tensor.ndim
+
     def register_hook(self, hook: Callable) -> Any:
         return self._tensor.register_hook(hook)
 
     def event_dim_indices(self):
         return range(self.plate_dims, self._tensor.dim())
 
-    def plate_dim_indices(self):
-        return range(self.plate_dims)
+    def get_plate(self, plate_name: str) -> Plate:
+        for plate in self.plates:
+            if plate.name == plate_name:
+                return plate
+        raise IndexError("Tensor has no such plate: " + plate_name + ".")
 
-    def get_plate_dim_index(self, plate_name: str):
+    def get_plate_dim_index(self, plate_name: str) -> int:
         for i, plate in enumerate(self.multi_dim_plates()):
             if plate.name == plate_name:
                 return i
         raise IndexError(
-            "Tensor has no such batch: "
+            "Tensor has no such plate: "
             + plate_name
             + ". Alternatively, the dimension of this batch is 1."
         )
 
-    def iterate_plate_indices(self):
+    def iterate_plate_indices(self) -> Iterable[List[int]]:
         ranges = list(map(lambda a: list(range(a)), self.plate_shape))
         return product(*ranges)
 
@@ -321,6 +335,7 @@ class Tensor(torch.Tensor):
         gradient: Optional[Tensor] = None,
         keep_graph: bool = False,
         create_graph: bool = False,
+        retain_graph: bool = False,
     ) -> None:
         raise NotImplementedError(
             "Cannot call .backward on storch.Tensor. Instead, register cost nodes using "
@@ -510,21 +525,22 @@ class IndependentTensor(Tensor):
         tensor: torch.Tensor,
         parents: [Tensor],
         plates: [Plate],
-        name: str,
+        tensor_name: str,
+        plate_name: str,
         weight: Optional[storch.Tensor],
     ):
         n = tensor.shape[0]
         for plate in plates:
-            if plate.name == name:
+            if plate.name == plate_name:
                 raise ValueError(
                     "Cannot create independent tensor with name "
-                    + name
+                    + plate_name
                     + ". A parent sample has already used"
                     " this name. Use a different name for this independent dimension."
                 )
         # TODO: Weighting
-        plates.insert(0, Plate(name, n, weight))
-        super().__init__(tensor, parents, plates, name)
+        plates.insert(0, Plate(plate_name, n, weight))
+        super().__init__(tensor, parents, plates, tensor_name)
         self.n = n
 
     # TODO: Should IndependentTensors be stochastic? Sometimes, like if it is denoting a minibatch, making them
@@ -540,7 +556,7 @@ class _StochasticTensorBase(Tensor):
         parents: [Tensor],
         plates: [Plate],
         name: str,
-        sampling_method: storch.Method,
+        sampling_method: Optional[storch.Method],
         distribution: Distribution,
         requires_grad: bool,
         n: int,

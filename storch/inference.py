@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, List
 
 from storch.tensor import Tensor, StochasticTensor, CostTensor, IndependentTensor
 import torch
@@ -17,7 +17,7 @@ def denote_independent(
 ) -> IndependentTensor:
     """
     Denote the given dimensions on the tensor as being independent, that is, batched dimensions.
-    It will automatically put these dimensions to the right.
+    It will automatically put these dimensions to the left.
     :param tensor:
     :param dims:
     :param plate_name: Name of the plate. Reused if called again
@@ -34,17 +34,51 @@ def denote_independent(
         t_tensor = tensor._tensor
         if dim != 0:
             t_tensor = t_tensor.transpose(dim, 0)
-        name = tensor.name + "_indep_" + plate_name if tensor.name else plate_name
-        return IndependentTensor(t_tensor, tensor.plates, [tensor], name, weight)
+        tensor_name = (
+            tensor.name + "_indep_" + plate_name if tensor.name else plate_name
+        )
+        return IndependentTensor(
+            t_tensor, [tensor], tensor.plates, tensor_name, plate_name, weight
+        )
     else:
         if dim != 0:
             tensor = tensor.transpose(dim, 0)
-        return IndependentTensor(tensor, [], [], plate_name, weight)
+        return IndependentTensor(tensor, [], [], plate_name, plate_name, weight)
+
+
+def gather_samples(
+    samples: List[storch.Tensor],
+    plate_name: str,
+    weight: Optional[storch.Tensor] = None,
+) -> IndependentTensor:
+    if (
+        storch.wrappers._context_stochastic
+        or storch.wrappers._context_deterministic > 0
+    ):
+        raise RuntimeError(
+            "Cannot create independent tensors within a deterministic or stochastic context."
+        )
+    collect_tensors = []
+    for sample in samples:
+        sample = sample._tensor
+        if not sample.shape[0] == 1:
+            sample = sample.unsqueeze(0)
+        collect_tensors.append(sample)
+    cat_tensors = torch.cat(collect_tensors, 0)
+    tensor_name = (
+        samples[0].name + "_indep_" + plate_name if samples[0].name else plate_name
+    )
+    return IndependentTensor(
+        cat_tensors, samples, samples[0].plates.copy(), tensor_name, plate_name, weight
+    )
 
 
 def add_cost(cost: Tensor, name: str):
     if cost.event_shape != ():
-        raise ValueError("Can only register cost functions with empty event shapes")
+        if cost.event_shape == (1,):
+            cost = cost.squeeze(-1)
+        else:
+            raise ValueError("Can only register cost functions with empty event shapes")
     if not name:
         raise ValueError(
             "No name provided to register cost node. Make sure to register an unique name with the cost."
@@ -79,14 +113,17 @@ def backward(
     stochastic_nodes = set()
     # Loop over different cost nodes
     for c in costs:
-        avg_cost = c
-        for plate in c.multi_dim_plates():
-            # Do not detach the weights when reducing. This is used in for example expectations to weight the
-            # different costs.
-            avg_cost = plate.reduce(avg_cost, detach_weights=False)
+        # Do not detach the weights when reducing. This is used in for example expectations to weight the
+        # different costs.
+        reduced_cost = storch.reduce_plates(c, detach_weights=False)
+
         if print_costs:
-            print(c.name, ":", avg_cost._tensor.item())
-        total_cost += avg_cost
+            print(c.name, ":", reduced_cost._tensor.item())
+        total_cost += reduced_cost
+        # Compute gradients for the cost nodes themselves, if they require one.
+        if reduced_cost.requires_grad:
+            accum_loss += reduced_cost
+
         for parent in c.walk_parents(depth_first=False):
             # Instance check here instead of parent.stochastic, as backward methods are only used on these.
             if isinstance(parent, StochasticTensor):
@@ -103,10 +140,11 @@ def backward(
             parent_tensor = parent._tensor
             reduced_cost = c
             parent_plates = list(parent.multi_dim_plates())
+
             # Reduce all plates that are in the cost node but not in the parent node
             for plate in c.multi_dim_plates():
                 if plate not in parent_plates:
-                    reduced_cost = plate.reduce(c, detach_weights=True)
+                    reduced_cost = plate.reduce(reduced_cost, detach_weights=True)
 
             # Align the parent tensor so that the plate dimensions are in the same order as the cost tensor
             for index_c, plate in enumerate(reduced_cost.multi_dim_plates()):
@@ -141,21 +179,17 @@ def backward(
             cost_per_sample = parent.sampling_method._estimator(
                 new_parent, reduced_cost
             )
-            # The backwards call for reparameterization happens in the
-            # backwards call for the costs themselves.
-            # Now mean_cost has the same shape as parent.batch_shape
-            final_reduced_cost = cost_per_sample
-            for plate in cost_per_sample.multi_dim_plates():
-                final_reduced_cost = plate.reduce(
-                    final_reduced_cost, detach_weights=True
-                )
-            if final_reduced_cost.ndim == 1:
-                final_reduced_cost = final_reduced_cost.squeeze(0)
-            accum_loss += final_reduced_cost
 
-        # Compute gradients for the cost nodes themselves, if they require one.
-        if avg_cost.requires_grad:
-            accum_loss += avg_cost
+            if cost_per_sample is not None:
+                # The backwards call for reparameterization happens in the
+                # backwards call for the costs themselves.
+                # Now mean_cost has the same shape as parent.batch_shape
+                final_reduced_cost = storch.reduce_plates(
+                    cost_per_sample, detach_weights=True
+                )
+                if final_reduced_cost.ndim == 1:
+                    final_reduced_cost = final_reduced_cost.squeeze(0)
+                accum_loss += final_reduced_cost
 
     if isinstance(accum_loss, storch.Tensor) and accum_loss._tensor.requires_grad:
         accum_loss._tensor.backward(retain_graph=retain_graph)

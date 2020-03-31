@@ -1,19 +1,13 @@
 from abc import ABC, abstractmethod
-from torch.distributions import (
-    Distribution,
-    Categorical,
-    OneHotCategorical,
-    Bernoulli,
-    RelaxedOneHotCategorical,
-    RelaxedBernoulli,
-)
+from torch.distributions import Distribution, OneHotCategorical, Bernoulli, Categorical
+
 from storch.tensor import CostTensor, StochasticTensor, Plate
 import torch
-from typing import Optional, Type, Union, Dict
-from storch.util import has_differentiable_path, get_distr_parameters
-from pyro.distributions import (
-    RelaxedBernoulliStraightThrough,
-    RelaxedOneHotCategoricalStraightThrough,
+from typing import Optional, Type, Union, Dict, List
+from storch.util import (
+    has_differentiable_path,
+    get_distr_parameters,
+    rsample_gumbel,
 )
 from storch.typing import DiscreteDistribution, BaselineFactory
 import storch
@@ -23,12 +17,24 @@ import itertools
 
 class Method(ABC, torch.nn.Module):
     @staticmethod
-    def _create_hook(sample: StochasticTensor, name: str):
+    def _create_hook(sample: StochasticTensor, name: str, plates: List[Plate]):
         accum_grads = sample.param_grads
         del sample  # Remove from hook closure for GC reasons
 
-        def hook(grad: torch.Tensor):
-            accum_grads[name] = grad
+        def hook(*args):
+            # For some reason, this args unpacking is required for compatbility with registring on a .grad_fn...?
+            # TODO: I'm sure there could be something wrong here
+            grad = args[-1]
+            if isinstance(grad, tuple):
+                grad = grad[0]
+
+            # print(grad)
+            if name in accum_grads:
+                accum_grads[name] = storch.Tensor(
+                    accum_grads[name]._tensor + grad, [], plates, name + "_grad"
+                )
+            else:
+                accum_grads[name] = storch.Tensor(grad, [], plates, name + "_grad")
 
         return hook
 
@@ -39,14 +45,14 @@ class Method(ABC, torch.nn.Module):
 
     def forward(
         self, sample_name: str, distr: Distribution, n: int = 1
-    ) -> StochasticTensor:
+    ) -> storch.tensor._StochasticTensorBase:
         return self.sample(sample_name, distr, n)
 
     def sample(
         self, sample_name: str, distr: Distribution, n: int = 1
-    ) -> StochasticTensor:
+    ) -> storch.tensor._StochasticTensorBase:
         # Unwrap the distributions parameters
-        params: Dict[str, torch.Tensor] = get_distr_parameters(
+        params: Dict[str, storch.Tensor] = get_distr_parameters(
             distr, filter_requires_grad=False
         )
         parents: Dict[str, torch.Tensor] = {}
@@ -59,7 +65,6 @@ class Method(ABC, torch.nn.Module):
                 for plate in p.plates:
                     if plate not in plates:
                         plates.append(plate)
-                params[name] = p._tensor
 
         # Will not rewrap in @deterministic, because sampling statements will insert an additional dimensions in the
         # first batch dimension, causing the rewrapping statement to error as it violates the plating constraints.
@@ -85,8 +90,41 @@ class Method(ABC, torch.nn.Module):
             # TODO: Possibly could find the wrong gradients here if multiple distributions use the same parameter?
             # This maybe requires copying the tensor hm...
             if param.requires_grad:
-                param.register_hook(self._create_hook(s_tensor, name))
+                hook_plates = []
+                if isinstance(distr, OneHotCategorical) or isinstance(
+                    distr, Categorical
+                ):
+                    if param is not distr._param:
+                        continue
+                    # We only care about the input parameter. Ie, it returns both probs and logits, but only
+                    # the one the user used to create the Distribution is of interest.
+                    # These distributions first normalize their logits/probs. This causes incorrect gradient statistics.
+                    # By taking a step back in the computation graph, we retrieve the correct parameter.
+                    if isinstance(param, storch.Tensor):
+                        hook_plates = param.plates
+                        param = param._tensor
+                    to_hook = param.grad_fn.next_functions[0][0]
+                elif isinstance(param, storch.Tensor):
+                    hook_plates = param.plates
+                    to_hook = param._tensor
+                else:
+                    to_hook = param
+                to_hook.register_hook(self._create_hook(s_tensor, name, hook_plates))
 
+        edited_sample = self.post_sample(s_tensor)
+        if edited_sample is not None:
+            new_s_tensor = storch.tensor._StochasticTensorBase(
+                edited_sample._tensor,
+                [s_tensor],
+                s_tensor.plates,
+                s_tensor.name,
+                None,
+                s_tensor.distribution,
+                False,
+                s_tensor.n,
+            )
+            new_s_tensor.param_grads = s_tensor.param_grads
+            return new_s_tensor
         return s_tensor
 
     def _estimator(
@@ -115,7 +153,7 @@ class Method(ABC, torch.nn.Module):
         return None
 
     def update_parameters(
-        self, result_triples: [(StochasticTensor, CostTensor, torch.Tensor)]
+        self, result_triples: [(StochasticTensor, CostTensor)]
     ) -> None:
         pass
 
@@ -133,6 +171,9 @@ class Method(ABC, torch.nn.Module):
         of the stochastic tensor with respect to the cost node.
         """
         return False
+
+    def post_sample(self, tensor: storch.StochasticTensor) -> Optional[storch.Tensor]:
+        return None
 
 
 class Infer(Method):
@@ -232,25 +273,7 @@ class GumbelSoftmax(Reparameterization):
         parents: [storch.Tensor],
         plates: [Plate],
     ) -> (torch.Tensor, int):
-        if isinstance(distr, (Categorical, OneHotCategorical)):
-            if self.straight_through:
-                gumbel_distr = RelaxedOneHotCategoricalStraightThrough(
-                    self.temperature, probs=distr.probs
-                )
-            else:
-                gumbel_distr = RelaxedOneHotCategorical(
-                    self.temperature, probs=distr.probs
-                )
-        elif isinstance(distr, Bernoulli):
-            if self.straight_through:
-                gumbel_distr = RelaxedBernoulliStraightThrough(
-                    self.temperature, probs=distr.probs
-                )
-            else:
-                gumbel_distr = RelaxedBernoulli(self.temperature, probs=distr.probs)
-        else:
-            raise ValueError("Using Gumbel Softmax with non-discrete distribution")
-        return gumbel_distr.rsample((n,)), n
+        return rsample_gumbel(distr, n, self.temperature, self.straight_through), n
 
     def update_parameters(
         self, result_triples: [(StochasticTensor, CostTensor, torch.Tensor)]
@@ -265,7 +288,7 @@ class ScoreFunction(Method):
     def __init__(
         self,
         baseline_factory: Optional[Union[BaselineFactory, str]] = "moving_average",
-        **kwargs
+        **kwargs,
     ):
         super().__init__()
         self.baseline_factory: Optional[BaselineFactory] = baseline_factory
@@ -296,6 +319,7 @@ class ScoreFunction(Method):
                 setattr(self, baseline_name, self.baseline_factory(tensor, cost))
             baseline = getattr(self, baseline_name)
             cost = cost - baseline.compute_baseline(tensor, cost)
+        # print(cost)
         return log_prob * cost.detach()
 
     def adds_loss(self, tensor: StochasticTensor, cost_node: CostTensor) -> bool:
@@ -324,7 +348,7 @@ class Expect(Method):
             batch_len + 1 : len(support.shape) - len(distr.event_shape)
         ]
         amt_samples_used = expect_size
-        cross_products = None
+        cross_products = 1 if not sizes else None
         for dim in sizes:
             amt_samples_used = amt_samples_used ** dim
             if not cross_products:
@@ -352,9 +376,11 @@ class Expect(Method):
     ) -> Optional[storch.Tensor]:
         # Weight by the probability of each possible event
         log_probs = tensor.distribution.log_prob(tensor)
-        return log_probs.sum(
-            dim=list(range(tensor.plate_dims, len(log_probs.shape)))
-        ).exp()
+        if log_probs.plate_dims < len(log_probs.shape):
+            log_probs = log_probs.sum(
+                dim=list(range(tensor.plate_dims, len(log_probs.shape)))
+            )
+        return log_probs.exp()
 
 
 class UnorderedSet(Method):

@@ -25,6 +25,7 @@ class MovingAverageBaseline(Baseline):
     def compute_baseline(
         self, tensor: StochasticTensor, cost_node: CostTensor
     ) -> torch.Tensor:
+        # TODO: Use reduce instead of mean
         avg_cost = cost_node.detach_tensor().mean().detach()
         self.moving_average = (
             self.exponential_decay * self.moving_average
