@@ -313,9 +313,11 @@ class RELAX(Method):
             for c_phi_param in self.c_phi.parameters(recurse=True):
                 if c_phi_param.requires_grad:
                     c_phi_params.append(c_phi_param)
+
         d_variance = torch.autograd.grad(
             [var_loss._tensor], c_phi_params, create_graph=self.rebar
         )
+
         for i in range(len(c_phi_params)):
             c_phi_params[i].backward(d_variance[i])
         return None

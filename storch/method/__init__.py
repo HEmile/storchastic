@@ -1,2 +1,10 @@
-from storch.method.method import GumbelSoftmax, ScoreFunction, Infer, Method, Expect
+from storch.method.method import (
+    GumbelSoftmax,
+    ScoreFunction,
+    Infer,
+    Method,
+    Expect,
+    Reparameterization,
+)
+from storch.method.relax import RELAX, REBAR, LAX
 from storch.method.baseline import Baseline, MovingAverageBaseline

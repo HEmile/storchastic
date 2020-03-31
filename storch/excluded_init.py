@@ -1,4 +1,3 @@
-
 _excluded_init = {
     "_debug_has_internal_overlap",
     "_nnpack_available",
@@ -38,7 +37,7 @@ _unwrap_only_init = {
     "cudnn_is_acceptable",
     "numel",
     "result_type",
-    "zeros_like"
+    "zeros_like",
 }
 _exception_init = {
     "allclose",
@@ -47,24 +46,18 @@ _exception_init = {
     "is_nonzero",
     "q_per_channel_axis",
     "q_scale",
-    "q_zero_point"
+    "q_zero_point",
 }
 _to_test_init = {
     "allclose",
     "cudnn_is_acceptable",
     "fbgemm_linear_quantize_weight",
-    "numel"
+    "numel",
 }
 
-_excluded_function = {
-    "get_softmax_dim",
-    "assert_int-or-pair"
-}
+_excluded_function = {"get_softmax_dim", "assert_int-or-pair"}
 
-_excluded_tensor = {
-    "__getitem__",
-    "__setitem__"
-}
+_excluded_tensor = {"__getitem__", "__setitem__"}
 
 _exception_tensor = {
     "allclose",
@@ -74,20 +67,18 @@ _exception_tensor = {
     "is_complex",
     "is_nonzero",
     "item",
-    "normal_"
-    "q_per_channel_axis",
+    "normal_" "q_per_channel_axis",
     "q_scale",
     "q_zero_point",
     "random_",
     "stride",
     "to_list",
     "tolist",
-    "uniform_"
+    "uniform_",
 }
 
 _unwrap_only_tensor = {
-    "_make_subclass"
-    "_dimI",
+    "_make_subclass" "_dimI",
     "_dimV",
     "_is_view",
     "_nnz",
@@ -109,10 +100,10 @@ _unwrap_only_tensor = {
     "sparse_dim",
     "storage",
     "storage_offset",
-
+    "new_tensor",
+    "new_zeros",
+    "new_ones",
 }
 
-_to_test_tensor = {
-    "_make_subclass"
-}
+_to_test_tensor = {"_make_subclass"}
 # print(_excluded_init)
