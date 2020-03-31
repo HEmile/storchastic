@@ -31,7 +31,7 @@ class MovingAverageBaseline(Baseline):
             self.exponential_decay * self.moving_average
             + (1 - self.exponential_decay) * avg_cost
         )
-        return 536.0  # self.moving_average
+        return self.moving_average
 
 
 class BatchAverageBaseline(Baseline):
