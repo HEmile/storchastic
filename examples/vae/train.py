@@ -6,9 +6,9 @@ import torch
 import torch.utils.data
 from torch import optim
 from torchvision.utils import save_image
+from examples.dataloader.data_loader import data_loaders
 from storch import backward, Expect
 import storch
-from examples.dataloader.data_loader import data_loaders
 from tensorboardX import SummaryWriter
 from examples.vae.vae import VAE
 
@@ -36,9 +36,13 @@ def train(epoch, model, train_loader, device, optimizer, args, writer):
 
         optimizer.step()
         if cond_log:
+            step = 100.0 * batch_idx / len(train_loader)
+            global_step = 100 * (epoch - 1) + step
+
             # Variance of expect method is 0 by definition.
             variances = {}
             if args.method != "expect":
+                _consider_param = "probs"
                 if args.latents < 3:
                     old_method = model.sampling_method
                     model.sampling_method = Expect()
@@ -46,12 +50,12 @@ def train(epoch, model, train_loader, device, optimizer, args, writer):
                     recon_batch, _, z = model(data)
                     storch.add_cost(loss_function(recon_batch, data), "reconstruction")
                     backward()
-                    expect_grad = z.grad["logits"]
+                    expect_grad = z.grad[_consider_param]
 
                     optimizer.zero_grad()
                     model.sampling_method = old_method
                 grads = {n: [] for n in z.grad}
-                variance_samples = 100
+                variance_samples = 10
                 for i in range(variance_samples):
                     optimizer.zero_grad()
                     recon_batch, _, z = model(data)
@@ -68,7 +72,7 @@ def train(epoch, model, train_loader, device, optimizer, args, writer):
                     variances[param_name] = storch.variance(
                         grad_samples, "variance"
                     )._tensor
-                    if param_name == "logits" and args.latents < 3:
+                    if param_name == _consider_param and args.latents < 3:
                         mean = storch.reduce_plates(
                             grad_samples, plate_names=["variance"]
                         )
@@ -76,14 +80,12 @@ def train(epoch, model, train_loader, device, optimizer, args, writer):
                             (grad_samples - expect_grad) ** 2
                         ).sum()
                         bias = (storch.reduce_plates((mean - expect_grad) ** 2)).sum()
-                        print("mse", mse)
-                        print("variance", variances["logits"])
+                        print("mse", mse._tensor.item())
                         # Should approach 0 when increasing variance_samples for unbiased estimators.
-                        print("bias", bias)
-                        print("mse-variance: ", mse - variances["logits"])
+                        print("bias", bias._tensor.item())
+                        writer.add_scalar("train/probs_bias", bias._tensor, global_step)
+                        writer.add_scalar("train/probs_mse", mse._tensor, global_step)
 
-            step = 100.0 * batch_idx / len(train_loader)
-            global_step = 100 * (epoch - 1) + step
             print(
                 "Train Epoch: {} [{}/{} ({:.0f}%)]\tCost: {:.6f}\tAdditive Loss: {:.6f}\t Logits var {}".format(
                     epoch,

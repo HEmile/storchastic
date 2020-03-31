@@ -36,8 +36,9 @@ class DiscreteVAE(VAE):
     def prior(self, posterior: Distribution):
         return OneHotCategorical(probs=torch.ones_like(posterior.probs) / 10.0)
 
-    def variational_posterior(self, logits):
-        return OneHotCategorical(logits=logits)
+    def variational_posterior(self, logits: torch.Tensor):
+        return OneHotCategorical(probs=logits.softmax(dim=-1))
+        # return OneHotCategorical(logits=logits)
 
     def logits_to_params(self, logits, latents):
         return logits.reshape(logits.shape[:-1] + (latents, 10))

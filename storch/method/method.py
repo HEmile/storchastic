@@ -91,14 +91,11 @@ class Method(ABC, torch.nn.Module):
             # This maybe requires copying the tensor hm...
             if param.requires_grad:
                 hook_plates = []
-                if (
-                    name == "logits"
-                    and (
-                        isinstance(distr, OneHotCategorical)
-                        or isinstance(distr, Categorical)
-                    )
-                    and param is distr._param
+                if isinstance(distr, OneHotCategorical) or isinstance(
+                    distr, Categorical
                 ):
+                    if param is not distr._param:
+                        continue
                     # We only care about the input parameter. Ie, it returns both probs and logits, but only
                     # the one the user used to create the Distribution is of interest.
                     # These distributions first normalize their logits/probs. This causes incorrect gradient statistics.
@@ -276,7 +273,7 @@ class GumbelSoftmax(Reparameterization):
         parents: [storch.Tensor],
         plates: [Plate],
     ) -> (torch.Tensor, int):
-        return rsample_gumbel(distr, n, self.temperature, self.straight_through)
+        return rsample_gumbel(distr, n, self.temperature, self.straight_through), n
 
     def update_parameters(
         self, result_triples: [(StochasticTensor, CostTensor, torch.Tensor)]
