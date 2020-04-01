@@ -47,3 +47,18 @@ class BatchAverageBaseline(Baseline):
         sum_costs = storch.sum(costs, tensor.name)
         baseline = (sum_costs - costs) / (tensor.n - 1)
         return baseline
+
+
+class BatchExclusionBaseline(Baseline):
+    # Uses the means of the other samples, as long as they are different
+    def compute_baseline(
+        self, tensor: StochasticTensor, costs: CostTensor
+    ) -> torch.Tensor:
+        if tensor.n == 1:
+            raise ValueError(
+                "Can only use the batch average baseline if multiple samples are used."
+            )
+        costs = costs.detach()
+        sum_costs = storch.sum(costs, tensor.name)
+        baseline = (sum_costs - costs) / (tensor.n - 1)
+        return baseline

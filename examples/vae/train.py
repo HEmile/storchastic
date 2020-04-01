@@ -55,8 +55,7 @@ def train(epoch, model, train_loader, device, optimizer, args, writer):
                     optimizer.zero_grad()
                     model.sampling_method = old_method
                 grads = {n: [] for n in z.grad}
-                variance_samples = 10
-                for i in range(variance_samples):
+                for i in range(args.variance_samples):
                     optimizer.zero_grad()
                     recon_batch, _, z = model(data)
                     storch.add_cost(loss_function(recon_batch, data), "reconstruction")
@@ -178,6 +177,12 @@ def main(vae: Type[VAE]):
     )
     parser.add_argument(
         "--samples", type=int, default=1, help="How large of a budget to use"
+    )
+    parser.add_argument(
+        "--variance_samples",
+        type=int,
+        default=10,
+        help="How many samples to use to compute the variance of the estimators.",
     )
     parser.add_argument("--dataset", type=str, default="fixedMNIST")
     parser.add_argument("--lr", type=float, default=1e-3)

@@ -19,6 +19,7 @@ Guide
    license
    help
    storch
+   discrete_vae
 
 
 

@@ -310,8 +310,11 @@ class ScoreFunction(Method):
 
     def estimator(self, tensor: StochasticTensor, cost: CostTensor) -> storch.Tensor:
         log_prob = tensor.distribution.log_prob(tensor)
-        # Sum out over the event shape
-        log_prob = log_prob.sum(dim=list(range(tensor.plate_dims, len(log_prob.shape))))
+        if len(log_prob.shape) > tensor.plate_dims:
+            # Sum out over the event shape
+            log_prob = log_prob.sum(
+                dim=list(range(tensor.plate_dims, len(log_prob.shape)))
+            )
 
         if self.baseline_factory:
             baseline_name = "_b_" + tensor.name + "_" + cost.name
