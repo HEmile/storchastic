@@ -12,20 +12,21 @@ eta = torch.tensor(-4.0, requires_grad=True)
 optim = torch.optim.SGD([eta], lr=1.0)
 
 
-def experiment(method, n):
+def experiment(method):
     optim.zero_grad()
     b = Bernoulli(logits=eta.repeat(3))
-    x = method("x", b, n)
+    x = method(b)
     cost = torch.sum((x - p) ** 2, -1)
     storch.add_cost(cost, "cost")
     storch.backward()
     return eta.grad.clone()
 
 
-print("True gradient", experiment(Expect(), 1))
-_method = ScoreFunction(baseline_factory="batch_average")
+print("True gradient", experiment(Expect("x")))
+
 for n in range(2, 9):
+    _method = ScoreFunction("x", n, baseline_factory="batch_average")
     gradients = []
     for i in range(1000):
-        gradients.append(experiment(_method, n).unsqueeze(0))
+        gradients.append(experiment(_method).unsqueeze(0))
     print(torch.cat(gradients).var(0))

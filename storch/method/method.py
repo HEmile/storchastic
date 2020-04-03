@@ -38,19 +38,16 @@ class Method(ABC, torch.nn.Module):
 
         return hook
 
-    def __init__(self):
+    def __init__(self, plate_name):
         super().__init__()
         self._estimation_pairs = []
         self.register_buffer("iterations", torch.tensor(0, dtype=torch.long))
+        self.plate_name = plate_name
 
-    def forward(
-        self, sample_name: str, distr: Distribution, n: int = 1
-    ) -> storch.tensor._StochasticTensorBase:
-        return self.sample(sample_name, distr, n)
+    def forward(self, distr: Distribution) -> storch.tensor._StochasticTensorBase:
+        return self.sample(distr)
 
-    def sample(
-        self, sample_name: str, distr: Distribution, n: int = 1
-    ) -> storch.tensor._StochasticTensorBase:
+    def sample(self, distr: Distribution) -> storch.tensor._StochasticTensorBase:
         # Unwrap the distributions parameters
         params: Dict[str, storch.Tensor] = get_distr_parameters(
             distr, filter_requires_grad=False
@@ -69,10 +66,11 @@ class Method(ABC, torch.nn.Module):
         # Will not rewrap in @deterministic, because sampling statements will insert an additional dimensions in the
         # first batch dimension, causing the rewrapping statement to error as it violates the plating constraints.
         storch.wrappers._ignore_wrap = True
-        tensor, batch_size = self._sample_tensor(distr, n, parents, plates)
+        tensor = self._sample_tensor(distr, parents, plates)
         storch.wrappers._ignore_wrap = False
 
-        if batch_size == 1 and tensor.shape[0] == 1:
+        plate_size = tensor.shape[0]
+        if tensor.shape[0] == 1:
             tensor = tensor.squeeze(0)
 
         s_tensor = StochasticTensor(
@@ -82,8 +80,8 @@ class Method(ABC, torch.nn.Module):
             plates,
             distr,
             len(params) > 0,
-            batch_size,
-            sample_name,
+            plate_size,
+            self.plate_name,
         )
 
         for name, param in params.items():
@@ -148,8 +146,8 @@ class Method(ABC, torch.nn.Module):
 
     @abstractmethod
     def _sample_tensor(
-        self, distr: Distribution, n: int, parents: [storch.Tensor], plates: [Plate]
-    ) -> (torch.Tensor, int):
+        self, distr: Distribution, parents: [storch.Tensor], plates: [Plate]
+    ) -> torch.Tensor:
         pass
 
     def estimator(
@@ -191,27 +189,35 @@ class Method(ABC, torch.nn.Module):
         pass
 
 
-class Infer(Method):
+class MonteCarloMethod(Method):
+    def __init__(self, plate_name: str, n_samples: int = 1):
+        super().__init__(plate_name)
+        self.n_samples = n_samples
+
+
+class Infer(MonteCarloMethod):
     """
     Method that automatically chooses reparameterization if it is available, otherwise the score function.
     """
 
-    def __init__(self, distribution_type: Type[Distribution]):
-        super().__init__()
+    def __init__(
+        self, plate_name: str, distribution_type: Type[Distribution], n_samples: int = 1
+    ):
+        super().__init__(plate_name, n_samples)
         if distribution_type.has_rsample:
-            self._method = Reparameterization()
+            self._method = Reparameterization(plate_name, n_samples)
         elif issubclass(distribution_type, OneHotCategorical) or issubclass(
             distribution_type, Bernoulli
         ):
-            self._method = GumbelSoftmax()
+            self._method = GumbelSoftmax(plate_name, n_samples)
         else:
-            self._method = ScoreFunction()
-        self._score_method = ScoreFunction()
+            self._method = ScoreFunction(plate_name, n_samples)
+        self._score_method = ScoreFunction(plate_name, n_samples)
 
     def _sample_tensor(
-        self, distr: Distribution, n: int, parents: [storch.Tensor], plates: [Plate]
-    ) -> (torch.Tensor, int):
-        return self._method._sample_tensor(distr, n, parents, plates)
+        self, distr: Distribution, parents: [storch.Tensor], plates: [Plate]
+    ) -> torch.Tensor:
+        return self._method._sample_tensor(distr, parents, plates)
 
     def estimator(
         self, tensor: StochasticTensor, cost_node: CostTensor
@@ -233,22 +239,21 @@ class Infer(Method):
             return True
 
 
-class Reparameterization(Method):
+class Reparameterization(MonteCarloMethod):
     """
-    Method that automatically chooses between reparameterization and the score function depending on the
-    differentiability requirements of cost nodes. Can only be used for reparameterizable distributions.
+    Can only be used for reparameterizable distributions.
     Default option for reparameterizable distributions.
     """
 
     def _sample_tensor(
-        self, distr: Distribution, n: int, parents: [storch.Tensor], plates: [Plate]
-    ) -> (torch.Tensor, int):
+        self, distr: Distribution, parents: [storch.Tensor], plates: [Plate]
+    ) -> torch.Tensor:
         if not distr.has_rsample:
             raise ValueError(
                 "The input distribution has not implemented rsample. If you use a discrete "
                 "distribution, make sure to use eg GumbelSoftmax."
             )
-        return distr.rsample((n,)), n
+        return distr.rsample((self.n_samples,))
 
     def adds_loss(self, tensor: StochasticTensor, cost_node: CostTensor) -> bool:
         if has_differentiable_path(cost_node, tensor):
@@ -270,25 +275,25 @@ class GumbelSoftmax(Reparameterization):
 
     def __init__(
         self,
+        plate_name: str,
+        n_samples: int = 1,
         straight_through=False,
         initial_temperature=1.0,
         min_temperature=1.0e-4,
         annealing_rate=1.0e-5,
     ):
-        super().__init__()
+        super().__init__(plate_name, n_samples)
         self.straight_through = straight_through
         self.register_buffer("temperature", torch.tensor(initial_temperature))
         self.register_buffer("annealing_rate", torch.tensor(annealing_rate))
         self.register_buffer("min_temperature", torch.tensor(min_temperature))
 
     def _sample_tensor(
-        self,
-        distr: DiscreteDistribution,
-        n: int,
-        parents: [storch.Tensor],
-        plates: [Plate],
-    ) -> (torch.Tensor, int):
-        return rsample_gumbel(distr, n, self.temperature, self.straight_through), n
+        self, distr: DiscreteDistribution, parents: [storch.Tensor], plates: [Plate],
+    ) -> torch.Tensor:
+        return rsample_gumbel(
+            distr, self.n_samples, self.temperature, self.straight_through
+        )
 
     def update_parameters(
         self, result_triples: [(StochasticTensor, CostTensor, torch.Tensor)]
@@ -299,19 +304,25 @@ class GumbelSoftmax(Reparameterization):
             )
 
 
-class ScoreFunction(Method):
+class ScoreFunction(MonteCarloMethod):
     def __init__(
         self,
+        plate_name: str,
+        n_samples: int = 1,
         baseline_factory: Optional[Union[BaselineFactory, str]] = "moving_average",
         **kwargs,
     ):
-        super().__init__()
+        super().__init__(plate_name, n_samples)
         self.baseline_factory: Optional[BaselineFactory] = baseline_factory
         if isinstance(baseline_factory, str):
             if baseline_factory == "moving_average":
                 # Baseline per cost possible? So this lookup/buffer thing is not necessary
                 self.baseline_factory = lambda s, c: MovingAverageBaseline(**kwargs)
             elif baseline_factory == "batch_average":
+                if n_samples == 1:
+                    raise ValueError(
+                        "Batch average can only be used for n_samples > 1. "
+                    )
                 self.baseline_factory = lambda s, c: BatchAverageBaseline()
             elif baseline_factory == "none" or baseline_factory == "None":
                 self.baseline_factory = None
@@ -319,9 +330,9 @@ class ScoreFunction(Method):
                 raise ValueError("Invalid baseline name", baseline_factory)
 
     def _sample_tensor(
-        self, distr: Distribution, n: int, parents: [storch.Tensor], plates: [Plate]
-    ) -> (torch.Tensor, int):
-        return distr.sample((n,)), n
+        self, distr: Distribution, parents: [storch.Tensor], plates: [Plate]
+    ) -> torch.Tensor:
+        return distr.sample((self.n_samples,))
 
     def estimator(self, tensor: StochasticTensor, cost: CostTensor) -> storch.Tensor:
         log_prob = tensor.distribution.log_prob(tensor)
@@ -345,13 +356,13 @@ class ScoreFunction(Method):
 
 
 class Expect(Method):
-    def __init__(self, budget=10000):
-        super().__init__()
+    def __init__(self, plate_name: str, budget=10000):
+        super().__init__(plate_name)
         self.budget = budget
 
     def _sample_tensor(
-        self, distr: Distribution, n: int, parents: [storch.Tensor], plates: [Plate]
-    ) -> (torch.Tensor, int):
+        self, distr: Distribution, parents: [storch.Tensor], plates: [Plate]
+    ) -> torch.Tensor:
         # TODO: Currently very inefficient as it isn't batched
         if not distr.has_enumerate_support:
             raise ValueError(
@@ -387,7 +398,7 @@ class Expect(Method):
             itertools.product(support_non_expanded, repeat=cross_products)
         ):
             enumerate_tensor[i] = torch.cat(t, dim=0)
-        return enumerate_tensor.detach(), enumerate_tensor.shape[0]
+        return enumerate_tensor.detach()
 
     def plate_weighting(
         self, tensor: storch.StochasticTensor
@@ -399,18 +410,3 @@ class Expect(Method):
                 dim=list(range(tensor.plate_dims, len(log_probs.shape)))
             )
         return log_probs.exp()
-
-
-class UnorderedSet(Method):
-    def __init__(self):
-        super().__init__()
-
-    def _sample_tensor(
-        self, distr: Distribution, n: int, parents: [storch.Tensor], plates: [Plate]
-    ) -> torch.Tensor:
-        pass
-
-    def estimator(
-        self, tensor: StochasticTensor, cost_node: CostTensor
-    ) -> Optional[storch.Tensor]:
-        pass
