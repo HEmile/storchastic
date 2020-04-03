@@ -31,7 +31,7 @@ def train(epoch, model, train_loader, device, optimizer, args, writer):
         recon_batch, KLD, z = model(data)
         storch.add_cost(loss_function(recon_batch, data), "reconstruction")
         cond_log = batch_idx % args.log_interval == 0
-        cost, loss = backward()
+        cost = backward()
         train_loss += cost.item()
 
         optimizer.step()
@@ -86,18 +86,16 @@ def train(epoch, model, train_loader, device, optimizer, args, writer):
                         writer.add_scalar("train/probs_mse", mse._tensor, global_step)
 
             print(
-                "Train Epoch: {} [{}/{} ({:.0f}%)]\tCost: {:.6f}\tAdditive Loss: {:.6f}\t Logits var {}".format(
+                "Train Epoch: {} [{}/{} ({:.0f}%)]\tCost: {:.6f}\t Logits var {}".format(
                     epoch,
                     batch_idx * len(data),
                     len(train_loader.dataset),
                     step,
                     cost.item(),
-                    (loss - cost).item(),
                     variances,
                 )
             )
             writer.add_scalar("train/ELBO", cost, global_step)
-            writer.add_scalar("train/loss", loss, global_step)
             for param_name, var in variances.items():
                 writer.add_scalar("train/variance/" + param_name, var, global_step)
     avg_train_loss = train_loss / (batch_idx + 1)

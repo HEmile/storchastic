@@ -3,7 +3,7 @@ import torch
 from torch.distributions import Bernoulli, OneHotCategorical
 
 expect = storch.Expect()
-probs = torch.tensor([0.001, 0.001, 0.001, 0.001, 0.001, 0.995], requires_grad=True)
+probs = torch.tensor([0.01, 0.01, 0.01, 0.01, 0.01, 0.95], requires_grad=True)
 indices = torch.tensor([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
 b = OneHotCategorical(probs=probs)
 z = expect.sample("z", b)
@@ -14,11 +14,12 @@ storch.backward()
 
 expect_grad = z.grad["probs"].clone()
 
-method = storch.ScoreFunction(baseline_factory="batch_average")
+method = storch.ScoreFunction(baseline_factory="none")
+# method = storch.REBAR()
 grads = []
-for i in range(10000):
+for i in range(100):
     b = OneHotCategorical(probs=probs)
-    z = method.sample("z", b, n=3)
+    z = method.sample("z", b, n=1)
     c = (2.4 * z * indices).sum(-1) + 100
     storch.add_cost(c, "baseline_cost")
 
@@ -30,7 +31,10 @@ mean = storch.reduce_plates(grad_samples, plate_names=["variance"])
 print("mean grad", mean)
 print("expected grad", expect_grad)
 print("specific_diffs", (mean - expect_grad) ** 2)
+mse = storch.reduce_plates((grad_samples - expect_grad) ** 2).sum()
+print("MSE", mse)
 bias = (storch.reduce_plates((mean - expect_grad) ** 2)).sum()
-print(bias)
+print("bias", bias)
+
 
 # That works... Adding constants to the costs doesn't change the gradient in expectation.

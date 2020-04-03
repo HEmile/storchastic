@@ -205,7 +205,12 @@ class RELAX(Method):
         """
         # Adapted from torch.distributions.relaxed_bernoulli and torch.distributions.relaxed_categorical
         shape = hard_sample.shape
-        probs = clamp_probs(distr.probs._tensor.expand_as(hard_sample))
+        probs = (
+            distr.probs
+            if not isinstance(hard_sample, storch.Tensor)
+            else distr.probs._tensor
+        )
+        probs = clamp_probs(probs.expand_as(hard_sample))
         v = clamp_probs(torch.rand(shape, dtype=probs.dtype, device=probs.device))
         if isinstance(distr, Bernoulli):
             pos_probs = probs[hard_sample == 1]
@@ -301,8 +306,7 @@ class RELAX(Method):
         if isinstance(param, storch.Tensor):
             param._tensor.backward(d_param._tensor, retain_graph=True)
         else:
-            # TODO: Are we sure d_param is torch.Tensor?
-            param.backward(d_param, retain_graph=True)
+            param.backward(d_param._tensor, retain_graph=True)
         # Compute the gradient variance
         variance = (d_param ** 2).sum(d_param.event_dim_indices())
         var_loss = storch.reduce_plates(variance)

@@ -155,7 +155,12 @@ def grad(
     storch_grad = []
     for i, grad in enumerate(grads):
         input = inputs[i]
-        storch_grad.append(
-            storch.Tensor(grad, outputs + [input], input.plates, input.name + "_grad")
-        )
+        if isinstance(input, storch.Tensor):
+            storch_grad.append(
+                storch.Tensor(
+                    grad, outputs + [input], input.plates, input.name + "_grad"
+                )
+            )
+        else:
+            storch_grad.append(storch.Tensor(grad, outputs, [], "grad"))
     return tuple(storch_grad)

@@ -89,9 +89,7 @@ def add_cost(cost: Tensor, name: str):
     return cost
 
 
-def backward(
-    retain_graph=False, debug=False, print_costs=False
-) -> (torch.Tensor, torch.Tensor):
+def backward(retain_graph=False, debug=False, print_costs=False) -> torch.Tensor:
     """
 
     :param retain_graph: If set to False, it will deregister the added cost nodes. Should usually be set to False.
@@ -200,7 +198,8 @@ def backward(
     if not retain_graph:
         reset()
 
-    return total_cost._tensor, accum_loss._tensor
+    # TODO: How much does accum_loss really say? Should we really keep it? We want to minimize total_cost, anyways.
+    return total_cost._tensor  # , accum_loss._tensor
 
 
 def reset():
