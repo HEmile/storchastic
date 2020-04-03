@@ -5,7 +5,6 @@ Storchastic documentation
 
 Another simple header
 =====================
-Here is some text explaining why you are a piece of shit
 
     print 'hello'
     >> hello

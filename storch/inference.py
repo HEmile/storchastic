@@ -7,6 +7,7 @@ import storch
 
 
 _cost_tensors: [CostTensor] = []
+_sampling_methods: [storch.Method] = []
 
 
 def denote_independent(
@@ -204,3 +205,6 @@ def backward(retain_graph=False, debug=False, print_costs=False) -> torch.Tensor
 
 def reset():
     storch.inference._cost_tensors = []
+    for method in storch.inference._sampling_methods:
+        method.reset()
+    storch.inference._sampling_methods = []

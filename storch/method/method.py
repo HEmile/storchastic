@@ -111,7 +111,15 @@ class Method(ABC, torch.nn.Module):
                     to_hook = param
                 to_hook.register_hook(self._create_hook(s_tensor, name, hook_plates))
 
+        # Possibly change something in the tensor now that it is wrapped and registered in the graph.
+        # Used for example to rsample in LAX, and in post_sample detaching the tensor so that it won't record gradients
+        # in the normal forward pass.
         edited_sample = self.post_sample(s_tensor)
+
+        # Register this sampling method as being used in this iteration so that we can reset this method after the iteration
+        if self not in storch.inference._sampling_methods:
+            storch.inference._sampling_methods.append(self)
+
         if edited_sample is not None:
             new_s_tensor = storch.tensor._StochasticTensorBase(
                 edited_sample._tensor,
@@ -174,6 +182,13 @@ class Method(ABC, torch.nn.Module):
 
     def post_sample(self, tensor: storch.StochasticTensor) -> Optional[storch.Tensor]:
         return None
+
+    def reset(self):
+        """
+        This function gets called whenever storchastic is reset. This is after storch.backward() or storch.reset() is
+        called. Can be used to reset this methods state to some initial state that has to happen every iteration. 
+        """
+        pass
 
 
 class Infer(Method):

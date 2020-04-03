@@ -1,0 +1,118 @@
+from typing import Optional
+
+import storch
+import torch
+from torch.distributions import Distribution, Gumbel
+import itertools
+
+
+class SampleWithoutReplacementMethod(storch.Method):
+    def __init__(self, k:int):
+        super().__init__()
+        self.k=k
+        self.log_probs = None
+        self.perturbed_log_probs = None
+        self.plate_dim = None
+
+    def reset(self):
+        self.log_probs = None
+        self.perturbed_log_probs = None
+        self.plate_dim = None
+
+    def _sample_tensor(
+        self, distr: Distribution, n: int, parents: [storch.Tensor], plates: [storch.Plate]
+    ) -> (torch.Tensor, int):
+        pass
+
+
+
+
+def log1mexp(a: torch.Tensor) -> torch.Tensor:
+    """See appendix A of http://jmlr.org/papers/v21/19-985.html.
+    Numerically stable implementation of log(1-exp(a))"""
+    r = torch.zeros_like(a)
+    c = -0.693
+    r[a > c] = (-a[a > c].expm1()).log()
+    r[a <= c] = (-a[a <= c].exp()).log1p()
+    return r
+
+
+def log1pexp(a: torch.Tensor) -> torch.Tensor:
+    """See appendix A of http://jmlr.org/papers/v21/19-985.html
+    Numerically stable implementation of log(1+exp(a))
+    TODO: The paper says there is a different case for a > 18... but the definition is invalid. need to check."""
+
+    return (a.exp()).log1p()
+    # r = torch.zeros_like(a)
+    # c = 18
+    # r[a >= c] = (-a[a>= c].exp()).log1p()
+    # return r
+
+
+def stochastic_beam_search(
+    distribution: Distribution,
+    k: int,
+    amt_plates: int,
+    plate_dim: Optional[int],
+    log_probs: Optional[torch.Tensor],
+    perturbed_log_probs: Optional[torch.Tensor],
+) -> (torch.Tensor, torch.Tensor, torch.Tensor):
+    """
+    Implements Ancestral Gumbel-Top-k sampling with m=k, known as Stochastic Beam Search: http://jmlr.org/papers/v21/19-985.html.
+    Sample from the distribution k items sequentially over the independent dimensions without replacement.
+    Phi: Pass from method. Keeps track of current value of the perturbed log-probabilities. At storch.reset(), re-initialize.
+    :param distribution:
+    :param k:
+    :param plate_dim Set to None if no dimension yet
+    :return:
+    """
+
+    # TODO: This code is mostly taken from Expect(). May need to refactor to join these operations
+    if not distribution.has_enumerate_support:
+        raise ValueError(
+            "Can only perform stochastic beam search for distributions with enumerable support."
+        )
+
+    support: torch.Tensor = distribution.enumerate_support(expand=True)
+
+    sizes = support.shape[
+        amt_plates + 1 : len(support.shape) - len(distribution.event_shape)
+    ]
+
+    ranges = []
+    for size in sizes:
+        ranges.append(range(size))
+
+    support_non_expanded: torch.Tensor = distribution.enumerate_support(expand=False)
+    yv_log_probs = distribution.log_prob(support_non_expanded)
+
+    # Sample independent tensors in sequence
+    samples = torch.zeros_like(support)
+    if not plate_dim:
+        samples.unsqueeze(0)
+        plate_dim = 0
+    for indices in itertools.product(ranges):
+        if not log_probs:
+            log_probs = yv_log_probs
+            # First condition on max being 0:
+            perturbed_log_probs = 0.0
+        else:
+            # Dunno how to shape this right, but this should be k times |support|=|D_yv|
+            log_probs = log_probs + yv_log_probs
+        # Sample |D_yv| Gumbel variables
+        gumbel_d = Gumbel(loc=log_probs, scale=1.0)
+        G_yv = gumbel_d.rsample()
+
+        # Condition the Gumbel samples on the maximum of previous samples
+        # TODO: again the shaping. Should take the maximum over |D_yv|
+        Z = G_yv.max(-1)
+        T = perturbed_log_probs
+        vi = T - G_yv + log1mexp(G_yv - Z)
+        cond_G_yv = T - vi.relu() - log1pexp(-vi.abs())
+
+        # Select the k best
+        perturbed_log_probs, arg_top = torch.topk(cond_G_yv, k, dim=-1)
+        log_probs = log_probs[arg_top]
+        # Definitely wrong this shaping here, but that's the idea
+        samples[..., *indices] = support_non_expanded[arg_top]
+    return samples, log_probs, perturbed_log_probs
