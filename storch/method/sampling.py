@@ -7,24 +7,34 @@ import itertools
 
 
 class SampleWithoutReplacementMethod(storch.Method):
-    def __init__(self, k:int):
-        super().__init__()
-        self.k=k
+    def __init__(self, plate_name: str, k: int):
+        super().__init__(plate_name)
+        self.k = k
         self.log_probs = None
         self.perturbed_log_probs = None
-        self.plate_dim = None
 
     def reset(self):
         self.log_probs = None
         self.perturbed_log_probs = None
-        self.plate_dim = None
 
     def _sample_tensor(
-        self, distr: Distribution, n: int, parents: [storch.Tensor], plates: [storch.Plate]
+        self, distr: Distribution, parents: [storch.Tensor], plates: [storch.Plate]
     ) -> (torch.Tensor, int):
-        pass
-
-
+        # Perform stochastic beam search given the log-probs and perturbed log probs so far.
+        # Samples k values from this distribution so that all total configurations are unique.
+        # TODO: We have to keep track what samples are taken at each step for the backward pass.
+        # Why? We need to think about what samples are discarded at some point because they are pruned away.
+        # In the estimator they will still appear! So we'll have to think about that. They don't deserve a gradient
+        # as they are only partial configurations and thus we don't know their loss.
+        samples, self.log_probs, self.perturbed_log_probs = stochastic_beam_search(
+            distr,
+            self.k,
+            len(plates),
+            self.plate_name,
+            self.log_probs,
+            self.perturbed_log_probs,
+        )
+        return samples
 
 
 def log1mexp(a: torch.Tensor) -> torch.Tensor:
@@ -53,7 +63,8 @@ def stochastic_beam_search(
     distribution: Distribution,
     k: int,
     amt_plates: int,
-    plate_dim: Optional[int],
+    # TODO: What is the plate dim? Should be the plate dim in the support tensor.
+    plate_dim: str,
     log_probs: Optional[torch.Tensor],
     perturbed_log_probs: Optional[torch.Tensor],
 ) -> (torch.Tensor, torch.Tensor, torch.Tensor):
@@ -87,6 +98,8 @@ def stochastic_beam_search(
     yv_log_probs = distribution.log_prob(support_non_expanded)
 
     # Sample independent tensors in sequence
+    # TODO: Check the shapes thoroughly here. There is the k dimension, which is the k best from the previous bfs layer
+    # Then there is the current bfs layer, which is of shape |D_yv|. 
     samples = torch.zeros_like(support)
     if not plate_dim:
         samples.unsqueeze(0)
@@ -111,6 +124,7 @@ def stochastic_beam_search(
         cond_G_yv = T - vi.relu() - log1pexp(-vi.abs())
 
         # Select the k best
+        # TODO: Argtop should be over both the k and the |D_yv| dimension, but is currently only over the last
         perturbed_log_probs, arg_top = torch.topk(cond_G_yv, k, dim=-1)
         log_probs = log_probs[arg_top]
         # Definitely wrong this shaping here, but that's the idea
