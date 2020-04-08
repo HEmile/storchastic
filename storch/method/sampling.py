@@ -10,6 +10,10 @@ from storch.method.method import Method
 class SampleWithoutReplacementMethod(Method):
     def __init__(self, plate_name: str, k: int):
         super().__init__(plate_name)
+        if k < 2:
+            raise ValueError(
+                "Can only sample with replacement for more than 1 samples."
+            )
         self.k = k
         self.log_probs = None
         self.perturbed_log_probs = None
@@ -28,13 +32,16 @@ class SampleWithoutReplacementMethod(Method):
         # In the estimator they will still appear! So we'll have to think about that. They don't deserve a gradient
         # as they are only partial configurations and thus we don't know their loss.
         samples, self.log_probs, self.perturbed_log_probs = stochastic_beam_search(
-            distr,
-            self.k,
-            len(plates),
-            self.plate_name,
-            self.log_probs,
-            self.perturbed_log_probs,
+            distr, self.k, len(plates), self.log_probs, self.perturbed_log_probs,
         )
+        # samples, self.log_probs, self.perturbed_log_probs = stochastic_beam_search(
+        #     distr,
+        #     self.k,
+        #     len(plates),
+        #     self.plate_name,
+        #     self.log_probs,
+        #     self.perturbed_log_probs,
+        # )
         return samples
 
 
@@ -71,7 +78,6 @@ def stochastic_beam_search(
     distribution: Distribution,
     k: int,
     amt_plates: int,
-    plate_dim: str,
     joint_log_probs: Optional[torch.Tensor],
     perturbed_log_probs: Optional[torch.Tensor],
 ) -> (torch.Tensor, torch.Tensor, torch.Tensor):
@@ -115,12 +121,12 @@ def stochastic_beam_search(
     sampled_support_indices = support.new_zeros(
         size=(k,) + support.shape[1:-1], dtype=torch.long
     )
+    # TODO: Is it at shape[0]?
+    amt_samples = 0 if joint_log_probs is None else joint_log_probs.shape[0]
     # Iterate over the different (conditionally) independent samples being taken
     for indices in itertools.product(*ranges):
-        # List of indices for the next sample
-        indexing = (slice(None),) * (amt_plates + 1) + indices
         # Log probabilities of the different options for this sample step
-        yv_log_probs = d_log_probs[indexing]
+        yv_log_probs = d_log_probs[(slice(None),) * (amt_plates + 1) + indices]
         if joint_log_probs is None:
             joint_log_probs = yv_log_probs
             # First condition on max being 0:
@@ -131,45 +137,49 @@ def stochastic_beam_search(
             joint_log_probs = joint_log_probs.unsqueeze(0) + yv_log_probs.unsqueeze(1)
             first_sample = False
 
-        # Sample |D_yv| Gumbel variables
+        # Sample |D_yv| (x k) x ... Gumbel variables
         gumbel_d = Gumbel(loc=joint_log_probs, scale=1.0)
         G_yv = gumbel_d.rsample()
 
         # Condition the Gumbel samples on the maximum of previous samples
-        # Index 0 is always |D_yv|
         Z = G_yv.max(0)[0]
         T = perturbed_log_probs
         vi = T - G_yv + log1mexp(G_yv - Z)
         cond_G_yv = T - vi.relu() - log1pexp(-vi.abs())
 
-        # Select the k best, then use the result to select the log probabilities
-        # TODO: Argtop should be over both the k and the |D_yv| dimension, but is currently only over the last. Should reshape it to be over both.
         if first_sample:
-            perturbed_log_probs, arg_top = torch.topk(cond_G_yv, k, dim=0)
+            # No parent has been sampled yet
+            amt_samples = min(k, cond_G_yv.shape[0])
+            # Compute top k over the conditional log probs
+            perturbed_log_probs, arg_top = torch.topk(cond_G_yv, amt_samples, dim=0)
             joint_log_probs = joint_log_probs.gather(dim=0, index=arg_top)
+            # Index for the selected samples. Uses slice(amt_samples) for the first index in case k > |D_yv|
+            indexing = (slice(0, amt_samples),) + (slice(None),) * amt_plates + indices
             sampled_support_indices[indexing] = arg_top
         else:
-            print(sampled_support_indices[:, 1])
             cond_G_yv = cond_G_yv.reshape((-1,) + cond_G_yv.shape[2:])
+            prev_amt_samples = amt_samples
+            amt_samples = min(k, cond_G_yv.shape[0])
             # Gather corresponding joint log probabilities
-            perturbed_log_probs, arg_top = torch.topk(cond_G_yv, k, dim=0)
+            perturbed_log_probs, arg_top = torch.topk(cond_G_yv, amt_samples, dim=0)
             joint_log_probs = joint_log_probs.reshape(
                 (-1,) + joint_log_probs.shape[2:]
             ).gather(dim=0, index=arg_top)
             # Keep track of what parents were sampled for the arg top
             # TODO: Also keep track of what other parents were sampled for the argtop
             chosen_parents = right_expand_as(
-                arg_top.remainder(k), sampled_support_indices
+                arg_top.remainder(prev_amt_samples), sampled_support_indices
             )
             sampled_support_indices = sampled_support_indices.gather(
                 dim=0, index=chosen_parents
             )
-            chosen_samples = arg_top / k
+            chosen_samples = arg_top / prev_amt_samples
+            # Index for the selected samples. Uses slice(amt_samples) for the first index in case k > |D_yv|
+            indexing = (slice(0, amt_samples),) + (slice(None),) * amt_plates + indices
             sampled_support_indices[indexing] = chosen_samples
 
-            print(sampled_support_indices[:, 1])
-            print(perturbed_log_probs)
-
+    sampled_support_indices = sampled_support_indices[:amt_samples]
+    print(sampled_support_indices[:, 0])
     expanded_indices = right_expand_as(sampled_support_indices, support)
     samples = support.gather(dim=0, index=expanded_indices)
     return samples, joint_log_probs, perturbed_log_probs

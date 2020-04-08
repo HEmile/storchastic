@@ -38,7 +38,7 @@ class DiscreteVAE(VAE):
                 "z", n_samples=args.samples, in_dim=(args.latents, 10), rebar=True
             )
         elif args.method == "without_replacement":
-            return SampleWithoutReplacementMethod("z", k=8)
+            return SampleWithoutReplacementMethod("z", k=args.samples)
         else:
             raise ValueError("Invalid method passed to program arguments.")
 
