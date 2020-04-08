@@ -31,17 +31,17 @@ class SampleWithoutReplacementMethod(Method):
         # Why? We need to think about what samples are discarded at some point because they are pruned away.
         # In the estimator they will still appear! So we'll have to think about that. They don't deserve a gradient
         # as they are only partial configurations and thus we don't know their loss.
-        samples, self.log_probs, self.perturbed_log_probs = stochastic_beam_search(
+        samples, self.log_probs, self.perturbed_log_probs, _ = stochastic_beam_search(
             distr, self.k, len(plates), self.log_probs, self.perturbed_log_probs,
         )
-        # samples, self.log_probs, self.perturbed_log_probs = stochastic_beam_search(
-        #     distr,
-        #     self.k,
-        #     len(plates),
-        #     self.plate_name,
-        #     self.log_probs,
-        #     self.perturbed_log_probs,
-        # )
+        (
+            samples,
+            self.log_probs,
+            self.perturbed_log_probs,
+            sampled_parents,
+        ) = stochastic_beam_search(
+            distr, self.k, len(plates), self.log_probs, self.perturbed_log_probs,
+        )
         return samples
 
 
@@ -112,17 +112,21 @@ def stochastic_beam_search(
     d_log_probs = distribution.log_prob(support_non_expanded)
 
     # Sample independent tensors in sequence
-    # TODO: Check the shapes thoroughly here. There is the k dimension, which is the k best from the previous bfs layer
-    # Then there is the current bfs layer, which is of shape |D_yv|.
-    # TODO: What if fewer than k is being sampled (ie |D_yv|<k)? That could 'underfil' the samples.
-    # if not plate_dim:
-    #     samples.unsqueeze(0)
-    #     plate_dim = 0
     sampled_support_indices = support.new_zeros(
         size=(k,) + support.shape[1:-1], dtype=torch.long
     )
-    # TODO: Is it at shape[0]?
-    amt_samples = 0 if joint_log_probs is None else joint_log_probs.shape[0]
+    amt_samples = 0
+    sampled_parent_indices = None
+    if joint_log_probs is not None:
+        # TODO: Is it at shape[0]?
+        amt_samples = joint_log_probs.shape[0]
+        sampled_parent_indices = support.new_zeros(
+            size=(k,) + joint_log_probs.shape[1:], dtype=torch.long
+        )
+        sampled_parent_indices[:amt_samples] = right_expand_as(
+            torch.arange(amt_samples), joint_log_probs
+        )
+
     # Iterate over the different (conditionally) independent samples being taken
     for indices in itertools.product(*ranges):
         # Log probabilities of the different options for this sample step
@@ -166,20 +170,33 @@ def stochastic_beam_search(
                 (-1,) + joint_log_probs.shape[2:]
             ).gather(dim=0, index=arg_top)
             # Keep track of what parents were sampled for the arg top
-            # TODO: Also keep track of what other parents were sampled for the argtop
-            chosen_parents = right_expand_as(
-                arg_top.remainder(prev_amt_samples), sampled_support_indices
-            )
+            chosen_parents = arg_top.remainder(prev_amt_samples)
             sampled_support_indices = sampled_support_indices.gather(
-                dim=0, index=chosen_parents
+                dim=0, index=right_expand_as(chosen_parents, sampled_support_indices)
             )
+            if sampled_parent_indices is not None:
+                sampled_parent_indices = sampled_parent_indices.gather(
+                    dim=0, index=chosen_parents
+                )
             chosen_samples = arg_top / prev_amt_samples
             # Index for the selected samples. Uses slice(amt_samples) for the first index in case k > |D_yv|
             indexing = (slice(0, amt_samples),) + (slice(None),) * amt_plates + indices
             sampled_support_indices[indexing] = chosen_samples
 
     sampled_support_indices = sampled_support_indices[:amt_samples]
-    print(sampled_support_indices[:, 0])
+    # print("sampled argtop", sampled_support_indices[:, 0])
+    if sampled_parent_indices is not None:
+        # print("sampled parents", sampled_parent_indices[:, 0])
+        print(
+            "cat",
+            torch.cat(
+                [
+                    sampled_support_indices[:, 0].squeeze().unsqueeze(0),
+                    sampled_parent_indices[:, 0].unsqueeze(0),
+                ],
+                dim=0,
+            ).T,
+        )
     expanded_indices = right_expand_as(sampled_support_indices, support)
     samples = support.gather(dim=0, index=expanded_indices)
-    return samples, joint_log_probs, perturbed_log_probs
+    return samples, joint_log_probs, perturbed_log_probs, sampled_parent_indices
