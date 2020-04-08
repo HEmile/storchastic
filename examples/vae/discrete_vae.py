@@ -5,6 +5,7 @@ import torch.nn as nn
 import torch
 import storch
 from torch.distributions import OneHotCategorical, Distribution
+from storch.method import SampleWithoutReplacementMethod
 
 
 class DiscreteVAE(VAE):
@@ -36,6 +37,8 @@ class DiscreteVAE(VAE):
             return storch.RELAX(
                 "z", n_samples=args.samples, in_dim=(args.latents, 10), rebar=True
             )
+        elif args.method == "without_replacement":
+            return SampleWithoutReplacementMethod("z", k=8)
         else:
             raise ValueError("Invalid method passed to program arguments.")
 

@@ -4,9 +4,10 @@ import storch
 import torch
 from torch.distributions import Distribution, Gumbel
 import itertools
+from storch.method.method import Method
 
 
-class SampleWithoutReplacementMethod(storch.Method):
+class SampleWithoutReplacementMethod(Method):
     def __init__(self, plate_name: str, k: int):
         super().__init__(plate_name)
         self.k = k
@@ -59,21 +60,28 @@ def log1pexp(a: torch.Tensor) -> torch.Tensor:
     # return r
 
 
+def right_expand_as(tensor, expand_as):
+    diff = expand_as.ndim - tensor.ndim
+    return tensor[(...,) + (None,) * diff].expand(
+        (-1,) * tensor.ndim + expand_as.shape[tensor.ndim :]
+    )
+
+
 def stochastic_beam_search(
     distribution: Distribution,
     k: int,
     amt_plates: int,
-    # TODO: What is the plate dim? Should be the plate dim in the support tensor.
     plate_dim: str,
-    log_probs: Optional[torch.Tensor],
+    joint_log_probs: Optional[torch.Tensor],
     perturbed_log_probs: Optional[torch.Tensor],
 ) -> (torch.Tensor, torch.Tensor, torch.Tensor):
     """
+    Sample k events from the distribution without replacement.
+
     Implements Ancestral Gumbel-Top-k sampling with m=k, known as Stochastic Beam Search: http://jmlr.org/papers/v21/19-985.html.
-    Sample from the distribution k items sequentially over the independent dimensions without replacement.
-    Phi: Pass from method. Keeps track of current value of the perturbed log-probabilities. At storch.reset(), re-initialize.
-    :param distribution:
-    :param k:
+    This sample from the distribution k items sequentially over the independent dimensions without replacement
+    :param distribution: The distribution to sample from
+    :param k: The amount of
     :param plate_dim Set to None if no dimension yet
     :return:
     """
@@ -92,41 +100,76 @@ def stochastic_beam_search(
 
     ranges = []
     for size in sizes:
-        ranges.append(range(size))
+        ranges.append(list(range(size)))
 
     support_non_expanded: torch.Tensor = distribution.enumerate_support(expand=False)
-    yv_log_probs = distribution.log_prob(support_non_expanded)
+    d_log_probs = distribution.log_prob(support_non_expanded)
 
     # Sample independent tensors in sequence
     # TODO: Check the shapes thoroughly here. There is the k dimension, which is the k best from the previous bfs layer
-    # Then there is the current bfs layer, which is of shape |D_yv|. 
-    samples = torch.zeros_like(support)
-    if not plate_dim:
-        samples.unsqueeze(0)
-        plate_dim = 0
-    for indices in itertools.product(ranges):
-        if not log_probs:
-            log_probs = yv_log_probs
+    # Then there is the current bfs layer, which is of shape |D_yv|.
+    # TODO: What if fewer than k is being sampled (ie |D_yv|<k)? That could 'underfil' the samples.
+    # if not plate_dim:
+    #     samples.unsqueeze(0)
+    #     plate_dim = 0
+    sampled_support_indices = support.new_zeros(
+        size=(k,) + support.shape[1:-1], dtype=torch.long
+    )
+    # Iterate over the different (conditionally) independent samples being taken
+    for indices in itertools.product(*ranges):
+        # List of indices for the next sample
+        indexing = (slice(None),) * (amt_plates + 1) + indices
+        # Log probabilities of the different options for this sample step
+        yv_log_probs = d_log_probs[indexing]
+        if joint_log_probs is None:
+            joint_log_probs = yv_log_probs
             # First condition on max being 0:
             perturbed_log_probs = 0.0
+            first_sample = True
         else:
-            # Dunno how to shape this right, but this should be k times |support|=|D_yv|
-            log_probs = log_probs + yv_log_probs
+            # Returns |D_yv| x k x ...
+            joint_log_probs = joint_log_probs.unsqueeze(0) + yv_log_probs.unsqueeze(1)
+            first_sample = False
+
         # Sample |D_yv| Gumbel variables
-        gumbel_d = Gumbel(loc=log_probs, scale=1.0)
+        gumbel_d = Gumbel(loc=joint_log_probs, scale=1.0)
         G_yv = gumbel_d.rsample()
 
         # Condition the Gumbel samples on the maximum of previous samples
-        # TODO: again the shaping. Should take the maximum over |D_yv|
-        Z = G_yv.max(-1)
+        # Index 0 is always |D_yv|
+        Z = G_yv.max(0)[0]
         T = perturbed_log_probs
         vi = T - G_yv + log1mexp(G_yv - Z)
         cond_G_yv = T - vi.relu() - log1pexp(-vi.abs())
 
-        # Select the k best
-        # TODO: Argtop should be over both the k and the |D_yv| dimension, but is currently only over the last
-        perturbed_log_probs, arg_top = torch.topk(cond_G_yv, k, dim=-1)
-        log_probs = log_probs[arg_top]
-        # Definitely wrong this shaping here, but that's the idea
-        samples[..., *indices] = support_non_expanded[arg_top]
-    return samples, log_probs, perturbed_log_probs
+        # Select the k best, then use the result to select the log probabilities
+        # TODO: Argtop should be over both the k and the |D_yv| dimension, but is currently only over the last. Should reshape it to be over both.
+        if first_sample:
+            perturbed_log_probs, arg_top = torch.topk(cond_G_yv, k, dim=0)
+            joint_log_probs = joint_log_probs.gather(dim=0, index=arg_top)
+            sampled_support_indices[indexing] = arg_top
+        else:
+            print(sampled_support_indices[:, 1])
+            cond_G_yv = cond_G_yv.reshape((-1,) + cond_G_yv.shape[2:])
+            # Gather corresponding joint log probabilities
+            perturbed_log_probs, arg_top = torch.topk(cond_G_yv, k, dim=0)
+            joint_log_probs = joint_log_probs.reshape(
+                (-1,) + joint_log_probs.shape[2:]
+            ).gather(dim=0, index=arg_top)
+            # Keep track of what parents were sampled for the arg top
+            # TODO: Also keep track of what other parents were sampled for the argtop
+            chosen_parents = right_expand_as(
+                arg_top.remainder(k), sampled_support_indices
+            )
+            sampled_support_indices = sampled_support_indices.gather(
+                dim=0, index=chosen_parents
+            )
+            chosen_samples = arg_top / k
+            sampled_support_indices[indexing] = chosen_samples
+
+            print(sampled_support_indices[:, 1])
+            print(perturbed_log_probs)
+
+    expanded_indices = right_expand_as(sampled_support_indices, support)
+    samples = support.gather(dim=0, index=expanded_indices)
+    return samples, joint_log_probs, perturbed_log_probs
