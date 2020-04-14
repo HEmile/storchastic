@@ -10,7 +10,6 @@ from storch.tensor import (
     CostTensor,
     StochasticTensor,
     Plate,
-    _StochasticTensorBase,
 )
 from torch.distributions import (
     Distribution,

@@ -55,18 +55,6 @@ def log1mexp(a: torch.Tensor) -> torch.Tensor:
     return r
 
 
-def log1pexp(a: torch.Tensor) -> torch.Tensor:
-    """See appendix A of http://jmlr.org/papers/v21/19-985.html
-    Numerically stable implementation of log(1+exp(a))
-    TODO: The paper says there is a different case for a > 18... but the definition is invalid. need to check."""
-
-    return (a.exp()).log1p()
-    # r = torch.zeros_like(a)
-    # c = 18
-    # r[a >= c] = (-a[a>= c].exp()).log1p()
-    # return r
-
-
 def right_expand_as(tensor, expand_as):
     diff = expand_as.ndim - tensor.ndim
     return tensor[(...,) + (None,) * diff].expand(
@@ -149,7 +137,7 @@ def stochastic_beam_search(
         Z = G_yv.max(0)[0]
         T = perturbed_log_probs
         vi = T - G_yv + log1mexp(G_yv - Z)
-        cond_G_yv = T - vi.relu() - log1pexp(-vi.abs())
+        cond_G_yv = T - vi.relu() - torch.nn.Softplus()(-vi.abs())
 
         if first_sample:
             # No parent has been sampled yet
@@ -184,19 +172,17 @@ def stochastic_beam_search(
             sampled_support_indices[indexing] = chosen_samples
 
     sampled_support_indices = sampled_support_indices[:amt_samples]
-    # print("sampled argtop", sampled_support_indices[:, 0])
-    if sampled_parent_indices is not None:
-        # print("sampled parents", sampled_parent_indices[:, 0])
-        print(
-            "cat",
-            torch.cat(
-                [
-                    sampled_support_indices[:, 0].squeeze().unsqueeze(0),
-                    sampled_parent_indices[:, 0].unsqueeze(0),
-                ],
-                dim=0,
-            ).T,
-        )
+    # if sampled_parent_indices is not None:
+    #     print(
+    #         "cat",
+    #         torch.cat(
+    #             [
+    #                 sampled_support_indices[:, 0].squeeze().unsqueeze(0),
+    #                 sampled_parent_indices[:, 0].unsqueeze(0),
+    #             ],
+    #             dim=0,
+    #         ).T,
+    #     )
     expanded_indices = right_expand_as(sampled_support_indices, support)
     samples = support.gather(dim=0, index=expanded_indices)
     return samples, joint_log_probs, perturbed_log_probs, sampled_parent_indices

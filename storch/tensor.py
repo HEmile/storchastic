@@ -510,7 +510,7 @@ torch.Tensor.__setitem__ = wrap_set
 
 
 class CostTensor(Tensor):
-    def __init__(self, tensor: torch.Tensor, parents, plate_links: [Plate], name):
+    def __init__(self, tensor: torch.Tensor, parents, plate_links: [Plate], name: str):
         super().__init__(tensor, parents, plate_links, name)
 
     @property
@@ -542,7 +542,6 @@ class IndependentTensor(Tensor):
                     + ". A parent sample has already used"
                     " this name. Use a different name for this independent dimension."
                 )
-        # TODO: Weighting
         plates.insert(0, Plate(plate_name, n, weight))
         super().__init__(tensor, parents, plates, tensor_name)
         self.n = n
@@ -553,17 +552,18 @@ class IndependentTensor(Tensor):
         return True
 
 
-class _StochasticTensorBase(Tensor):
+class StochasticTensor(Tensor):
+    # TODO: Copy original tensor to make sure it cannot change using inplace
     def __init__(
         self,
         tensor: torch.Tensor,
         parents: [Tensor],
         plates: [Plate],
         name: str,
+        n: int,
         sampling_method: Optional[storch.Method],
         distribution: Distribution,
         requires_grad: bool,
-        n: int,
     ):
         self.distribution = distribution
         super().__init__(tensor, parents, plates, name)
@@ -586,47 +586,6 @@ class _StochasticTensorBase(Tensor):
     @property
     def grad(self):
         return self.param_grads
-
-
-class StochasticTensor(_StochasticTensorBase):
-    # TODO: Copy original tensor to make sure it cannot change using inplace
-    def __init__(
-        self,
-        tensor: torch.Tensor,
-        parents: [Tensor],
-        sampling_method: storch.Method,
-        plates: [Plate],
-        distribution: Distribution,
-        requires_grad: bool,
-        n: int,
-        name: str,
-    ):
-        for plate in plates:
-            if plate.name == name:
-                raise ValueError(
-                    "Cannot create stochastic tensor with name "
-                    + name
-                    + ". A parent sample has already used this name. Use a different name for this sample."
-                )
-
-        # Compute the batch weighting and add the resulting new plate. We have to temporarily assign a dummy
-        # batch_links here in case the code inside sampling_method.batch_weighting refers to tensor.batch_links.
-        plates.insert(0, Plate(name, n, None))
-        super().__init__(
-            tensor,
-            parents,
-            plates,
-            name,
-            sampling_method,
-            distribution,
-            requires_grad,
-            n,
-        )
-        batch_weighting = sampling_method.plate_weighting(self)
-        plate = Plate(name, self.n, batch_weighting)
-        self.plates[0] = plate
-        if isinstance(batch_weighting, storch.Tensor):
-            batch_weighting.plates[0] = plate
 
 
 from storch.util import has_backwards_path

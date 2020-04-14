@@ -44,10 +44,10 @@ class Method(ABC, torch.nn.Module):
         self.register_buffer("iterations", torch.tensor(0, dtype=torch.long))
         self.plate_name = plate_name
 
-    def forward(self, distr: Distribution) -> storch.tensor._StochasticTensorBase:
+    def forward(self, distr: Distribution) -> storch.tensor.StochasticTensor:
         return self.sample(distr)
 
-    def sample(self, distr: Distribution) -> storch.tensor._StochasticTensorBase:
+    def sample(self, distr: Distribution) -> storch.tensor.StochasticTensor:
         # Unwrap the distributions parameters
         params: Dict[str, storch.Tensor] = get_distr_parameters(
             distr, filter_requires_grad=False
@@ -63,6 +63,14 @@ class Method(ABC, torch.nn.Module):
                     if plate not in plates:
                         plates.append(plate)
 
+        for plate in plates:
+            if plate.name == self.plate_name:
+                raise ValueError(
+                    "Cannot create stochastic tensor with name "
+                    + self.plate_name
+                    + ". A parent sample has already used this name. Use a different name for this sample."
+                )
+
         # Will not rewrap in @deterministic, because sampling statements will insert an additional dimensions in the
         # first batch dimension, causing the rewrapping statement to error as it violates the plating constraints.
         storch.wrappers._ignore_wrap = True
@@ -73,16 +81,25 @@ class Method(ABC, torch.nn.Module):
         if tensor.shape[0] == 1:
             tensor = tensor.squeeze(0)
 
+        plate = self._create_plate(tensor, plate_size)
+        plates.insert(0, plate)
+
         s_tensor = StochasticTensor(
             tensor,
             storch.wrappers._stochastic_parents + list(parents.values()),
-            self,
             plates,
+            self.plate_name,
+            plate_size,
+            self,
             distr,
             len(params) > 0,
-            plate_size,
-            self.plate_name,
         )
+
+        batch_weighting = self.plate_weighting(s_tensor)
+        if batch_weighting is not None:
+            plate.weight = batch_weighting
+            if isinstance(batch_weighting, storch.Tensor):
+                batch_weighting.plates[0] = plate
 
         for name, param in params.items():
             # TODO: Possibly could find the wrong gradients here if multiple distributions use the same parameter?
@@ -119,19 +136,22 @@ class Method(ABC, torch.nn.Module):
             storch.inference._sampling_methods.append(self)
 
         if edited_sample is not None:
-            new_s_tensor = storch.tensor._StochasticTensorBase(
+            new_s_tensor = storch.tensor.StochasticTensor(
                 edited_sample._tensor,
                 [s_tensor],
                 s_tensor.plates,
                 s_tensor.name,
+                s_tensor.n,
                 None,
                 s_tensor.distribution,
                 False,
-                s_tensor.n,
             )
             new_s_tensor.param_grads = s_tensor.param_grads
             return new_s_tensor
         return s_tensor
+
+    def _create_plate(self, sampled_tensor: torch.Tensor, plate_size: int) -> Plate:
+        return Plate(self.plate_name, plate_size)
 
     def _estimator(
         self, tensor: StochasticTensor, cost_node: CostTensor
