@@ -458,14 +458,24 @@ for m in dir(torch.Tensor):
     if (
         isinstance(v, Callable)
         and m not in Tensor.__dict__
-        and m not in object.__dict__
+        # and m not in object.__dict__
     ):
         if m in _exception_tensor:
+            if storch._debug:
+                print("exception:" + m)
             setattr(torch.Tensor, m, storch._exception_wrapper(v))
         elif m in _unwrap_only_tensor:
+            if storch._debug:
+                print("unwrap only:" + m)
             setattr(torch.Tensor, m, storch._unpack_wrapper(v))
         elif m not in _excluded_tensor:
+            if storch._debug:
+                print("in:" + m)
             setattr(torch.Tensor, m, storch.deterministic(v))
+        elif storch._debug:
+            print("excluded:" + m)
+    elif storch._debug:
+        print("out:" + m)
 
 # Yes. This code is extremely weird. For some reason, when monkey patching torch.Tensor.__getitem__ and
 # torch.Tensor.__setitem__, bizarre indexing bugs will happen that wouldn't happen when not monkey patching them.
@@ -477,14 +487,14 @@ original_get = torch.Tensor.__getitem__
 
 def wrap_get(a, b):
     try:
-        return storch.deterministic(original_get)(a, b)
+        return storch.deterministic(original_get, l_broadcast=False)(a, b)
     except IndexError:
         if storch._debug:
             print(
                 "Got indexing error at __getitem__. Trying to resolve this using the unsqueeze hack."
             )
 
-        @storch.deterministic
+        @storch.deterministic(l_broadcast=False)
         def _weird_wrap(a, b):
             if isinstance(b, torch.Tensor):
                 b = b.unsqueeze(0)
@@ -503,14 +513,14 @@ original_set = torch.Tensor.__setitem__
 
 def wrap_set(a, b, v):
     try:
-        return storch.deterministic(original_set)(a, b, v)
+        return storch.deterministic(original_set, l_broadcast=False)(a, b, v)
     except IndexError:
         if storch._debug:
             print(
                 "Got indexing error at __setitem__. Trying to resolve this using the unsqueeze hack."
             )
 
-        @storch.deterministic
+        @storch.deterministic(l_broadcast=False)
         def _weird_wrap(a, b, v):
             if isinstance(b, torch.Tensor):
                 b = b.unsqueeze(0)

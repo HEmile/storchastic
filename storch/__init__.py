@@ -1,3 +1,4 @@
+_debug = True
 from typing import Callable
 
 from .wrappers import (
@@ -6,6 +7,7 @@ from .wrappers import (
     reduce,
     _exception_wrapper,
     _unpack_wrapper,
+    ignore_wrapping,
 )
 from .tensor import Tensor, CostTensor, StochasticTensor, Plate
 from .method import *
@@ -22,7 +24,6 @@ from .excluded_init import (
     _excluded_function,
 )
 
-_debug = False
 
 # Wrap all (common) normal PyTorch functions. This is required because they call
 # C code. The returned tensors from the C code can only automatically be wrapped

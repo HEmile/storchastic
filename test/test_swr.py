@@ -11,7 +11,7 @@ normal_method2 = storch.Reparameterization("n2", 2)
 l_entropy = torch.tensor([-3.0, -3.0, 2, -2.0], requires_grad=True)
 h_entropy = torch.tensor([-0.1, 0.1, 0.05, -0.05], requires_grad=True)
 
-n_params = torch.tensor([1.0, -1.0], requires_grad=True)
+n_params = torch.tensor(0.0, requires_grad=True)
 
 d1 = OneHotCategorical(logits=l_entropy)
 d2 = OneHotCategorical(logits=h_entropy)
@@ -25,9 +25,11 @@ print("z1", z_1)
 print("z2", z_2)
 
 n1 = normal_method1(dn1)
-
+print("n1", n1)
 _z_1 = z_1 + n1
 _z_2 = z_1 + n1
+
+print(_z_1, _z_2)
 
 d3 = OneHotCategorical(logits=_z_1)
 d4 = OneHotCategorical(logits=_z_2)

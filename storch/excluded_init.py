@@ -57,7 +57,19 @@ _to_test_init = {
 
 _excluded_function = {"get_softmax_dim", "assert_int-or-pair"}
 
-_excluded_tensor = {"__getitem__", "__setitem__"}
+_excluded_tensor = {
+    "__getitem__",
+    "__setitem__",
+    "__class__",
+    "__delattr__",
+    "__delitem__",
+    "__dir__",
+    "__format__",
+    "__getattribute__",
+    "__init_subclass__",
+    "__setattr__",
+    "__subclasshook__",
+}
 
 _exception_tensor = {
     "allclose",

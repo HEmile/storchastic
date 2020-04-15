@@ -65,17 +65,11 @@ class Method(ABC, torch.nn.Module):
 
         for plate in plates:
             if plate.name == self.plate_name:
-                raise ValueError(
-                    "Cannot create stochastic tensor with name "
-                    + self.plate_name
-                    + ". A parent sample has already used this name. Use a different name for this sample."
-                )
+                self.on_plate_already_present(plate)
 
         # Will not rewrap in @deterministic, because sampling statements will insert an additional dimensions in the
         # first batch dimension, causing the rewrapping statement to error as it violates the plating constraints.
-        storch.wrappers._ignore_wrap = True
         tensor = self._sample_tensor(distr, parents, plates)
-        storch.wrappers._ignore_wrap = False
 
         plate_size = tensor.shape[0]
         if tensor.shape[0] == 1:
@@ -83,6 +77,9 @@ class Method(ABC, torch.nn.Module):
 
         plate = self._create_plate(tensor, plates, plate_size)
         plates.insert(0, plate)
+
+        if isinstance(tensor, storch.Tensor):
+            tensor = tensor._tensor
 
         s_tensor = StochasticTensor(
             tensor,
@@ -210,6 +207,13 @@ class Method(ABC, torch.nn.Module):
         """
         pass
 
+    def on_plate_already_present(self, plate: Plate):
+        raise ValueError(
+            "Cannot create stochastic tensor with name "
+            + plate.name
+            + ". A parent sample has already used this name. Use a different name for this sample."
+        )
+
 
 class MonteCarloMethod(Method):
     def __init__(self, plate_name: str, n_samples: int = 1):
@@ -275,7 +279,8 @@ class Reparameterization(MonteCarloMethod):
                 "The input distribution has not implemented rsample. If you use a discrete "
                 "distribution, make sure to use eg GumbelSoftmax."
             )
-        return distr.rsample((self.n_samples,))
+        with storch.ignore_wrapping():
+            return distr.rsample((self.n_samples,))
 
     def adds_loss(self, tensor: StochasticTensor, cost_node: CostTensor) -> bool:
         if has_differentiable_path(cost_node, tensor):
@@ -313,9 +318,10 @@ class GumbelSoftmax(Reparameterization):
     def _sample_tensor(
         self, distr: DiscreteDistribution, parents: [storch.Tensor], plates: [Plate],
     ) -> torch.Tensor:
-        return rsample_gumbel(
-            distr, self.n_samples, self.temperature, self.straight_through
-        )
+        with storch.ignore_wrapping():
+            return rsample_gumbel(
+                distr, self.n_samples, self.temperature, self.straight_through
+            )
 
     def update_parameters(
         self, result_triples: [(StochasticTensor, CostTensor, torch.Tensor)]
@@ -354,7 +360,8 @@ class ScoreFunction(MonteCarloMethod):
     def _sample_tensor(
         self, distr: Distribution, parents: [storch.Tensor], plates: [Plate]
     ) -> torch.Tensor:
-        return distr.sample((self.n_samples,))
+        with storch.ignore_wrapping():
+            return distr.sample((self.n_samples,))
 
     def estimator(self, tensor: StochasticTensor, cost: CostTensor) -> storch.Tensor:
         log_prob = tensor.distribution.log_prob(tensor)
@@ -386,6 +393,7 @@ class Expect(Method):
         self, distr: Distribution, parents: [storch.Tensor], plates: [Plate]
     ) -> torch.Tensor:
         # TODO: Currently very inefficient as it isn't batched
+        # TODO: What if the expectation has a parent
         if not distr.has_enumerate_support:
             raise ValueError(
                 "Can only calculate the expected value for distributions with enumerable support."
