@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Optional
+from typing import Optional, Union
 
 import storch
 import torch
@@ -83,20 +83,18 @@ class SampleWithoutReplacementMethod(Method):
                 [],
                 plates,
             )
-            if self.last_plate:
-                # Gather the correct samples
-                d_log_probs = self.last_plate.on_unwrap_tensor(d_log_probs)
-                # Permute the dimensions of d_log_probs st the k dimension is an event dimension.
-                for i, plate in enumerate(d_log_probs.multi_dim_plates()):
-                    if plate.name == self.plate_name:
-                        d_log_probs.plates.remove(plate)
-                        # plate[0] x ... x plate[n-1] x |D_yv| x k
-                        d_log_probs._tensor = d_log_probs._tensor.permute(
-                            tuple(range(0, i))
-                            + tuple(range(i + 1, amt_plates + 1))
-                            + (i,)
-                        )
-                        break
+        if self.last_plate:
+            # Gather the correct samples
+            d_log_probs = self.last_plate.on_unwrap_tensor(d_log_probs)
+            # Permute the dimensions of d_log_probs st the k dimension is an event dimension.
+            for i, plate in enumerate(d_log_probs.multi_dim_plates()):
+                if plate.name == self.plate_name:
+                    d_log_probs.plates.remove(plate)
+                    # plate[0] x ... x plate[n-1] x |D_yv| x k
+                    d_log_probs._tensor = d_log_probs._tensor.permute(
+                        tuple(range(0, i)) + tuple(range(i + 1, amt_plates + 1)) + (i,)
+                    )
+                    break
 
         sampled_support_indices = support.new_zeros(
             size=support.shape[1:-1] + (self.k,), dtype=torch.long
@@ -214,6 +212,8 @@ class SampleWithoutReplacementMethod(Method):
             self.parent_indexing,
             None,
         )
+        if self.parent_indexing is not None:
+            self.parent_indexing.plates.append(self.last_plate)
         return self.last_plate
 
     def on_plate_already_present(self, plate: storch.Plate):
@@ -241,9 +241,10 @@ class AncestralPlate(storch.Plate):
         self.selected_samples = selected_samples
         self.variable_index = variable_index
         self._in_recursion = False
+        self._override_equality = False
 
     def __eq__(self, other):
-        if self._in_recursion:
+        if self._override_equality:
             return other.name == self.name
         return (
             super().__eq__(other)
@@ -257,6 +258,8 @@ class AncestralPlate(storch.Plate):
         :param plates:
         :return:
         """
+        if self._in_recursion:
+            self._override_equality = True
         for plate in plates:
             if plate.name == self.name:
                 if not isinstance(plate, AncestralPlate):
@@ -296,12 +299,16 @@ class AncestralPlate(storch.Plate):
                 current_plate = current_plate.parent_plate
             assert current_plate == plate
             for parent_plate in reversed(parent_plates):
-                expanded_selected_samples = right_expand_as(
-                    parent_plate.selected_samples, tensor
+                self._in_recursion = True
+                expanded_selected_samples = expand_with_ignore_as(
+                    self.selected_samples, tensor, self.name
                 )
+                self._override_equality = False
                 tensor = storch.gather(
                     tensor, parent_plate.name, expanded_selected_samples
                 )
+                self._in_recursion = False
+                self._override_equality = False
             break
         return tensor
 
@@ -323,3 +330,19 @@ def right_expand_as(tensor, expand_as):
     return tensor[(...,) + (None,) * diff].expand(
         (-1,) * tensor.ndim + expand_as.shape[tensor.ndim :]
     )
+
+
+def expand_with_ignore_as(tensor, expand_as, ignore_dim: Union[str, int]):
+    # diff = expand_as.ndim - tensor.ndim
+    def _expand_with_ignore(tensor, expand_as, dim: int):
+        new_dims = expand_as.ndim - tensor.ndim
+        # after_dims = tensor.ndim - dim
+        return tensor[(...,) + (None,) * new_dims].expand(
+            expand_as.shape[:dim] + (-1,) + expand_as.shape[dim + 1 :]
+        )
+
+    if isinstance(ignore_dim, str):
+        return storch.deterministic(_expand_with_ignore, dim=ignore_dim)(
+            tensor, expand_as
+        )
+    return storch.deterministic(_expand_with_ignore)(tensor, expand_as, ignore_dim)

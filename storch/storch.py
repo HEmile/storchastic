@@ -70,7 +70,7 @@ def _handle_inputs(
 
 
 def gather(input: storch.Tensor, dim: str, index: storch.Tensor):
-    return storch.deterministic(torch.gather, dim=dim)(input, dim=-10000, index=index)
+    return storch.deterministic(torch.gather, dim=dim)(input, index=index)
 
 
 def reduce_plates(
