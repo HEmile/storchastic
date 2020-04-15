@@ -85,6 +85,22 @@ class Plate:
             weighted_tensor = tensor * plate_weighting
             return storch.sum(weighted_tensor, [self.name])
 
+    def on_collecting_args(self, plates: [Plate]) -> bool:
+        """
+        Gets called after a wrapper collected plates from its input arguments.
+        :param plates: All collected plates
+        :return: Return True if this plate should remain in the collected plates.
+        """
+        return True
+
+    def on_unwrap_tensor(self, tensor: storch.Tensor) -> storch.Tensor:
+        """
+        Gets called whenever the given tensor is being unwrapped and unsqueezed for batch use.
+        :param tensor: The input tensor that is being unwrapped
+        :return: The tensor that will be unwrapped and unsqueezed in the future. Can be a modification of the input tensor.
+        """
+        return tensor
+
 
 class Tensor(torch.Tensor):
     def __init__(

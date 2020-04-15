@@ -81,7 +81,7 @@ class Method(ABC, torch.nn.Module):
         if tensor.shape[0] == 1:
             tensor = tensor.squeeze(0)
 
-        plate = self._create_plate(tensor, plate_size)
+        plate = self._create_plate(tensor, plates, plate_size)
         plates.insert(0, plate)
 
         s_tensor = StochasticTensor(
@@ -150,7 +150,9 @@ class Method(ABC, torch.nn.Module):
             return new_s_tensor
         return s_tensor
 
-    def _create_plate(self, sampled_tensor: torch.Tensor, plate_size: int) -> Plate:
+    def _create_plate(
+        self, sampled_tensor: torch.Tensor, other_plates: [Plate], plate_size: int
+    ) -> Plate:
         return Plate(self.plate_name, plate_size)
 
     def _estimator(

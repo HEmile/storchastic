@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Union, Any, Tuple, List, Optional
+from typing import Union, Any, Tuple, List, Optional, Dict
 
 import storch
 import torch
@@ -57,20 +57,25 @@ def _unsqueeze_and_unwrap(
     a: Any, multi_dim_plates: [storch.Plate], align_tensors: bool, event_dims: int
 ):
     if isinstance(a, storch.Tensor):
-        tensor = a._tensor
         if not align_tensors:
-            return tensor
+            return a._tensor
+
+        for plate in multi_dim_plates:
+            # Used in storch.method.sampling.AncestralPlate
+            a = plate.on_unwrap_tensor(a)
+
+        tensor = a._tensor
         # Automatically **RIGHT** broadcast. Ensure each tensor has an equal amount of event dims by inserting dimensions to the right
         # TODO: What do we think about this design?
         if a.event_dims < event_dims:
             tensor = tensor[(...,) + (None,) * (event_dims - a.event_dims)]
-
         # It can be possible that the ordering of the plates does not align with the ordering of the inputs.
         # This part corrects this.
         amt_recognized = 0
         links: [storch.Plate] = list(a.multi_dim_plates())
+
         for i, plate in enumerate(multi_dim_plates):
-            if plate in a.plates:
+            if plate in links:
                 if plate != links[amt_recognized]:
                     # The plate is also in the tensor, but not in the ordering expected. So switch that ordering
                     j = links.index(plate)
@@ -102,33 +107,76 @@ def _unsqueeze_and_unwrap(
         return a
 
 
-def _handle_args(unwrap=True, align_tensors=True, *args, **kwargs):
+def _prepare_args(
+    fn_args,
+    fn_kwargs,
+    unwrap=True,
+    align_tensors=True,
+    dim: Optional[str] = None,
+    dims: Optional[Union[str, List[str]]] = None,
+) -> (List, Dict, [storch.Tensor], [storch.Plate]):
+    """
+    Prepares the input arguments of the wrapped function:
+    - Unwrap the input arguments from storch.Tensors to normal torch.Tensors so they can be used in any torch function
+    - Align plate dimensions for automatic broadcasting
+    - Add (singleton) plate dimensions for plates that are not present
+    - Right-broadcast event dimensions for automatic broadcasting
+    - Superclasses of Plate specific input handling
+    :param fn_args: List of non-keyword arguments to the wrapped function
+    :param fn_kwargs: Dictionary of keyword arguments to the wrapped function
+    :param unwrap: Whether to unwrap the arguments to their torch.Tensor counterpart (default: True)
+    :param align_tensors: Whether to automatically align the input arguments (default: True)
+    :param dim: Replaces the dim input in fn_kwargs by the plate dimension corresponding to the given string (optional)
+    :param dims: Replaces the dims input in fn_kwargs by the plate dimensions corresponding to the given strings (optional)
+    :return: Handled non-keyword arguments, handled keyword arguments, list of parents, list of plates
+    """
     parents: [storch.Tensor] = []
     plates: [storch.Plate] = []
     max_event_dim = max(
         # Collect parent tensors and plates
-        _collect_parents_and_plates(args, parents, plates),
-        _collect_parents_and_plates(kwargs, parents, plates),
+        _collect_parents_and_plates(fn_args, parents, plates),
+        _collect_parents_and_plates(fn_kwargs, parents, plates),
     )
+
+    # Allow plates to filter themselves from being collected. This is used in storch.method.sampling.AncestralPlate
+    plates = list(filter(lambda p: p.on_collecting_args(plates), plates))
+
     # Get the list of plates with size larger than 1 for the unsqueezing of tensors
     multi_dim_plates = []
     for plate in plates:
         if plate.n > 1:
             multi_dim_plates.append(plate)
+
+    if dim:
+        for i, plate in enumerate(multi_dim_plates):
+            if dim == plate.name:
+                i_dim = i
+                break
+        fn_kwargs["dim"] = i_dim
+    if dims:
+        dimz = []
+        for dim in dims:
+            for i, plate in enumerate(multi_dim_plates):
+                if dim == plate.name:
+                    dimz.append(i_dim)
+                    break
+            raise ValueError("Missing plate dimension" + dim)
+        fn_kwargs["dims"] = dimz
+
     if unwrap:
         # Unsqueeze and align batched dimensions so that batching works easily.
         unsqueezed_args = []
-        for t in args:
+        for t in fn_args:
             unsqueezed_args.append(
                 _unsqueeze_and_unwrap(t, multi_dim_plates, align_tensors, max_event_dim)
             )
         unsqueezed_kwargs = {}
-        for k, v in kwargs.items():
+        for k, v in fn_kwargs.items():
             unsqueezed_kwargs[k] = _unsqueeze_and_unwrap(
                 v, multi_dim_plates, align_tensors, max_event_dim
             )
         return unsqueezed_args, unsqueezed_kwargs, parents, plates
-    return args, kwargs, parents, plates
+    return fn_args, fn_kwargs, parents, plates
 
 
 def _process_deterministic(
@@ -152,19 +200,15 @@ def _process_deterministic(
 
 
 def _deterministic(
-    fn,
-    *,
-    unwrap: bool = True,
-    align_tensors=True,
-    reduce_plates: Optional[Union[str, List[str]]] = None
+    fn, reduce_plates: Optional[Union[str, List[str]]] = None, **wrapper_kwargs
 ):
     @wraps(fn)
     def wrapper(*args, **kwargs):
         if storch.wrappers._context_stochastic:
-            # TODO check if we can re-add this
             raise NotImplementedError(
                 "It is currently not allowed to open a deterministic context in a stochastic context"
             )
+            # TODO check if we can re-add this
             # if storch.wrappers._context_deterministic > 0:
             #     if is_cost:
             #         raise RuntimeError("Cannot call storch.cost from within a deterministic context.")
@@ -176,8 +220,8 @@ def _deterministic(
             # # We are already in a deterministic context, no need to wrap or unwrap as only the outer dependencies matter
             # return fn(*args, **kwargs)
 
-        new_args, new_kwargs, parents, plates = _handle_args(
-            unwrap, align_tensors, *args, **kwargs
+        new_args, new_kwargs, parents, plates = _prepare_args(
+            args, kwargs, **wrapper_kwargs
         )
 
         if not parents:
@@ -215,7 +259,7 @@ def _deterministic(
     return wrapper
 
 
-def deterministic(fn=None, *, unwrap=True, align_tensors=True):
+def deterministic(fn=None, **kwargs):
     """
     Wraps the input function around a deterministic storch wrapper.
     This wrapper unwraps :class:`~storch.Tensor` objects to :class:`~torch.Tensor` objects, aligning the tensors
@@ -225,8 +269,8 @@ def deterministic(fn=None, *, unwrap=True, align_tensors=True):
     :return: The wrapped function `fn`.
     """
     if fn:
-        return _deterministic(fn, unwrap=unwrap, align_tensors=align_tensors)
-    return lambda _f: _deterministic(_f, unwrap=unwrap, align_tensors=align_tensors)
+        return _deterministic(fn, **kwargs)
+    return lambda _f: _deterministic(_f, **kwargs)
 
 
 def reduce(fn, plates: Union[str, List[str]]):
@@ -235,7 +279,6 @@ def reduce(fn, plates: Union[str, List[str]]):
         This wrapper unwraps :class:`~storch.Tensor` objects to :class:`~torch.Tensor` objects, aligning the tensors
         according to the plates, then runs `fn` on the unwrapped Tensors. It will reduce the plates given by `plates`.
         :param fn: Function to wrap.
-        :param unwrap: Set to False to prevent unwrapping :classs:`~storch.Tensor` objects.
         :return: The wrapped function `fn`.
         """
     if storch._debug:
@@ -295,7 +338,7 @@ def stochastic(fn):
             )
 
         # Save the parents
-        args, kwargs, parents, plates = _handle_args(*args, **kwargs)
+        args, kwargs, parents, plates = _prepare_args(*args, **kwargs)
 
         storch.wrappers._plate_links = plates
         storch.wrappers._stochastic_parents = parents
