@@ -234,7 +234,6 @@ def _deterministic(
         new_args, new_kwargs, parents, plates = _prepare_args(
             args, kwargs, **wrapper_kwargs
         )
-
         if not parents:
             return fn(*args, **kwargs)
         args = new_args

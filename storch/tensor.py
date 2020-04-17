@@ -484,55 +484,46 @@ for m in dir(torch.Tensor):
 # as this is extremely messy code.
 original_get = torch.Tensor.__getitem__
 
-
-def wrap_get(a, b):
-    try:
-        return storch.deterministic(original_get, l_broadcast=False)(a, b)
-    except IndexError:
-        if storch._debug:
-            print(
-                "Got indexing error at __getitem__. Trying to resolve this using the unsqueeze hack."
-            )
-
-        @storch.deterministic(l_broadcast=False)
-        def _weird_wrap(a, b):
-            if isinstance(b, torch.Tensor):
-                b = b.unsqueeze(0)
-            return original_get(a, b)
-
-        torch.Tensor.__getitem__ = original_get
-        o = _weird_wrap(a, b)
-        torch.Tensor.__getitem__ = wrap_get
-        return o
+level = 0
 
 
-torch.Tensor.__getitem__ = wrap_get
+class WrapGet:
+    def __init__(self, original_fn):
+        self.original_fn = storch.deterministic(original_fn)
 
-original_set = torch.Tensor.__setitem__
+    def __get__(self, *args):
+        # The __getitem__ method is a slotwrapper object that first calls the __get__ to create a method_wrapper.
+        # This class is a hacky wrapper around those wrappers (pff) to allow compatibility with storch.
+        self.is_arg_none = args[0] is None
+        self.arg0 = args[0]
+        return lambda *args: self.__call__(*args)
+
+    def __call__(self, *args):
+        # For some reason, when monkey patching __getitem__ and __setitem__, incorrect recursive calls happen that
+        # cause wrong outputs. This wrapper seems to block some of these recursive calls, but this requires more
+        # investigation as to why it works.
+        global level
+        level += 1
+        # TODO: This seems to fix incorrect outcomes from wrapping. I still don't know why or how, though.
+        try:
+            if level == 1 and not self.is_arg_none:
+                out = self.original_fn(self.arg0, *args)
+            else:
+                out = self.original_fn(*args)
+        except TypeError as e:
+            if storch._debug:
+                print(level, e)
+            if level == 1:
+                out = self.original_fn(self.arg0, *args)
+        finally:
+            level -= 1
+
+        return out
 
 
-def wrap_set(a, b, v):
-    try:
-        return storch.deterministic(original_set, l_broadcast=False)(a, b, v)
-    except IndexError:
-        if storch._debug:
-            print(
-                "Got indexing error at __setitem__. Trying to resolve this using the unsqueeze hack."
-            )
+torch.Tensor.__getitem__ = WrapGet(torch.Tensor.__getitem__)
 
-        @storch.deterministic(l_broadcast=False)
-        def _weird_wrap(a, b, v):
-            if isinstance(b, torch.Tensor):
-                b = b.unsqueeze(0)
-            return original_set(a, b, v)
-
-        torch.Tensor.__setitem__ = original_set
-        o = _weird_wrap(a, b, v)
-        torch.Tensor.__setitem__ = wrap_set
-        return o
-
-
-torch.Tensor.__setitem__ = wrap_set
+torch.Tensor.__setitem__ = WrapGet(torch.Tensor.__setitem__)
 
 
 class CostTensor(Tensor):

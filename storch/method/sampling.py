@@ -55,47 +55,63 @@ class SampleWithoutReplacementMethod(Method):
         :param distribution: The distribution to sample from
         :return:
         """
-        amt_plates = len(plates)
+
+        # plates: refers to all plates except this ancestral plate, of which there are amt_plates
+        # events: refers to the conditionally independent dimensions of the distribution (the distributions batch shape minus the plates)
+        # k: refers to self.k
+        # k?: refers to an optional plate dimension of this ancestral plate
+        # |D_yv|: refers to the size of the domain
+
+        amt_plates = len(plates) if not self.last_plate else len(plates) - 1
         if not distribution.has_enumerate_support:
             raise ValueError(
                 "Can only perform stochastic beam search for distributions with enumerable support."
             )
 
+        # |D_yv| x plate[0] x ... x k? x ... x plate[n-1] x events x |D_yv|
         support: torch.Tensor = distribution.enumerate_support(expand=True)
 
+        # Shape containing sizes
         sizes = support.shape[
             amt_plates + 1 : len(support.shape) - len(distribution.event_shape)
         ]
+        # Shape containing |D_yv|
+        domain = support.shape[len(support.shape) - len(distribution.event_shape) :]
 
         ranges = []
         for size in sizes:
             ranges.append(list(range(size)))
 
         with storch.ignore_wrapping():
+            # |D_yv| x (amt_plates + |k?| + |event_dims|) * (1,) x |D_yv|
             support_non_expanded: torch.Tensor = distribution.enumerate_support(
                 expand=False
             )
-            # |D_yv| x plate[0] x ... k? ... x plate[n-1]
+            # |D_yv| x plate[0] x ... k? ... x plate[n-1] x events
             d_log_probs = distribution.log_prob(support_non_expanded)
-            # plate[0] x ... k? ... x plate[n-1] x |D_yv|
+            # plate[0] x ... k? ... x plate[n-1] x events x |D_yv|
             d_log_probs = storch.Tensor(
-                d_log_probs.permute((tuple(range(1, amt_plates + 1)) + (0,))),
+                d_log_probs.permute((tuple(range(1, len(d_log_probs.shape))) + (0,))),
                 [],
                 plates,
             )
         if self.last_plate:
             # Gather the correct samples
             d_log_probs = self.last_plate.on_unwrap_tensor(d_log_probs)
-            # Permute the dimensions of d_log_probs st the k dimension is an event dimension.
+            # Permute the dimensions of d_log_probs st the k dimension is the rightmost event dimension.
             for i, plate in enumerate(d_log_probs.multi_dim_plates()):
                 if plate.name == self.plate_name:
+                    # k is present in the plates
                     d_log_probs.plates.remove(plate)
-                    # plate[0] x ... x plate[n-1] x |D_yv| x k
+                    # plates x events x |D_yv| x k
                     d_log_probs._tensor = d_log_probs._tensor.permute(
-                        tuple(range(0, i)) + tuple(range(i + 1, amt_plates + 1)) + (i,)
+                        tuple(range(0, i))
+                        + tuple(range(i + 1, len(d_log_probs.shape)))
+                        + (i,)
                     )
                     break
 
+        # plates x events x k
         sampled_support_indices = support.new_zeros(
             size=support.shape[1:-1] + (self.k,), dtype=torch.long
         )
@@ -112,31 +128,36 @@ class SampleWithoutReplacementMethod(Method):
             )
 
         # Sample independent tensors in sequence
-        # Iterate over the different (conditionally) independent samples being taken
+        # Iterate over the different (conditionally) independent samples being taken (the events)
         for indices in itertools.product(*ranges):
-            # Log probabilities of the different options for this sample step
-            yv_log_probs = d_log_probs[(slice(None),) * (amt_plates + 1) + indices]
+            # Log probabilities of the different options for this sample step (event)
+            # plates x |D_yv|
+            yv_log_probs = d_log_probs[(...,) + indices + (slice(None),)]
             if self.joint_log_probs is None:
                 self.joint_log_probs = yv_log_probs
                 # First condition on max being 0:
                 self.perturbed_log_probs = 0.0
                 first_sample = True
             else:
-                # Returns |D_yv| x k x ...
+                # self.joint_log_probs: plates x k
+                # plates x k x |D_yv|
                 self.joint_log_probs = self.joint_log_probs.unsqueeze(
-                    0
-                ) + yv_log_probs.unsqueeze(1)
+                    -1
+                ) + yv_log_probs.unsqueeze(-2)
                 first_sample = False
 
-            # Sample |D_yv| (x k) x ... Gumbel variables
+            # Sample plates (x k) x |D_yv| Gumbel variables
             gumbel_d = Gumbel(loc=self.joint_log_probs, scale=1.0)
             G_yv = gumbel_d.rsample()
 
             # Condition the Gumbel samples on the maximum of previous samples
-            Z = G_yv.max(0)[0]
+            # plates x k
+            Z = G_yv.max(dim=-1)[0]
             T = self.perturbed_log_probs
             vi = T - G_yv + log1mexp(G_yv - Z)
+            print(vi)
             cond_G_yv = T - vi.relu() - torch.nn.Softplus()(-vi.abs())
+            print(cond_G_yv)
 
             if first_sample:
                 # No parent has been sampled yet
@@ -318,10 +339,16 @@ def log1mexp(a: torch.Tensor) -> torch.Tensor:
     Numerically stable implementation of log(1-exp(a))"""
     r = torch.zeros_like(a)
     c = -0.693
-    print(a > c)
-    print(a._tensor > c)
+    assert (a._tensor <= 0).all()
+    # print(a > c)
+    # print(a[a > c])
+    # print((-a[a > c].expm1()).log())
+    # print((-a[a <= c].exp()).log1p())
+    _b = -a[a > c].expm1()
     r[a > c] = (-a[a > c].expm1()).log()
+    # print("from here")
     r[a <= c] = (-a[a <= c].exp()).log1p()
+    # print(r)
     return r
 
 
