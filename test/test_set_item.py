@@ -54,6 +54,11 @@ a[b2] = c2
 assert (a == torch.tensor([0.1, 0.2, 0.6, 0.4])).all()
 
 a = torch.tensor([0.1, 0.2, 0.3, 0.4])
+torch.Tensor.__setitem__(a, b2, c2)
+# a[b2] = c2
+assert (a == torch.tensor([0.1, 0.2, 0.6, 0.4])).all()
+
+a = torch.tensor([0.1, 0.2, 0.3, 0.4])
 a[b1] = c1
 assert (a == torch.tensor([0.6, 0.6, 0.3, 0.6])).all()
 
@@ -84,10 +89,9 @@ assert (a == torch.tensor([[0.1, 0.2, 0.3], [0.4, 0.5, 0.7]])).all()
 
 a = torch.tensor([[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]])
 b = torch.tensor([[True, False, True], [False, True, False]])
-print(a[b])
-assert a[b] == torch.tensor([0.1, 0.3, 0.5])
-a[1, 2] = 0.7
-assert (a == torch.tensor([[0.1, 0.2, 0.3], [0.4, 0.5, 0.7]])).all()
+assert (a[b] == torch.tensor([0.1, 0.3, 0.5])).all()
+a[b] = 0.7
+assert (a == torch.tensor([[0.7, 0.2, 0.7], [0.4, 0.7, 0.6]])).all()
 # print(a[:])
 # print("-------------------")
 # print(a[b])

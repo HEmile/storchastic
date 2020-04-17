@@ -72,7 +72,12 @@ def _unsqueeze_and_unwrap(
         tensor = a._tensor
         # Automatically **RIGHT** broadcast. Ensure each tensor has an equal amount of event dims by inserting dimensions to the right
         # TODO: What do we think about this design?
-        if l_broadcast and a.event_dims < event_dims:
+        # TODO: The storch.tensor._getitem_level == 0 check prevents right-broadcasting for __getitem__ and __setitem__... Seems hacky
+        if (
+            l_broadcast
+            and a.event_dims < event_dims
+            and storch.tensor._getitem_level == 0
+        ):
             tensor = tensor[(...,) + (None,) * (event_dims - a.event_dims)]
         # It can be possible that the ordering of the plates does not align with the ordering of the inputs.
         # This part corrects this.

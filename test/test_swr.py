@@ -4,7 +4,7 @@ import torch
 
 torch.manual_seed(0)
 
-swr_method = storch.SampleWithoutReplacementMethod("z", 2)
+swr_method = storch.SampleWithoutReplacementMethod("z", 8)
 normal_method1 = storch.Reparameterization("n1", 3)
 normal_method2 = storch.Reparameterization("n2", 2)
 

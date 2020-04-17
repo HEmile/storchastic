@@ -198,7 +198,7 @@ class Tensor(torch.Tensor):
         return t + " " + str(self._tensor) + " Batch links: " + str(self.plates)
 
     def __repr__(self):
-        return object.__repr__(self)
+        return self._tensor.__repr__()
 
     @storch.deterministic
     def __eq__(self, other):
@@ -484,7 +484,7 @@ for m in dir(torch.Tensor):
 # as this is extremely messy code.
 original_get = torch.Tensor.__getitem__
 
-level = 0
+_getitem_level = 0
 
 
 class WrapGet:
@@ -502,21 +502,21 @@ class WrapGet:
         # For some reason, when monkey patching __getitem__ and __setitem__, incorrect recursive calls happen that
         # cause wrong outputs. This wrapper seems to block some of these recursive calls, but this requires more
         # investigation as to why it works.
-        global level
-        level += 1
+        global _getitem_level
+        _getitem_level += 1
         # TODO: This seems to fix incorrect outcomes from wrapping. I still don't know why or how, though.
         try:
-            if level == 1 and not self.is_arg_none:
+            if _getitem_level == 1 and not self.is_arg_none:
                 out = self.original_fn(self.arg0, *args)
             else:
                 out = self.original_fn(*args)
         except TypeError as e:
             if storch._debug:
-                print(level, e)
-            if level == 1:
+                print(_getitem_level, e)
+            if _getitem_level == 1:
                 out = self.original_fn(self.arg0, *args)
         finally:
-            level -= 1
+            _getitem_level -= 1
 
         return out
 
