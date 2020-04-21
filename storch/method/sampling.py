@@ -59,11 +59,36 @@ class SampleWithoutReplacementMethod(Method):
         # plates: refers to all plates except this ancestral plate, of which there are amt_plates
         # events: refers to the conditionally independent dimensions of the distribution (the distributions batch shape minus the plates)
         # k: refers to self.k
-        # k?: refers to an optional plate dimension of this ancestral plate
+        # k?: refers to an optional plate dimension of this ancestral plate. It either doesn't exist, or is the sample
+        #  dimension. If it exists, this means this sample is conditionally dependent on earlier samples.
         # |D_yv|: refers to the *size* of the domain
         # event_shape: refers to the *shape* of the domain elements (can be 0, eg Categorical, or equal to |D_yv| for OneHotCategorical)
 
-        amt_plates = len(plates) if not self.last_plate else len(plates) - 1
+        # This code has three parts.
+        # The first prepares all necessary tensors to make sure they can be easily indexed.
+        # This part is quite long as there are many cases.
+        # 1) There have not been any variables sampled so far.
+        # 2) There have been variables sampled, but their results are NOT used to compute the input distribution.
+        #    in other words, the variable to sample is independent of the other sampled variables. However,
+        #    we should still keep track of the other sampled variables to make sure that it still samples without
+        #    replacement properly. In this case, the ancestral plate is not in the plates attribute.
+        #    We also have to make sure that we know in the future what samples are chosen for the _other_ samples.
+        # 3) There have been parents sampled, and this variable is dependent on at least some of them.
+        #    The plates list then contains the ancestral plate. We need to make sure we compute the joint log probs
+        #    for the conditional samples (ie, based on the different sampled variables in the ancestral dimension).
+        # The second part is a loop over all options for the event dimensions. This samples these conditionally
+        # independent samples in sequence. It samples indexes, not events.
+        # The third part after the loop uses the sampled indexes and matches it to the events to be used.
+
+        ancestral_plate_index = -1
+        is_conditional_sample = False
+        for i, plate in enumerate(plates):
+            if plate.name == self.plate_name:
+                ancestral_plate_index = i
+                is_conditional_sample = True
+                break
+
+        amt_plates = len(plates) - (1 if is_conditional_sample else 0)
         if not distribution.has_enumerate_support:
             raise ValueError(
                 "Can only perform stochastic beam search for distributions with enumerable support."
@@ -71,11 +96,20 @@ class SampleWithoutReplacementMethod(Method):
 
         # |D_yv| x plate[0] x ... x k? x ... x plate[n-1] x events x event_shape
         # TODO: This won't work if k is already in the plates. I think I'd have to remove that dimension?
-        support: torch.Tensor = distribution.enumerate_support(expand=True)
+        support = distribution.enumerate_support(expand=True)
+
+        if ancestral_plate_index != -1:
+            # Reduce ancestral dimension in the support. As the dimension is just an expanded version, this should
+            # not change the underlying data.
+            support = support[
+                (..., 0)
+                + (slice(None),) * (len(support.shape) - ancestral_plate_index - 1)
+            ]
+
         # Equal to event_shape
         element_shape = distribution.event_shape
         support_permutation = (
-            tuple(range(1, amt_plates))
+            tuple(range(1, amt_plates + 1))
             + (0,)
             + tuple(range(amt_plates + 1, len(support.shape)))
         )
@@ -97,15 +131,18 @@ class SampleWithoutReplacementMethod(Method):
             )
             # |D_yv| x plate[0] x ... k? ... x plate[n-1] x events
             d_log_probs = distribution.log_prob(support_non_expanded)
+            # Note: Use len(plates) here because it might include k? dimension. amt_plates filter this one.
             # plate[0] x ... k? ... x plate[n-1] x |D_yv| x events
             d_log_probs = storch.Tensor(
                 d_log_probs.permute(
-                    support_permutation[: len(support.shape) - len(element_shape)]
+                    tuple(range(1, len(plates) + 1))
+                    + (0,)
+                    + tuple(range(len(plates) + 1, len(plates) + 1 + len(events)))
                 ),
                 [],
                 plates,
             )
-        if self.last_plate:
+        if is_conditional_sample:
             # Gather the correct samples
             # plate[0] x ... k ... x plate[n-1] x |D_yv| x events
             d_log_probs = self.last_plate.on_unwrap_tensor(d_log_probs)
@@ -114,11 +151,12 @@ class SampleWithoutReplacementMethod(Method):
                 if plate.name == self.plate_name:
                     # k is present in the plates
                     d_log_probs.plates.remove(plate)
-                    # plates x |D_yv| x events x k
+                    # plates x k x |D_yv| x events
                     d_log_probs._tensor = d_log_probs._tensor.permute(
                         tuple(range(0, i))
-                        + tuple(range(i + 1, len(d_log_probs.shape)))
+                        + tuple(range(i + 1, len(plates)))
                         + (i,)
+                        + tuple(range(len(plates), len(d_log_probs.shape)))
                     )
                     break
 
@@ -147,13 +185,20 @@ class SampleWithoutReplacementMethod(Method):
         # Iterate over the different (conditionally) independent samples being taken (the events)
         for indices in itertools.product(*ranges):
             # Log probabilities of the different options for this sample step (event)
-            # plates x |D_yv|
+            # plates x k? x |D_yv|
             yv_log_probs = d_log_probs[(...,) + indices]
             if self.joint_log_probs is None:
+                # We also know that k? is not present, so plates x |D_yv|
                 all_joint_log_probs = yv_log_probs
                 # First condition on max being 0:
                 self.perturbed_log_probs = 0.0
                 first_sample = True
+            elif is_conditional_sample:
+                # TODO: Are the indexes of d_log_probs still going to be correct when different parents are chosen?
+                #  PRETTY SURE THEY AREN'T. Ie, we'd need to do the gathering step in lines 145-160 at every loop
+                # self.joint_log_probs: plates x k
+                # plates x k x |D_yv|
+                all_joint_log_probs = self.joint_log_probs.unsqueeze(-1) + yv_log_probs
             else:
                 # self.joint_log_probs: plates x k
                 # plates x k x |D_yv|
@@ -162,7 +207,7 @@ class SampleWithoutReplacementMethod(Method):
                 ) + yv_log_probs.unsqueeze(-2)
                 first_sample = False
 
-            # Sample plates (x k) x |D_yv| Gumbel variables
+            # Sample plates x k? x |D_yv| Gumbel variables
             gumbel_d = Gumbel(loc=all_joint_log_probs, scale=1.0)
             G_yv = gumbel_d.rsample()
 

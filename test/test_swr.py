@@ -4,7 +4,7 @@ import torch
 
 torch.manual_seed(0)
 
-swr_method = storch.SampleWithoutReplacementMethod("z", 8)
+swr_method = storch.SampleWithoutReplacementMethod("z", 5)
 normal_method1 = storch.Reparameterization("n1", 3)
 normal_method2 = storch.Reparameterization("n2", 2)
 
@@ -14,7 +14,7 @@ h_entropy = torch.tensor([-0.1, 0.1, 0.05, -0.05], requires_grad=True)
 n_params = torch.tensor(0.0, requires_grad=True)
 
 # 7 independent samples from l_entropy
-d1 = OneHotCategorical(logits=l_entropy.repeat((7, 1)))
+d1 = OneHotCategorical(logits=l_entropy.repeat((2, 1)))
 d2 = OneHotCategorical(logits=h_entropy)
 
 dn1 = Normal(n_params, 1.0)
