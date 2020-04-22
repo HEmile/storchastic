@@ -101,9 +101,10 @@ class SampleWithoutReplacementMethod(Method):
         if ancestral_plate_index != -1:
             # Reduce ancestral dimension in the support. As the dimension is just an expanded version, this should
             # not change the underlying data.
+            # |D_yv| x plates x events x event_shape
             support = support[
                 (..., 0)
-                + (slice(None),) * (len(support.shape) - ancestral_plate_index - 1)
+                + (slice(None),) * (len(support.shape) - ancestral_plate_index - 2)
             ]
 
         # Equal to event_shape
@@ -171,11 +172,13 @@ class SampleWithoutReplacementMethod(Method):
         self.parent_indexing = None
         if self.joint_log_probs is not None:
             # self.joint_log_probs: plates x amt_samples
-            # TODO: Is it at shape[-1]?
             amt_samples = self.joint_log_probs.shape[-1]
+            # TODO: Is it at shape[-1]?
+            # plates x k
             self.parent_indexing = support.new_zeros(
                 size=self.joint_log_probs.shape[:-1] + (self.k,), dtype=torch.long
             )
+            # TODO: This should be after the plates
             # probably can go wrong if plates are missing.
             self.parent_indexing[:amt_samples] = right_expand_as(
                 torch.arange(amt_samples), self.joint_log_probs
@@ -187,6 +190,7 @@ class SampleWithoutReplacementMethod(Method):
             # Log probabilities of the different options for this sample step (event)
             # plates x k? x |D_yv|
             yv_log_probs = d_log_probs[(...,) + indices]
+            first_sample = False
             if self.joint_log_probs is None:
                 # We also know that k? is not present, so plates x |D_yv|
                 all_joint_log_probs = yv_log_probs
@@ -195,7 +199,7 @@ class SampleWithoutReplacementMethod(Method):
                 first_sample = True
             elif is_conditional_sample:
                 # TODO: Are the indexes of d_log_probs still going to be correct when different parents are chosen?
-                #  PRETTY SURE THEY AREN'T. Ie, we'd need to do the gathering step in lines 145-160 at every loop
+                #  PRETTY SURE THEY AREN'T. Ie, we'd need to do the gathering step in lines 145-160 at every iteration of loop
                 # self.joint_log_probs: plates x k
                 # plates x k x |D_yv|
                 all_joint_log_probs = self.joint_log_probs.unsqueeze(-1) + yv_log_probs
@@ -205,7 +209,6 @@ class SampleWithoutReplacementMethod(Method):
                 all_joint_log_probs = self.joint_log_probs.unsqueeze(
                     -1
                 ) + yv_log_probs.unsqueeze(-2)
-                first_sample = False
 
             # Sample plates x k? x |D_yv| Gumbel variables
             gumbel_d = Gumbel(loc=all_joint_log_probs, scale=1.0)
@@ -250,25 +253,29 @@ class SampleWithoutReplacementMethod(Method):
                 )
                 # Gather corresponding joint log probabilities. First reshape like previous to plates x (k * |D_yv|).
                 self.joint_log_probs = all_joint_log_probs.reshape(
-                    cond_G_yv.shape[:-2] + (-1,)
+                    cond_G_yv.shape
                 ).gather(dim=-1, index=arg_top)
 
                 # |D_yv|
                 size_domain = yv_log_probs.shape[-1]
 
                 # Keep track of what parents were sampled for the arg top
-                chosen_parents = right_expand_as(
-                    arg_top / size_domain, sampled_support_indices,
-                )
+                chosen_parents = arg_top / size_domain
                 sampled_support_indices = sampled_support_indices.gather(
-                    dim=support_k_index, index=chosen_parents,
+                    dim=support_k_index,
+                    index=right_expand_as(chosen_parents, sampled_support_indices),
                 )
                 if self.parent_indexing is not None:
+                    if self.parent_indexing.ndim < chosen_parents.ndim:
+                        # Note: The deterministic wrapper automatically inserts singleton
+                        self.parent_indexing = self.parent_indexing.expand_as(
+                            chosen_parents
+                        )
                     self.parent_indexing = self.parent_indexing.gather(
                         dim=-1, index=chosen_parents
                     )
-                chosen_samples = arg_top.remainder(size_domain)
                 # Index for the selected samples. Uses slice(amt_samples) for the first index in case k > |D_yv|
+                chosen_samples = arg_top.remainder(size_domain)
                 indexing = (
                     (slice(None),) * amt_plates + (slice(0, amt_samples),) + indices
                 )
@@ -324,7 +331,9 @@ class AncestralPlate(storch.Plate):
         weight: Optional[storch.Tensor] = None,
     ):
         super().__init__(name, n, weight)
-        assert (not parent_plate and variable_index == 1) or parent_plate.n <= self.n
+        assert (not parent_plate and variable_index == 1) or (
+            parent_plate.n <= self.n and parent_plate.variable_index < variable_index
+        )
         self.parent_plate = parent_plate
         self.selected_samples = selected_samples
         self.variable_index = variable_index
@@ -401,18 +410,19 @@ class AncestralPlate(storch.Plate):
         return tensor
 
 
+@storch.deterministic
 def log1mexp(a: torch.Tensor) -> torch.Tensor:
     """See appendix A of http://jmlr.org/papers/v21/19-985.html.
     Numerically stable implementation of log(1-exp(a))"""
     r = torch.zeros_like(a)
     c = -0.693
-    assert (a._tensor <= 0).all()
-    _b = -a[a > c].expm1()
+    assert (a <= 0).all()
     r[a > c] = (-a[a > c].expm1()).log()
     r[a <= c] = (-a[a <= c].exp()).log1p()
     return r
 
 
+@storch.deterministic(l_broadcast=False)
 def right_expand_as(tensor, expand_as):
     diff = expand_as.ndim - tensor.ndim
     return tensor[(...,) + (None,) * diff].expand(
