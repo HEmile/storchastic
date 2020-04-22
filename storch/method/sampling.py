@@ -31,38 +31,76 @@ class SampleWithoutReplacementMethod(Method):
         self.last_plate = None
 
     def _sample_tensor(
-        self, distr: Distribution, parents: [storch.Tensor], plates: [storch.Plate]
-    ) -> (torch.Tensor, int):
+        self,
+        distr: Distribution,
+        parents: [storch.Tensor],
+        plates: [storch.Plate],
+        requires_grad: bool,
+    ) -> (torch.Tensor, storch.Plate):
         # Perform stochastic beam search given the log-probs and perturbed log probs so far.
         # Samples k values from this distribution so that all total configurations are unique.
-        # TODO: We have to keep track what samples are taken at each step for the backward pass.
-        # Why? We need to think about what samples are discarded at some point because they are pruned away.
-        # In the estimator they will still appear! So we'll have to think about that. They don't deserve a gradient
-        # as they are only partial configurations and thus we don't know their loss.
+
+        # Sample using stochastic beam search
+        # plates? x k x events x
         samples = self.stochastic_beam_search(distr, plates)
-        print(samples)
+
+        k_index = 0
+        if isinstance(samples, storch.Tensor):
+            k_index = len(samples.plates)
+            plates = samples.plates
+            samples = samples._tensor
+
+        plate_size = samples.shape[k_index]
+
+        # Remove the ancestral plate, if it already happens to be in
+        to_remove = None
+        for plate in plates:
+            if plate.name == self.plate_name:
+                to_remove = plate
+                break
+        if to_remove:
+            plates.remove(to_remove)
+
+        # Create the newly updated plate
+        self.last_plate = AncestralPlate(
+            self.plate_name,
+            plate_size,
+            self.variable_index,
+            self.last_plate,
+            self.parent_indexing,
+            None,
+        )
+        plates.append(self.last_plate)
+
+        if self.parent_indexing is not None:
+            self.parent_indexing.plates.append(self.last_plate)
+
+        # Construct the stochastic tensor
+        s_tensor = storch.StochasticTensor(
+            samples,
+            parents,
+            plates,
+            self.plate_name,
+            plate_size,
+            self,
+            distr,
+            requires_grad,
+        )
+        # Increase variable index
         self.variable_index += 1
-        return samples
+        return s_tensor, self.last_plate
 
     def stochastic_beam_search(
-        self, distribution: Distribution, plates: [storch.Plate],
+        self, distribution: Distribution, orig_distr_plates: [storch.Plate],
     ) -> torch.Tensor:
         """
-        Sample k events from the distribution without replacement.
-
         Implements Ancestral Gumbel-Top-k sampling with m=k, known as Stochastic Beam Search: http://jmlr.org/papers/v21/19-985.html.
-        This sample from the distribution k items sequentially over the independent dimensions without replacement
+        Sample k events from the distribution so that the total generated sample throughout all sample steps
+        is a sample without replacement. This method supports sampling without replacement on  arbitrary stochastic
+        computation graphs.
         :param distribution: The distribution to sample from
         :return:
         """
-
-        # plates: refers to all plates except this ancestral plate, of which there are amt_plates
-        # events: refers to the conditionally independent dimensions of the distribution (the distributions batch shape minus the plates)
-        # k: refers to self.k
-        # k?: refers to an optional plate dimension of this ancestral plate. It either doesn't exist, or is the sample
-        #  dimension. If it exists, this means this sample is conditionally dependent on earlier samples.
-        # |D_yv|: refers to the *size* of the domain
-        # event_shape: refers to the *shape* of the domain elements (can be 0, eg Categorical, or equal to |D_yv| for OneHotCategorical)
 
         # This code has three parts.
         # The first prepares all necessary tensors to make sure they can be easily indexed.
@@ -80,45 +118,94 @@ class SampleWithoutReplacementMethod(Method):
         # independent samples in sequence. It samples indexes, not events.
         # The third part after the loop uses the sampled indexes and matches it to the events to be used.
 
-        ancestral_plate_index = -1
+        # LEGEND FOR SHAPE COMMENTS
+        # =========================
+        # To make this code generalize to every bayesian network, complicated shape management is necessary.
+        # The following are references to the shapes that are used within the method
+        #
+        # distr_plates: refers to the plates on the parameters of the distribution. Does *not* include
+        # the k? ancestral plate (possibly empty)
+        # orig_distr_plates: refers to the plates on the parameters of the distribution, and *can* include
+        # the k? ancestral plate (possibly empty)
+        # prev_plates: refers to the plates of the previous sampled variable in this swr sample (possibly empty)
+        # plates: refers to all plates except this ancestral plate, of which there are amt_plates.
+        # It is composed of distr_plate x (ancstr_plates - distr_plates)
+        # events: refers to the conditionally independent dimensions of the distribution (the distributions batch shape minus the plates)
+        # k: refers to self.k
+        # k?: refers to an optional plate dimension of this ancestral plate. It either doesn't exist, or is the sample
+        # dimension. If it exists, this means this sample is conditionally dependent on ancestors.
+        # |D_yv|: refers to the *size* of the domain
+        # event_shape: refers to the *shape* of the domain elements (can be 0, eg Categorical, or equal to |D_yv| for OneHotCategorical)
+
+        ancestral_distrplate_index = -1
         is_conditional_sample = False
-        for i, plate in enumerate(plates):
+        distr_plates = orig_distr_plates
+        for i, plate in enumerate(orig_distr_plates):
             if plate.name == self.plate_name:
-                ancestral_plate_index = i
+                ancestral_distrplate_index = i
                 is_conditional_sample = True
+                distr_plates = orig_distr_plates.copy()
+                distr_plates.remove(plate)
                 break
 
-        amt_plates = len(plates) - (1 if is_conditional_sample else 0)
+        # TODO: This doesn't properly combine two ancestral plates with the same name but different variable index
+        #  (they should merge).
+        all_plates = distr_plates.copy()
+        prev_plate_shape = ()
+        if isinstance(self.joint_log_probs, storch.Tensor):
+            # Previous variables have been sampled. add the prev_plates to all_plates
+            for plate in self.joint_log_probs.plates:
+                if plate not in distr_plates:
+                    all_plates.append(plate)
+                    prev_plate_shape = prev_plate_shape + (plate.n,)
+
+        amt_plates = len(all_plates)
+        amt_distr_plates = len(distr_plates)
+        amt_orig_distr_plates = len(orig_distr_plates)
         if not distribution.has_enumerate_support:
             raise ValueError(
                 "Can only perform stochastic beam search for distributions with enumerable support."
             )
 
-        # |D_yv| x plate[0] x ... x k? x ... x plate[n-1] x events x event_shape
-        # TODO: This won't work if k is already in the plates. I think I'd have to remove that dimension?
+        # |D_yv| x distr_plate[0] x ... x k? x ... x distr_plate[n-1] x events x event_shape
         support = distribution.enumerate_support(expand=True)
 
-        if ancestral_plate_index != -1:
+        if ancestral_distrplate_index != -1:
             # Reduce ancestral dimension in the support. As the dimension is just an expanded version, this should
             # not change the underlying data.
-            # |D_yv| x plates x events x event_shape
+            # |D_yv| x distr_plates x events x event_shape
             support = support[
                 (..., 0)
-                + (slice(None),) * (len(support.shape) - ancestral_plate_index - 2)
+                + (slice(None),) * (len(support.shape) - ancestral_distrplate_index - 2)
             ]
 
         # Equal to event_shape
         element_shape = distribution.event_shape
         support_permutation = (
-            tuple(range(1, amt_plates + 1))
+            tuple(range(1, amt_distr_plates + 1))
             + (0,)
-            + tuple(range(amt_plates + 1, len(support.shape)))
+            + tuple(range(amt_distr_plates + 1, len(support.shape)))
         )
-        # plate[0] x ... x k? x ... x plate[n-1] x |D_yv| x events x event_shape
+        # distr_plates x |D_yv| x events x event_shape
         support = support.permute(support_permutation)
+
+        if amt_plates != amt_distr_plates:
+            # If previous samples had a plate that are not in the distribution plates, add these to the support.
+            support = support[
+                (slice(None),) * amt_distr_plates
+                + (None,) * (amt_plates - amt_distr_plates)
+            ]
+            # plates x |D_yv| x events x event_shape
+            support = support.expand(
+                (-1,) * amt_distr_plates
+                + prev_plate_shape
+                + (-1,) * (len(support.shape) - amt_distr_plates - 1)
+            )
+        support = storch.Tensor(support, [], all_plates)
+
         support_k_index = amt_plates
 
-        # Shape for the different conditional independent dimensions
+        # Equal to events: Shape for the different conditional independent dimensions
         events = support.shape[amt_plates + 1 : -len(element_shape)]
 
         ranges = []
@@ -126,73 +213,92 @@ class SampleWithoutReplacementMethod(Method):
             ranges.append(list(range(size)))
 
         with storch.ignore_wrapping():
-            # |D_yv| x (amt_plates + |k?| + |event_dims|) * (1,) x |D_yv|
+            # |D_yv| x (|distr_plates| + |k?| + |event_dims|) * (1,) x |D_yv|
             support_non_expanded: torch.Tensor = distribution.enumerate_support(
                 expand=False
             )
-            # |D_yv| x plate[0] x ... k? ... x plate[n-1] x events
+            # Compute the log-probability of the different events
+            # |D_yv| x distr_plate[0] x ... k? ... x distr_plate[n-1] x events
             d_log_probs = distribution.log_prob(support_non_expanded)
-            # Note: Use len(plates) here because it might include k? dimension. amt_plates filter this one.
-            # plate[0] x ... k? ... x plate[n-1] x |D_yv| x events
+
+            # Note: Use amt_orig_distr_plates here because it might include k? dimension. amt_distr_plates filters this one.
+            # distr_plate[0] x ... k? ... x distr_plate[n-1] x |D_yv| x events
             d_log_probs = storch.Tensor(
                 d_log_probs.permute(
-                    tuple(range(1, len(plates) + 1))
+                    tuple(range(1, amt_orig_distr_plates + 1))
                     + (0,)
-                    + tuple(range(len(plates) + 1, len(plates) + 1 + len(events)))
+                    + tuple(
+                        range(
+                            amt_orig_distr_plates + 1,
+                            amt_orig_distr_plates + 1 + len(events),
+                        )
+                    )
                 ),
                 [],
-                plates,
+                orig_distr_plates,
             )
         if is_conditional_sample:
             # Gather the correct samples
-            # plate[0] x ... k ... x plate[n-1] x |D_yv| x events
+            # distr_plate[0] x ... k ... x distr_plate[n-1] x |D_yv| x events
+            # TODO: Move this down below to the other scary TODO
             d_log_probs = self.last_plate.on_unwrap_tensor(d_log_probs)
-            # Permute the dimensions of d_log_probs st the k dimension is the rightmost event dimension.
+            # Permute the dimensions of d_log_probs st the k dimension is after the plates.
             for i, plate in enumerate(d_log_probs.multi_dim_plates()):
                 if plate.name == self.plate_name:
                     # k is present in the plates
                     d_log_probs.plates.remove(plate)
-                    # plates x k x |D_yv| x events
+                    # distr_plates x k x |D_yv| x events
                     d_log_probs._tensor = d_log_probs._tensor.permute(
                         tuple(range(0, i))
-                        + tuple(range(i + 1, len(plates)))
+                        + tuple(range(i + 1, amt_orig_distr_plates))
                         + (i,)
-                        + tuple(range(len(plates), len(d_log_probs.shape)))
+                        + tuple(range(amt_orig_distr_plates, len(d_log_probs.shape)))
                     )
                     break
 
-        # plates x events x k
-        sampled_support_indices = support.new_zeros(
-            size=support.shape[:support_k_index]  # plates
-            + (self.k,)
-            + support.shape[support_k_index + 1 : -len(element_shape)],  # events
-            dtype=torch.long,
+        # plates x k x events
+        sampled_support_indices = storch.Tensor(
+            support.new_zeros(
+                size=support.shape[:support_k_index]  # distr_plates
+                + (self.k,)
+                + support.shape[support_k_index + 1 : -len(element_shape)],  # events
+                dtype=torch.long,
+            ),
+            [],
+            all_plates,
         )
+
         amt_samples = 0
         self.parent_indexing = None
         if self.joint_log_probs is not None:
-            # self.joint_log_probs: plates x amt_samples
-            amt_samples = self.joint_log_probs.shape[-1]
+            # Initialize a tensor (self.parent_indexing) that keeps track of what samples link to previous choices of samples
+            # note that self.join_log_probs is prev_plates x amt_samples, not prev_plates x k. It's possible that
+            # amt_samples < k!
             # TODO: Is it at shape[-1]?
+            amt_samples = self.joint_log_probs.shape[-1]
+            # TODO: Should it be prev_plates x k or plates x k? Pretty sure it's plates x k
             # plates x k
-            self.parent_indexing = support.new_zeros(
-                size=self.joint_log_probs.shape[:-1] + (self.k,), dtype=torch.long
+            self.parent_indexing = storch.Tensor(
+                support.new_zeros(
+                    size=support.shape[:amt_plates] + (self.k,), dtype=torch.long
+                ),
+                [],
+                all_plates,
             )
-            # TODO: This should be after the plates
             # probably can go wrong if plates are missing.
-            self.parent_indexing[:amt_samples] = right_expand_as(
-                torch.arange(amt_samples), self.joint_log_probs
+            self.parent_indexing[..., :amt_samples] = left_expand_as(
+                torch.arange(amt_samples), self.parent_indexing
             )
 
         # Sample independent tensors in sequence
         # Iterate over the different (conditionally) independent samples being taken (the events)
         for indices in itertools.product(*ranges):
             # Log probabilities of the different options for this sample step (event)
-            # plates x k? x |D_yv|
+            # distr_plates x k? x |D_yv|
             yv_log_probs = d_log_probs[(...,) + indices]
             first_sample = False
             if self.joint_log_probs is None:
-                # We also know that k? is not present, so plates x |D_yv|
+                # We also know that k? is not present, so distr_plates x |D_yv|
                 all_joint_log_probs = yv_log_probs
                 # First condition on max being 0:
                 self.perturbed_log_probs = 0.0
@@ -200,7 +306,7 @@ class SampleWithoutReplacementMethod(Method):
             elif is_conditional_sample:
                 # TODO: Are the indexes of d_log_probs still going to be correct when different parents are chosen?
                 #  PRETTY SURE THEY AREN'T. Ie, we'd need to do the gathering step in lines 145-160 at every iteration of loop
-                # self.joint_log_probs: plates x k
+                # self.joint_log_probs: prev_plates x k
                 # plates x k x |D_yv|
                 all_joint_log_probs = self.joint_log_probs.unsqueeze(-1) + yv_log_probs
             else:
@@ -236,7 +342,9 @@ class SampleWithoutReplacementMethod(Method):
                 # Index for the selected samples. Uses slice(amt_samples) for the first index in case k > |D_yv|
                 # None * amt_plates + (indices for events) + amt_samples
                 indexing = (
-                    (slice(None),) * amt_plates + (slice(0, amt_samples),) + indices
+                    (slice(None),) * amt_distr_plates
+                    + (slice(0, amt_samples),)
+                    + indices
                 )
                 sampled_support_indices[indexing] = arg_top
             else:
@@ -266,18 +374,15 @@ class SampleWithoutReplacementMethod(Method):
                     index=right_expand_as(chosen_parents, sampled_support_indices),
                 )
                 if self.parent_indexing is not None:
-                    if self.parent_indexing.ndim < chosen_parents.ndim:
-                        # Note: The deterministic wrapper automatically inserts singleton
-                        self.parent_indexing = self.parent_indexing.expand_as(
-                            chosen_parents
-                        )
                     self.parent_indexing = self.parent_indexing.gather(
                         dim=-1, index=chosen_parents
                     )
                 # Index for the selected samples. Uses slice(amt_samples) for the first index in case k > |D_yv|
                 chosen_samples = arg_top.remainder(size_domain)
                 indexing = (
-                    (slice(None),) * amt_plates + (slice(0, amt_samples),) + indices
+                    (slice(None),) * amt_distr_plates
+                    + (slice(0, amt_samples),)
+                    + indices
                 )
                 sampled_support_indices[indexing] = chosen_samples
 
@@ -288,28 +393,6 @@ class SampleWithoutReplacementMethod(Method):
             ]
         expanded_indices = right_expand_as(sampled_support_indices, support)
         return support.gather(dim=support_k_index, index=expanded_indices)
-
-    def _create_plate(
-        self,
-        sampled_tensor: torch.Tensor,
-        other_plates: [storch.Plate],
-        plate_size: int,
-    ) -> storch.Plate:
-        for plate in other_plates:
-            if plate.name != self.plate_name:
-                continue
-
-        self.last_plate = AncestralPlate(
-            self.plate_name,
-            plate_size,
-            self.variable_index,
-            self.last_plate,
-            self.parent_indexing,
-            None,
-        )
-        if self.parent_indexing is not None:
-            self.parent_indexing.plates.append(self.last_plate)
-        return self.last_plate
 
     def on_plate_already_present(self, plate: storch.Plate):
         if (
@@ -331,7 +414,7 @@ class AncestralPlate(storch.Plate):
         weight: Optional[storch.Tensor] = None,
     ):
         super().__init__(name, n, weight)
-        assert (not parent_plate and variable_index == 1) or (
+        assert (not parent_plate and variable_index == 0) or (
             parent_plate.n <= self.n and parent_plate.variable_index < variable_index
         )
         self.parent_plate = parent_plate

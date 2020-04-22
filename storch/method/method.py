@@ -52,12 +52,20 @@ class Method(ABC, torch.nn.Module):
         params: Dict[str, storch.Tensor] = get_distr_parameters(
             distr, filter_requires_grad=False
         )
-        parents: Dict[str, torch.Tensor] = {}
+        parents: [torch.Tensor] = storch.wrappers._stochastic_parents.copy()
         # If we are in an @stochastic context, external plates might exist.
         plates: [Plate] = storch.wrappers._plate_links.copy()
+        requires_grad = False
         for name, p in params.items():
+            requires_grad = requires_grad or p.requires_grad
             if isinstance(p, storch.Tensor):
-                parents[name] = p
+                parent_found = False
+                for _p in parents:
+                    if _p is p:
+                        parent_found = True
+                        break
+                if not parent_found:
+                    parents.append(p)
                 # The sample should have the batch links of the parameters in the distribution, if present.
                 for plate in p.plates:
                     if plate not in plates:
@@ -67,30 +75,7 @@ class Method(ABC, torch.nn.Module):
             if plate.name == self.plate_name:
                 self.on_plate_already_present(plate)
 
-        # Will not rewrap in @deterministic, because sampling statements will insert an additional dimensions in the
-        # first batch dimension, causing the rewrapping statement to error as it violates the plating constraints.
-        tensor = self._sample_tensor(distr, parents, plates)
-
-        plate_size = tensor.shape[0]
-        if tensor.shape[0] == 1:
-            tensor = tensor.squeeze(0)
-
-        plate = self._create_plate(tensor, plates, plate_size)
-        plates.insert(0, plate)
-
-        if isinstance(tensor, storch.Tensor):
-            tensor = tensor._tensor
-
-        s_tensor = StochasticTensor(
-            tensor,
-            storch.wrappers._stochastic_parents + list(parents.values()),
-            plates,
-            self.plate_name,
-            plate_size,
-            self,
-            distr,
-            len(params) > 0,
-        )
+        s_tensor, plate = self._sample_tensor(distr, parents, plates, requires_grad)
 
         batch_weighting = self.plate_weighting(s_tensor)
         if batch_weighting is not None:
@@ -147,11 +132,6 @@ class Method(ABC, torch.nn.Module):
             return new_s_tensor
         return s_tensor
 
-    def _create_plate(
-        self, sampled_tensor: torch.Tensor, other_plates: [Plate], plate_size: int
-    ) -> Plate:
-        return Plate(self.plate_name, plate_size)
-
     def _estimator(
         self, tensor: StochasticTensor, cost_node: CostTensor
     ) -> Optional[storch.Tensor]:
@@ -165,8 +145,12 @@ class Method(ABC, torch.nn.Module):
 
     @abstractmethod
     def _sample_tensor(
-        self, distr: Distribution, parents: [storch.Tensor], plates: [Plate]
-    ) -> torch.Tensor:
+        self,
+        distr: Distribution,
+        parents: [storch.Tensor],
+        plates: [Plate],
+        requires_grad: bool,
+    ) -> (storch.StochasticTensor, Plate):
         pass
 
     def estimator(
@@ -215,10 +199,51 @@ class Method(ABC, torch.nn.Module):
         )
 
 
+# For monte carlo sampled methods
 class MonteCarloMethod(Method):
+    """
+    Monte Carlo methods use simple sampling methods that take n independent samples.
+    Unlike complex ancestral sampling methods such as SampleWithoutReplacementMethod, the sampling behaviour is not dependent
+    on earlier samples in the stochastic computation graph (but the distributions are!).
+    """
+
     def __init__(self, plate_name: str, n_samples: int = 1):
         super().__init__(plate_name)
         self.n_samples = n_samples
+
+    def _sample_tensor(
+        self,
+        distr: Distribution,
+        parents: [storch.Tensor],
+        plates: [Plate],
+        requires_grad: bool,
+    ) -> (storch.StochasticTensor, Plate):
+        tensor = self.mc_sample(distr, parents, plates)
+        plate_size = tensor.shape[0]
+        if tensor.shape[0] == 1:
+            tensor = tensor.squeeze(0)
+
+        plate = Plate(self.plate_name, plate_size)
+        plates.insert(0, plate)
+
+        if isinstance(tensor, storch.Tensor):
+            tensor = tensor._tensor
+
+        s_tensor = StochasticTensor(
+            tensor,
+            parents,
+            plates,
+            self.plate_name,
+            plate_size,
+            self,
+            distr,
+            requires_grad,
+        )
+        return s_tensor, plate
+
+    @abstractmethod
+    def mc_sample(self, distr: Distribution, parents: [storch.Tensor], plates: [Plate]):
+        pass
 
 
 class Infer(MonteCarloMethod):
@@ -240,10 +265,10 @@ class Infer(MonteCarloMethod):
             self._method = ScoreFunction(plate_name, n_samples)
         self._score_method = ScoreFunction(plate_name, n_samples)
 
-    def _sample_tensor(
+    def mc_sample(
         self, distr: Distribution, parents: [storch.Tensor], plates: [Plate]
     ) -> torch.Tensor:
-        return self._method._sample_tensor(distr, parents, plates)
+        return self._method.mc_sample(distr, parents, plates)
 
     def estimator(
         self, tensor: StochasticTensor, cost_node: CostTensor
@@ -271,7 +296,7 @@ class Reparameterization(MonteCarloMethod):
     Default option for reparameterizable distributions.
     """
 
-    def _sample_tensor(
+    def mc_sample(
         self, distr: Distribution, parents: [storch.Tensor], plates: [Plate]
     ) -> torch.Tensor:
         if not distr.has_rsample:
@@ -315,7 +340,7 @@ class GumbelSoftmax(Reparameterization):
         self.register_buffer("annealing_rate", torch.tensor(annealing_rate))
         self.register_buffer("min_temperature", torch.tensor(min_temperature))
 
-    def _sample_tensor(
+    def mc_sample(
         self, distr: DiscreteDistribution, parents: [storch.Tensor], plates: [Plate],
     ) -> torch.Tensor:
         with storch.ignore_wrapping():
@@ -357,7 +382,7 @@ class ScoreFunction(MonteCarloMethod):
             else:
                 raise ValueError("Invalid baseline name", baseline_factory)
 
-    def _sample_tensor(
+    def mc_sample(
         self, distr: Distribution, parents: [storch.Tensor], plates: [Plate]
     ) -> torch.Tensor:
         with storch.ignore_wrapping():
@@ -390,8 +415,12 @@ class Expect(Method):
         self.budget = budget
 
     def _sample_tensor(
-        self, distr: Distribution, parents: [storch.Tensor], plates: [Plate]
-    ) -> torch.Tensor:
+        self,
+        distr: Distribution,
+        parents: [storch.Tensor],
+        plates: [Plate],
+        requires_grad: bool,
+    ) -> (storch.StochasticTensor, Plate):
         # TODO: Currently very inefficient as it isn't batched
         # TODO: What if the expectation has a parent
         if not distr.has_enumerate_support:
@@ -428,7 +457,25 @@ class Expect(Method):
             itertools.product(support_non_expanded, repeat=cross_products)
         ):
             enumerate_tensor[i] = torch.cat(t, dim=0)
-        return enumerate_tensor.detach()
+
+        enumerate_tensor = enumerate_tensor.detach()
+
+        plate_size = enumerate_tensor.shape[0]
+
+        plate = Plate(self.plate_name, plate_size)
+        plates.insert(0, plate)
+
+        s_tensor = StochasticTensor(
+            enumerate_tensor,
+            parents,
+            plates,
+            self.plate_name,
+            plate_size,
+            self,
+            distr,
+            requires_grad,
+        )
+        return s_tensor, plate
 
     def plate_weighting(
         self, tensor: storch.StochasticTensor

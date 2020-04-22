@@ -56,7 +56,7 @@ class LAX(MonteCarloMethod):
             self.c_phi = Baseline(in_dim)
         # TODO: Add baseline strength
 
-    def _sample_tensor(
+    def mc_sample(
         self, distr: Distribution, parents: [storch.Tensor], plates: [Plate]
     ) -> torch.Tensor:
         sample = distr.rsample((self.n_samples,))
@@ -152,7 +152,7 @@ class RELAX(MonteCarloMethod):
         # TODO: Automatically learn eta
         self.eta = 1.0
 
-    def _sample_tensor(
+    def mc_sample(
         self, distr: Distribution, parents: [storch.Tensor], plates: [Plate]
     ) -> torch.Tensor:
         relaxed_sample = rsample_gumbel(
