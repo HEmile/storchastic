@@ -172,7 +172,6 @@ class Tensor:
 
         TODO: This should probably filter the methods
         """
-        print(func)
         if kwargs is None:
             kwargs = {}
         return storch.wrappers._handle_deterministic(func, args, kwargs)
@@ -389,9 +388,8 @@ class Tensor:
     def __len__(self):
         return self._tensor.__len__()
 
-    # TODO: Is this safe?
     def __index__(self):
-        return self._tensor.__index__()
+        raise IllegalStorchExposeError("Cannot use storch tensors as index.")
 
     # TODO: shouldn't this have @deterministic?
     def eq(self, other):
@@ -467,6 +465,7 @@ class Tensor:
         )
 
     def __iter__(self):
+        # TODO: This recognizes storch.Tensor as Iterable, even though it's not implemented.
         raise NotImplementedError("Cannot currently iterate over storch Tensors.")
 
     def detach_(self) -> Tensor:
