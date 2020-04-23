@@ -215,11 +215,11 @@ class Tensor:
     def __eq__(self, other):
         return self.__eq__(other)
 
-    @storch.deterministic
+    @storch.deterministic(l_broadcast=False)
     def __getitem__(self, index):
         return self.__getitem__(index)
 
-    @storch.deterministic
+    @storch.deterministic(l_broadcast=False)
     def __setitem__(self, index, value):
         return self.__setitem__(index, value)
 
@@ -483,6 +483,10 @@ class Tensor:
     @storch.deterministic
     def __sub__(self, other):
         return self.__sub__(other)
+
+    @storch.deterministic
+    def __rsub__(self, other):
+        return self.__rsub__(other)
 
     @storch.deterministic
     def __mul__(self, other):
