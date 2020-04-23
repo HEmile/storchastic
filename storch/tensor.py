@@ -3,24 +3,18 @@ import torch
 import storch
 from torch.distributions import Distribution
 from collections import deque
-from typing import Union, List, Tuple, Dict, Iterable, Any, Callable
+from typing import List, Iterable, Any, Callable
 import builtins
 from itertools import product
 from typing import Optional
-from torch import Size
 from storch.exceptions import IllegalStorchExposeError
 from storch.excluded_init import (
-    _exception_tensor,
-    _unwrap_only_tensor,
-    _excluded_tensor,
+    exception_methods,
+    excluded_methods,
+    unwrap_only_methods,
 )
 
 # from storch.typing import BatchTensor
-
-_int = builtins.int
-_size = Union[Size, List[_int], Tuple[_int, ...]]
-
-_torch_dict = None
 
 
 class Plate:
@@ -102,7 +96,7 @@ class Plate:
         return tensor
 
 
-class Tensor(torch.Tensor):
+class Tensor:
     def __init__(
         self,
         tensor: torch.Tensor,
@@ -171,15 +165,43 @@ class Tensor(torch.Tensor):
         self.event_dims = len(self.event_shape)
         self.plates = plates
 
-    @staticmethod
-    def __new__(cls, *args, **kwargs):
-        # Pass the input tensor to register this tensor in C. This will initialize an empty (0s?) tensor in the backend.
-        # TODO: Does that mean it will require double the memory?
-        # return super(Tensor, cls).__new__(cls, device=tensor.device)
-        return super(Tensor, cls).__new__(cls)
+    def __torch_function__(self, func, types, args=(), kwargs=None):
+        """
+        Called whenever a torch.* or torch.nn.functional.* method is being called on a storch.Tensor. This wraps
+        that method in the deterministic wrapper to properly handle all input arguments and outputs.
+        """
+        if kwargs is None:
+            kwargs = {}
+        func_name = func.__name__
+        if func_name in exception_methods:
+            raise IllegalStorchExposeError(
+                "Calling method " + func_name + " with storch tensors is not allowed."
+            )
+        if func_name in excluded_methods:
+            return func(*args, **kwargs)
 
-    def __hash__(self):
-        return object.__hash__(self)
+        return storch.wrappers._handle_deterministic(func, args, kwargs)
+
+    def __getattr__(self, item):
+        """
+        Called whenever an attribute is called on a storch.Tensor object that is not directly implemented by storch.Tensor.
+        It defers it to the underlying torch.Tensor. If it is a callable (ie, torch.Tensor implements a function
+        with the name item), it will wrap this callable with a deterministic wrapper.
+
+        TODO: This should probably filter the methods
+        """
+        attr = getattr(torch.Tensor, item)
+        if isinstance(attr, Callable):
+            func_name = attr.__name__
+            if func_name in exception_methods:
+                raise IllegalStorchExposeError(
+                    "Calling method "
+                    + func_name
+                    + " with storch tensors is not allowed."
+                )
+            if func_name in excluded_methods:
+                return attr
+            return storch.wrappers._self_deterministic(attr, self)
 
     @property
     def name(self):
@@ -200,9 +222,20 @@ class Tensor(torch.Tensor):
     def __repr__(self):
         return self._tensor.__repr__()
 
+    def __hash__(self):
+        return object.__hash__(self)
+
     @storch.deterministic
     def __eq__(self, other):
         return self.__eq__(other)
+
+    @storch.deterministic(l_broadcast=False)
+    def __getitem__(self, index):
+        return self.__getitem__(index)
+
+    @storch.deterministic(l_broadcast=False)
+    def __setitem__(self, index, value):
+        return self.__setitem__(index, value)
 
     def _walk(
         self,
@@ -286,6 +319,9 @@ class Tensor(torch.Tensor):
     def plate_shape(self) -> torch.Size:
         return self._tensor.shape[: self.plate_dims]
 
+    def size(self) -> torch.Size:
+        return self._tensor.size()
+
     @property
     def shape(self) -> torch.Size:
         return self._tensor.size()
@@ -367,9 +403,8 @@ class Tensor(torch.Tensor):
     def __len__(self):
         return self._tensor.__len__()
 
-    # TODO: Is this safe?
     def __index__(self):
-        return self._tensor.__index__()
+        raise IllegalStorchExposeError("Cannot use storch tensors as index.")
 
     # TODO: shouldn't this have @deterministic?
     def eq(self, other):
@@ -445,85 +480,117 @@ class Tensor(torch.Tensor):
         )
 
     def __iter__(self):
+        # TODO: This recognizes storch.Tensor as Iterable, even though it's not implemented.
         raise NotImplementedError("Cannot currently iterate over storch Tensors.")
 
     def detach_(self) -> Tensor:
         raise NotImplementedError("In place detach is not allowed on storch tensors.")
 
+    @storch.deterministic
+    def __add__(self, other):
+        return self.__add__(other)
+
+    @storch.deterministic
+    def __radd__(self, other):
+        return self.__radd__(other)
+
+    @storch.deterministic
+    def __sub__(self, other):
+        return self.__sub__(other)
+
+    @storch.deterministic
+    def __rsub__(self, other):
+        return self.__rsub__(other)
+
+    @storch.deterministic
+    def __mul__(self, other):
+        return self.__mul__(other)
+
+    @storch.deterministic
+    def __rmul__(self, other):
+        return self.__rmul__(other)
+
+    @storch.deterministic
+    def __matmul__(self, other):
+        return self.__matmul__(other)
+
+    @storch.deterministic
+    def __pow__(self, other):
+        return self.__pow__(other)
+
+    @storch.deterministic
+    def __div__(self, other):
+        return self.__div__(other)
+
+    @storch.deterministic
+    def __mod__(self, other):
+        return self.__mod__(other)
+
+    @storch.deterministic
+    def __truediv__(self, other):
+        return self.__truediv__(other)
+
+    @storch.deterministic
+    def __floordiv__(self, other):
+        return self.__floordiv__(other)
+
+    @storch.deterministic
+    def __rfloordiv__(self, other):
+        return self.__rfloordiv__(other)
+
+    @storch.deterministic
+    def __abs__(self):
+        return self.__abs__()
+
+    @storch.deterministic
+    def __and__(self, other):
+        return self.__and__(other)
+
+    @storch.deterministic
+    def __ge__(self, other):
+        return self.__ge__(other)
+
+    @storch.deterministic
+    def __gt__(self, other):
+        return self.__gt__(other)
+
+    @storch.deterministic
+    def __invert__(self):
+        return self.__invert__()
+
+    @storch.deterministic
+    def __le__(self, other):
+        return self.__le__(other)
+
+    @storch.deterministic
+    def __lshift__(self, other):
+        return self.__lshift__(other)
+
+    @storch.deterministic
+    def __lt__(self, other):
+        return self.__lt__(other)
+
+    @storch.deterministic
+    def ne(self, other):
+        return self.ne(other)
+
+    @storch.deterministic
+    def __neg__(self):
+        return self.__neg__()
+
+    @storch.deterministic
+    def __or__(self, other):
+        return self.__or__(other)
+
+    @storch.deterministic
+    def __rshift__(self, other):
+        return self.__rshift__(other)
+
+    @storch.deterministic
+    def __xor__(self, other):
+        return self.__xor__(other)
+
     # endregion
-
-
-for m in dir(torch.Tensor):
-    v = getattr(torch.Tensor, m)
-    if (
-        isinstance(v, Callable)
-        and m not in Tensor.__dict__
-        # and m not in object.__dict__
-    ):
-        if m in _exception_tensor:
-            if storch._debug:
-                print("exception:" + m)
-            setattr(torch.Tensor, m, storch._exception_wrapper(v))
-        elif m in _unwrap_only_tensor:
-            if storch._debug:
-                print("unwrap only:" + m)
-            setattr(torch.Tensor, m, storch._unpack_wrapper(v))
-        elif m not in _excluded_tensor:
-            if storch._debug:
-                print("in:" + m)
-            setattr(torch.Tensor, m, storch.deterministic(v))
-        elif storch._debug:
-            print("excluded:" + m)
-    elif storch._debug:
-        print("out:" + m)
-
-# Yes. This code is extremely weird. For some reason, when monkey patching torch.Tensor.__getitem__ and
-# torch.Tensor.__setitem__, bizarre indexing bugs will happen that wouldn't happen when not monkey patching them.
-# Unsqueezing the masking tensor sometimes seems to help...
-# To do this, I also had to reset the torch.Tensor method to its original state. This bug should be fixed sometimes,
-# as this is extremely messy code.
-original_get = torch.Tensor.__getitem__
-
-_getitem_level = 0
-
-
-class WrapGet:
-    def __init__(self, original_fn):
-        self.original_fn = storch.deterministic(original_fn)
-
-    def __get__(self, *args):
-        # The __getitem__ method is a slotwrapper object that first calls the __get__ to create a method_wrapper.
-        # This class is a hacky wrapper around those wrappers (pff) to allow compatibility with storch.
-        self.is_arg_none = args[0] is None
-        self.arg0 = args[0]
-        return lambda *args: self.__call__(*args)
-
-    def __call__(self, *args):
-        # For some reason, when monkey patching __getitem__ and __setitem__, incorrect recursive calls happen that
-        # cause wrong outputs. This wrapper seems to block some of these recursive calls, but this requires more
-        # investigation as to why it works.
-        global _getitem_level
-        _getitem_level += 1
-        # TODO: This seems to fix incorrect outcomes from wrapping. I still don't know why or how, though.
-        try:
-            if _getitem_level == 1 and not self.is_arg_none:
-                out = self.original_fn(self.arg0, *args)
-            else:
-                out = self.original_fn(*args)
-        except TypeError as e:
-            if storch._debug:
-                print(_getitem_level, e)
-            if _getitem_level == 1:
-                out = self.original_fn(self.arg0, *args)
-        finally:
-            _getitem_level -= 1
-
-        return out
-
-
-torch.Tensor.__getitem__ = WrapGet(torch.Tensor.__getitem__)
-
-torch.Tensor.__setitem__ = WrapGet(torch.Tensor.__setitem__)
 
 
 class CostTensor(Tensor):
@@ -605,4 +672,5 @@ class StochasticTensor(Tensor):
         return self.param_grads
 
 
+is_tensor = lambda a: isinstance(a, torch.Tensor) or isinstance(a, Tensor)
 from storch.util import has_backwards_path

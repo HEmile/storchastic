@@ -118,4 +118,9 @@ _unwrap_only_tensor = {
 }
 
 _to_test_tensor = {"_make_subclass"}
+
+exception_methods = _exception_init.union(_exception_tensor)
+excluded_methods = _excluded_tensor.union(_excluded_function).union(_excluded_init)
+unwrap_only_methods = _unwrap_only_tensor.union(_unwrap_only_init)
+
 # print(_excluded_init)

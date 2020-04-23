@@ -2,6 +2,7 @@ import storch
 from torch.distributions import Normal, OneHotCategorical
 import torch
 
+torch.is_tensor = storch.is_tensor
 torch.manual_seed(0)
 
 # LEGEND OF SHAPES
