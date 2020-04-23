@@ -272,11 +272,8 @@ class SampleWithoutReplacementMethod(Method):
         self.parent_indexing = None
         if self.joint_log_probs is not None:
             # Initialize a tensor (self.parent_indexing) that keeps track of what samples link to previous choices of samples
-            # note that self.join_log_probs is prev_plates x amt_samples, not prev_plates x k. It's possible that
-            # amt_samples < k!
-            # TODO: Is it at shape[-1]?
+            # Note that self.joint_log_probs.shape[-1] is amt_samples, not k. It's possible that amt_samples < k!
             amt_samples = self.joint_log_probs.shape[-1]
-            # TODO: Should it be prev_plates x k or plates x k? Pretty sure it's plates x k
             # plates x k
             self.parent_indexing = storch.Tensor(
                 support.new_zeros(
@@ -342,9 +339,7 @@ class SampleWithoutReplacementMethod(Method):
                 # Index for the selected samples. Uses slice(amt_samples) for the first index in case k > |D_yv|
                 # None * amt_plates + (indices for events) + amt_samples
                 indexing = (
-                    (slice(None),) * amt_distr_plates
-                    + (slice(0, amt_samples),)
-                    + indices
+                    (slice(None),) * amt_plates + (slice(0, amt_samples),) + indices
                 )
                 sampled_support_indices[indexing] = arg_top
             else:
@@ -368,6 +363,7 @@ class SampleWithoutReplacementMethod(Method):
                 size_domain = yv_log_probs.shape[-1]
 
                 # Keep track of what parents were sampled for the arg top
+                # plates x amt_samples
                 chosen_parents = arg_top / size_domain
                 sampled_support_indices = sampled_support_indices.gather(
                     dim=support_k_index,
@@ -378,14 +374,14 @@ class SampleWithoutReplacementMethod(Method):
                         dim=-1, index=chosen_parents
                     )
                 # Index for the selected samples. Uses slice(amt_samples) for the first index in case k > |D_yv|
+                # plates x amt_samples
                 chosen_samples = arg_top.remainder(size_domain)
                 indexing = (
-                    (slice(None),) * amt_distr_plates
-                    + (slice(0, amt_samples),)
-                    + indices
+                    (slice(None),) * amt_plates + (slice(0, amt_samples),) + indices
                 )
                 sampled_support_indices[indexing] = chosen_samples
 
+        # Finally, index the support using the sampled indices to get the sample!
         if amt_samples < self.k:
             # plates x amt_samples x events
             sampled_support_indices = sampled_support_indices[
@@ -456,7 +452,7 @@ class AncestralPlate(storch.Plate):
     def on_unwrap_tensor(self, tensor: storch.Tensor) -> storch.Tensor:
         """
         Gets called whenever the given tensor is being unwrapped and unsqueezed for batch use.
-
+        This method should not be called on tensors whose variable index is higher than this plates.
         :param tensor: The input tensor that is being unwrapped
         :return: The tensor that will be unwrapped and unsqueezed in the future. Can be a modification of the input tensor.
         """
@@ -474,16 +470,21 @@ class AncestralPlate(storch.Plate):
 
             parent_plates = []
             current_plate = self
+
+            # Collect the list of plates from the tensors variable index to this plates variable index
             while current_plate.variable_index != plate.variable_index:
                 parent_plates.append(current_plate)
                 current_plate = current_plate.parent_plate
             assert current_plate == plate
+
+            # Go over all parent plates and gather their respective choices.
             for parent_plate in reversed(parent_plates):
                 self._in_recursion = True
                 expanded_selected_samples = expand_with_ignore_as(
                     parent_plate.selected_samples, tensor, self.name
                 )
                 self._override_equality = False
+                # Gather what samples of the tensor are chosen by this plate (parent_plate)
                 tensor = storch.gather(
                     tensor, parent_plate.name, expanded_selected_samples
                 )
@@ -523,10 +524,9 @@ def expand_with_ignore_as(
 ) -> torch.Tensor:
     """
     Expands the tensor like expand_as, but ignores a single dimension.
-    Ie, if tensor is of size a x b,  expand_as of size d x a x c and dim=-1, then the return will be of size d x a x b
+    Ie, if tensor is of size a x b,  expand_as of size d x a x c and dim=-1, then the return will be of size d x a x b.
+    It also automatically expands all plate dimensions correctly.
     :param ignore_dim: Can be a string referring to the plate dimension
-    TODO: This is pretty broken because of how extra dimensions are added. It assumes all extra dimensions are
-     right of the non-singleton dimensions.
     """
     # diff = expand_as.ndim - tensor.ndim
     def _expand_with_ignore(tensor, expand_as, dim: int):
