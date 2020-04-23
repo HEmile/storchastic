@@ -71,10 +71,10 @@ normal_method2 = storch.Reparameterization("n2", plt_n2)
 # n2
 n2 = normal_method2.sample(dn1)
 # n2 x |D_yv|
-n_h_entropy = h_entropy + n2.unsqueeze(-1)
-d5 = OneHotCategorical(logits=n_h_entropy)
+n_l_entropy = l_entropy + n2.unsqueeze(-1)
+d5 = OneHotCategorical(logits=n_l_entropy)
 
-# This is a strange one: although n_h_entropy doesn't include n1, it should be included here, as the ancestral parents
+# This is a strange one: although n_l_entropy doesn't include n1, it should be included here, as the ancestral parents
 # are dependent on n1!
 # k x (n1 x n2 or n2 x n1) x |D_yv|
 z_5 = swr_method.sample(d5)
