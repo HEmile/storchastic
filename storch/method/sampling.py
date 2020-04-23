@@ -40,9 +40,13 @@ class SampleWithoutReplacementMethod(Method):
         # Perform stochastic beam search given the log-probs and perturbed log probs so far.
         # Samples k values from this distribution so that all total configurations are unique.
 
+        multi_dim_plates = []
+        for plate in plates:
+            if plate.n > 1:
+                multi_dim_plates.append(plate)
         # Sample using stochastic beam search
         # plates? x k x events x
-        samples = self.stochastic_beam_search(distr, plates)
+        samples = self.stochastic_beam_search(distr, multi_dim_plates)
 
         k_index = 0
         if isinstance(samples, storch.Tensor):
@@ -345,7 +349,6 @@ class SampleWithoutReplacementMethod(Method):
             else:
                 # plates x (k * |D_yv|) (k == prev_amt_samples, in this case)
                 cond_G_yv = cond_G_yv.reshape(cond_G_yv.shape[:-2] + (-1,))
-                prev_amt_samples = amt_samples
                 # We can sample at most the amount of what we previous sampled, combined with every option in the current domain
                 # That is: prev_amt_samples * |D_yv|. But we also want to limit by k.
                 amt_samples = min(self.k, cond_G_yv.shape[-1])

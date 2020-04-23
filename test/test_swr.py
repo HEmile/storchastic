@@ -13,11 +13,11 @@ torch.manual_seed(0)
 # n1: Plate size of first normal
 # n2: Plate size of second normal
 
-k = 2
+k = 100
 d_yv = 4
 event = 2
 plt_n1 = 3
-plt_n2 = 6
+plt_n2 = 2
 
 # Define swr method
 swr_method = storch.SampleWithoutReplacementMethod("z", k)
@@ -42,8 +42,8 @@ z_2 = swr_method.sample(d2)
 print("z1", z_1)
 print("z2", z_2)
 
-assert z_1.shape == (k, event, d_yv)
-assert z_2.shape == (k, d_yv)
+assert z_1.shape == (min(k, d_yv ** event), event, d_yv)
+assert z_2.shape == (min(k, d_yv ** (event + 1)), d_yv)
 
 # n1
 n1 = normal_method1(dn1)
@@ -71,7 +71,7 @@ normal_method2 = storch.Reparameterization("n2", plt_n2)
 # n2
 n2 = normal_method2.sample(dn1)
 # n2 x |D_yv|
-n_h_entropy = h_entropy + n2.unsqueeze(1)
+n_h_entropy = h_entropy + n2.unsqueeze(-1)
 d5 = OneHotCategorical(logits=n_h_entropy)
 
 # This is a strange one: although n_h_entropy doesn't include n1, it should be included here, as the ancestral parents

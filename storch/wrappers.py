@@ -95,14 +95,18 @@ def _unsqueeze_and_unwrap(
                 amt_recognized += 1
 
         # Add singleton dimensions on missing plates
+        plate_dims = []
         for i, plate in enumerate(multi_dim_plates):
             if plate not in a.plates:
                 tensor = tensor.unsqueeze(i)
+                plate_dims.append(plate.n)
+            else:
+                # Make sure to use a's plate size here. It's actually possible they are different in ancestral plates!
+                plate_dims.append(tensor.shape[i])
 
         # Optionally expand the singleton dimensions to the plate size
         if expand_plates:
-            plate_dims = tuple(map(lambda _p: _p.n, multi_dim_plates))
-            tensor = tensor.expand(plate_dims + tensor.shape[len(plate_dims) :])
+            tensor = tensor.expand(tuple(plate_dims) + tensor.shape[len(plate_dims) :])
         return tensor
     elif isinstance(a, Mapping):
         d = {}
