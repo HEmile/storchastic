@@ -25,7 +25,10 @@ sequence models.
 [Example: Discrete Variational Auto-Encoder](TODO)
 
 ## Installation
-Pip is going to be set up soon. Requires [Pyro](http://pyro.ai) for now. Build on Python 3.7 and PyTorch 1.4.
+Use `pip install storchastic`. Requires [Pyro](http://pyro.ai) for now. Build on Python 3.7 and PyTorch 1.4.
+
+The first official release will be for PyTorch 1.5. This is because 1.5 introduces new functionality which allows for a
+ much cleaner implementation of Storchastic. For more information, see [this issue](https://github.com/HEmile/storchastic/issues/59).
 
 ## Implemented Algorithms
 Feel free to create an issue if an estimator is missing here.
@@ -62,3 +65,4 @@ Feel free to create an issue if an estimator is missing here.
 - [13] [Estimating Gradients for Discrete Random Variables by Sampling without Replacement](https://openreview.net/forum?id=rklEj2EFvB), Kool et al, ICLR 2020
 - [14] [Measure-Valued Derivatives for Approximate Bayesian Inference](http://bayesiandeeplearning.org/2019/papers/76.pdf), Rosca et al, Workshop on Bayesian Deep Learning (NeurIPS 2019)
 - [15] [ARM: Augment-REINFORCE-Merge Gradient for Stochastic Binary Networks](https://arxiv.org/abs/1807.11143), Yin and Zhou, ICLR 2019
+- [16] [Credit Assignment Techniques in Stochastic Computation Graphs](https://arxiv.org/abs/1901.01761), Weber et al, AISTATS 2019

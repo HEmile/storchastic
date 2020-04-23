@@ -5,6 +5,7 @@ import torch.nn as nn
 import torch
 import storch
 from torch.distributions import OneHotCategorical, Distribution
+from storch.method import SampleWithoutReplacementMethod
 
 
 class DiscreteVAE(VAE):
@@ -17,19 +18,27 @@ class DiscreteVAE(VAE):
 
     def initialize_method(self, args) -> storch.method.Method:
         if args.method == "gumbel":
-            return storch.GumbelSoftmax()
+            return storch.GumbelSoftmax("z", n_samples=args.samples)
         elif args.method == "gumbel_straight":
-            return storch.GumbelSoftmax(straight_through=True)
+            return storch.GumbelSoftmax(
+                "z", n_samples=args.samples, straight_through=True
+            )
         elif args.method == "score":
-            return storch.ScoreFunction(baseline_factory=args.baseline)
+            return storch.ScoreFunction(
+                "z", n_samples=args.samples, baseline_factory=args.baseline
+            )
         elif args.method == "expect":
-            return storch.Expect()
+            return storch.Expect("z")
         elif args.method == "relax":
-            return storch.RELAX(in_dim=(args.latents, 10))
+            return storch.RELAX("z", n_samples=args.samples, in_dim=(args.latents, 10))
         elif args.method == "rebar":
-            return storch.REBAR()
+            return storch.REBAR("z", n_samples=args.samples)
         elif args.method == "relax_rebar":
-            return storch.RELAX(in_dim=(args.latents, 10), rebar=True)
+            return storch.RELAX(
+                "z", n_samples=args.samples, in_dim=(args.latents, 10), rebar=True
+            )
+        elif args.method == "without_replacement":
+            return SampleWithoutReplacementMethod("z", k=args.samples)
         else:
             raise ValueError("Invalid method passed to program arguments.")
 

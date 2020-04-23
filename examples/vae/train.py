@@ -45,7 +45,7 @@ def train(epoch, model, train_loader, device, optimizer, args, writer):
                 _consider_param = "probs"
                 if args.latents < 3:
                     old_method = model.sampling_method
-                    model.sampling_method = Expect()
+                    model.sampling_method = Expect("z")
                     optimizer.zero_grad()
                     recon_batch, _, z = model(data)
                     storch.add_cost(loss_function(recon_batch, data), "reconstruction")

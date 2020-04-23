@@ -38,7 +38,6 @@ class MovingAverageBaseline(Baseline):
 
 class BatchAverageBaseline(Baseline):
     # Uses the means of the other samples
-    # TODO: Doesn't currently supported non-mean weighted plates.
     def compute_baseline(
         self, tensor: StochasticTensor, costs: CostTensor
     ) -> torch.Tensor:
@@ -48,5 +47,9 @@ class BatchAverageBaseline(Baseline):
             )
         costs = costs.detach()
         sum_costs = storch.sum(costs, tensor.name)
+        # TODO: Should reduce correctly
         baseline = (sum_costs - costs) / (tensor.n - 1)
         return baseline
+
+
+

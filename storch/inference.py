@@ -7,6 +7,7 @@ import storch
 
 
 _cost_tensors: [CostTensor] = []
+_sampling_methods: [storch.Method] = []
 
 
 def denote_independent(
@@ -129,6 +130,7 @@ def backward(retain_graph=False, debug=False, print_costs=False) -> torch.Tensor
             if (
                 not isinstance(parent, StochasticTensor)
                 or not parent.requires_grad
+                or not parent.sampling_method
                 or not parent.sampling_method.adds_loss(parent, c)
             ):
                 continue
@@ -159,15 +161,15 @@ def backward(retain_graph=False, debug=False, print_costs=False) -> torch.Tensor
                     parent_plates.append(plate)
 
             # Create new storch Tensors with different order of plates for the cost and parent
-            new_parent = storch.tensor._StochasticTensorBase(
+            new_parent = storch.tensor.StochasticTensor(
                 parent_tensor,
                 [],
                 parent_plates,
                 parent.name,
+                parent.n,
                 parent.sampling_method,
                 parent.distribution,
                 parent._requires_grad,
-                parent.n,
             )
             # Fake the new parent to be the old parent within the graph by mimicing its place in the graph
             new_parent._parents = parent._parents
@@ -193,7 +195,8 @@ def backward(retain_graph=False, debug=False, print_costs=False) -> torch.Tensor
         accum_loss._tensor.backward(retain_graph=retain_graph)
 
     for s_node in stochastic_nodes:
-        s_node.sampling_method._update_parameters()
+        if s_node.sampling_method:
+            s_node.sampling_method._update_parameters()
 
     if not retain_graph:
         reset()
@@ -204,3 +207,6 @@ def backward(retain_graph=False, debug=False, print_costs=False) -> torch.Tensor
 
 def reset():
     storch.inference._cost_tensors = []
+    for method in storch.inference._sampling_methods:
+        method.reset()
+    storch.inference._sampling_methods = []

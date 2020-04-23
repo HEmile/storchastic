@@ -69,6 +69,12 @@ def _handle_inputs(
     return tensor, plates
 
 
+def gather(input: storch.Tensor, dim: str, index: storch.Tensor):
+    return storch.deterministic(torch.gather, dim=dim, expand_plates=True)(
+        input, index=index
+    )
+
+
 def reduce_plates(
     tensor: torch.Tensor,
     *,
@@ -139,8 +145,8 @@ def grad(
     """
     Helper method for computing torch.autograd.grad on storch tensors. Returns storch Tensors as well.
     """
-    args, _, _, _ = storch.wrappers._handle_args(
-        True, False, outputs, inputs, grad_outputs
+    args, _, _, _ = storch.wrappers._prepare_args(
+        [outputs, inputs, grad_outputs], {}, unwrap=True, align_tensors=False,
     )
     _outputs, _inputs, _grad_outputs = tuple(args)
     grads = torch.autograd.grad(

@@ -11,6 +11,7 @@ Storchastic provides a large range of gradient estimation methods that you can p
 best for your problem. Storchastic provides automatic broadcasting of sampled batch dimensions, which increases code
 readability and allows implementing complex models with ease.
 
+
 When dealing with continuous random variables and differentiable functions, the popular reparameterization method is usually
 very effective. However, this method is not applicable when dealing with discrete random variables or non-differentiable functions.
 This is why Storchastic has a focus on gradient estimators for discrete random variables, non-differentiable functions and

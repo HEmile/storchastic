@@ -2,11 +2,11 @@ import storch
 import torch
 from torch.distributions import Bernoulli, OneHotCategorical
 
-expect = storch.Expect()
+expect = storch.Expect("x")
 probs = torch.tensor([0.01, 0.01, 0.01, 0.01, 0.01, 0.95], requires_grad=True)
 indices = torch.tensor([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
 b = OneHotCategorical(probs=probs)
-z = expect.sample("z", b)
+z = expect.sample(b)
 c = (2.4 * z * indices).sum(-1)
 storch.add_cost(c, "no_baseline_cost")
 
@@ -14,12 +14,12 @@ storch.backward()
 
 expect_grad = z.grad["probs"].clone()
 
-method = storch.ScoreFunction(baseline_factory="none")
+method = storch.ScoreFunction("x", 1, baseline_factory="none")
 # method = storch.REBAR()
 grads = []
 for i in range(100):
     b = OneHotCategorical(probs=probs)
-    z = method.sample("z", b, n=1)
+    z = method.sample(b)
     c = (2.4 * z * indices).sum(-1) + 100
     storch.add_cost(c, "baseline_cost")
 

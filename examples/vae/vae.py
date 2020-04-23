@@ -63,7 +63,7 @@ class VAE(nn.Module):
 
         KLD = self.KLD(var_posterior, prior)
         storch.add_cost(KLD, "KL-divergence")
-        z = self.sampling_method("z", var_posterior, n=self.samples)
+        z = self.sampling_method(var_posterior)
         return self.decode(z), KLD, z
 
     def prior(self, posterior: Distribution) -> Distribution:

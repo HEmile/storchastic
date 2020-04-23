@@ -9,7 +9,7 @@ from torch.nn import Parameter
 
 import storch
 from storch import Plate, CostTensor, StochasticTensor, deterministic
-from storch.method.method import Method
+from storch.method.method import MonteCarloMethod
 from storch.typing import Dims
 
 import torch.nn.functional as F
@@ -34,7 +34,7 @@ class Baseline(torch.nn.Module):
         return self.fc2(F.relu(self.fc1(x))).squeeze(-1)
 
 
-class LAX(Method):
+class LAX(MonteCarloMethod):
     """
     Gradient estimator for continuous random variables.
     Implements the LAX estimator from Grathwohl et al, 2018 https://arxiv.org/abs/1711.00123
@@ -43,21 +43,24 @@ class LAX(Method):
 
     def __init__(
         self,
+        plate_name: str,
+        *,
+        n_samples: int = 1,
         c_phi: Optional[Callable[[torch.Tensor], torch.Tensor]] = None,
         in_dim=None,
     ):
-        super().__init__()
+        super().__init__(plate_name, n_samples)
         if c_phi:
             self.c_phi = c_phi
         else:
             self.c_phi = Baseline(in_dim)
         # TODO: Add baseline strength
 
-    def _sample_tensor(
-        self, distr: Distribution, n: int, parents: [storch.Tensor], plates: [Plate]
-    ) -> (torch.Tensor, int):
-        sample = distr.rsample((n,))
-        return sample, n
+    def mc_sample(
+        self, distr: Distribution, parents: [storch.Tensor], plates: [Plate]
+    ) -> torch.Tensor:
+        sample = distr.rsample((self.n_samples,))
+        return sample
 
     def post_sample(self, tensor: storch.StochasticTensor) -> Optional[storch.Tensor]:
         return tensor.detach()
@@ -122,7 +125,7 @@ class LAX(Method):
         return True
 
 
-class RELAX(Method):
+class RELAX(MonteCarloMethod):
     """
     Gradient estimator for Bernoulli and Categorical distributions on any function.
     Implements the RELAX estimator from Grathwohl et al, 2018, https://arxiv.org/abs/1711.00123
@@ -132,12 +135,14 @@ class RELAX(Method):
 
     def __init__(
         self,
+        plate_name: str,
         *,
+        n_samples: int = 1,
         c_phi: Callable[[torch.Tensor], torch.Tensor] = None,
         in_dim: Dims = None,
         rebar=False,
     ):
-        super().__init__()
+        super().__init__(plate_name, n_samples)
         if c_phi:
             self.c_phi = c_phi
         else:
@@ -147,19 +152,19 @@ class RELAX(Method):
         # TODO: Automatically learn eta
         self.eta = 1.0
 
-    def _sample_tensor(
-        self, distr: Distribution, n: int, parents: [storch.Tensor], plates: [Plate]
-    ) -> (torch.Tensor, int):
+    def mc_sample(
+        self, distr: Distribution, parents: [storch.Tensor], plates: [Plate]
+    ) -> torch.Tensor:
         relaxed_sample = rsample_gumbel(
-            distr, n, self.temperature, straight_through=False
+            distr, self.n_samples, self.temperature, straight_through=False
         )
         # In REBAR, the objective function is evaluated for the Gumbel sample, the conditional Gumbel sample \tilde{z} and the argmax of the Gumbel sample.
         if self.rebar:
             hard_sample = self._discretize(relaxed_sample, distr)
             cond_sample = self._conditional_gumbel_rsample(hard_sample, distr)
-            return torch.cat([hard_sample, relaxed_sample, cond_sample], 0), 3 * n
+            return torch.cat([hard_sample, relaxed_sample, cond_sample], 0)
         else:
-            return relaxed_sample, n
+            return relaxed_sample
         # sample relaxed if not rebar else sample z then return -> (H(z), z, z|H(z) and n*3
 
     def post_sample(self, tensor: storch.StochasticTensor) -> Optional[storch.Tensor]:
@@ -337,8 +342,14 @@ class REBAR(RELAX):
     See Tucker et al, 2017, https://arxiv.org/abs/1703.07370
     """
 
-    def __init__(self, *, c_phi: Callable[[torch.Tensor], torch.Tensor] = None):
+    def __init__(
+        self,
+        plate_name: str,
+        *,
+        c_phi: Callable[[torch.Tensor], torch.Tensor] = None,
+        n_samples: int = 1,
+    ):
         # Default REBAR does not use external control variate neural network c_phi
         if not c_phi:
             c_phi = lambda x: 0.0
-        super().__init__(c_phi=c_phi, rebar=True)
+        super().__init__(plate_name, n_samples=n_samples, c_phi=c_phi, rebar=True)
