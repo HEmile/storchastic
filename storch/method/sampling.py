@@ -128,18 +128,21 @@ class SampleWithoutReplacementMethod(Method):
         # The following are references to the shapes that are used within the method
         #
         # distr_plates: refers to the plates on the parameters of the distribution. Does *not* include
-        # the k? ancestral plate (possibly empty)
+        #  the k? ancestral plate (possibly empty)
         # orig_distr_plates: refers to the plates on the parameters of the distribution, and *can* include
-        # the k? ancestral plate (possibly empty)
+        #  the k? ancestral plate (possibly empty)
         # prev_plates: refers to the plates of the previous sampled variable in this swr sample (possibly empty)
         # plates: refers to all plates except this ancestral plate, of which there are amt_plates.
-        # It is composed of distr_plate x (ancstr_plates - distr_plates)
+        #  It is composed of distr_plate x (ancstr_plates - distr_plates)
         # events: refers to the conditionally independent dimensions of the distribution (the distributions batch shape minus the plates)
         # k: refers to self.k
         # k?: refers to an optional plate dimension of this ancestral plate. It either doesn't exist, or is the sample
-        # dimension. If it exists, this means this sample is conditionally dependent on ancestors.
+        #  dimension. If it exists, this means this sample is conditionally dependent on ancestors.
         # |D_yv|: refers to the *size* of the domain
-        # event_shape: refers to the *shape* of the domain elements (can be 0, eg Categorical, or equal to |D_yv| for OneHotCategorical)
+        # amt_samples: refers to the current amount of sampled sequences. amt_samples <= k, but it can be lower if there
+        #  are not enough events to sample from (eg |D_yv| < k)
+        # event_shape: refers to the *shape* of the domain elements
+        #  (can be 0, eg Categorical, or equal to |D_yv| for OneHotCategorical)
 
         ancestral_distrplate_index = -1
         is_conditional_sample = False
@@ -242,7 +245,7 @@ class SampleWithoutReplacementMethod(Method):
                 orig_distr_plates,
             )
         if is_conditional_sample:
-            # Gather the correct samples
+            # Gather the correct log probabilities
             # distr_plate[0] x ... k ... x distr_plate[n-1] x |D_yv| x events
             # TODO: Move this down below to the other scary TODO
             d_log_probs = self.last_plate.on_unwrap_tensor(d_log_probs)
@@ -305,14 +308,22 @@ class SampleWithoutReplacementMethod(Method):
                 self.perturbed_log_probs = 0.0
                 first_sample = True
             elif is_conditional_sample:
-                # TODO: Are the indexes of d_log_probs still going to be correct when different parents are chosen?
-                #  PRETTY SURE THEY AREN'T. Ie, we'd need to do the gathering step in lines 145-160 at every iteration of loop
-                # self.joint_log_probs: prev_plates x k
-                # plates x k x |D_yv|
+                # Make sure we are selecting the correct log-probabilities. As parents have been selected, this might change!
+                # plates x amt_samples x |D_yv|
+                yv_log_probs = yv_log_probs.gather(
+                    dim=-2,
+                    index=right_expand_as(
+                        # Use the parent_indexing to select the correct plate samples. Make sure to limit to amt_samples!
+                        self.parent_indexing[..., :amt_samples],
+                        yv_log_probs,
+                    ),
+                )
+                # self.joint_log_probs: prev_plates x amt_samples
+                # plates x amt_samples x |D_yv|
                 all_joint_log_probs = self.joint_log_probs.unsqueeze(-1) + yv_log_probs
             else:
-                # self.joint_log_probs: plates x k
-                # plates x k x |D_yv|
+                # self.joint_log_probs: plates x amt_samples
+                # plates x amt_samples x |D_yv|
                 all_joint_log_probs = self.joint_log_probs.unsqueeze(
                     -1
                 ) + yv_log_probs.unsqueeze(-2)

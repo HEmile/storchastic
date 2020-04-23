@@ -13,7 +13,7 @@ torch.manual_seed(0)
 # n1: Plate size of first normal
 # n2: Plate size of second normal
 
-k = 100
+k = 3
 d_yv = 4
 event = 2
 plt_n1 = 3
