@@ -88,3 +88,14 @@ d6 = OneHotCategorical(logits=z_3 + z_4.unsqueeze(-2) - z_5.unsqueeze(-2))
 z_6 = swr_method.sample(d6)
 
 print("z6", z_6)
+
+assert z_6.shape == (plt_n1, plt_n2, k, event, d_yv) or z_6.shape == (
+    plt_n2,
+    plt_n1,
+    k,
+    event,
+    d_yv,
+)
+
+# Print what values of z1 are selected in the final sample step. As it has very low entropy, this should be all [0,0,1,0]
+print("final z1", z_6.plates[2].on_unwrap_tensor(z_1))
