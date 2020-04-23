@@ -22,7 +22,7 @@ _ignore_wrap = False
 def is_iterable(a: Any):
     return (
         isinstance(a, Iterable)
-        and not isinstance(a, torch.Tensor)
+        and not storch.is_tensor(a)
         and not isinstance(a, str)
         and not isinstance(a, torch.Storage)
     )
