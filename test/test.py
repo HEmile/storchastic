@@ -2,6 +2,7 @@ import storch
 from torch.distributions import Normal, Categorical
 import torch
 
+torch.is_tensor = storch.is_tensor
 torch.manual_seed(0)
 
 mu_prior = torch.tensor([2.0, -3.0], requires_grad=True)
@@ -32,6 +33,7 @@ for i in range(2):
         k1 = k[:, 0]
         k2 = k[:, 1]
     s1 = score_method(Normal(mu + k1, 1))
+    aaa = -mu + s1 * k2
     s2 = infer_method(Normal(-mu + s1 * k2, 1))
     # plus = lambda a, b: a + b
     # plus = storch.deterministic(plus)

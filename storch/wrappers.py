@@ -74,11 +74,7 @@ def _unsqueeze_and_unwrap(
         # Automatically **RIGHT** broadcast. Ensure each tensor has an equal amount of event dims by inserting dimensions to the right
         # TODO: What do we think about this design?
         # TODO: The storch.tensor._getitem_level == 0 check prevents right-broadcasting for __getitem__ and __setitem__... Seems hacky
-        if (
-            l_broadcast
-            and a.event_dims < event_dims
-            and storch.tensor._getitem_level == 0
-        ):
+        if l_broadcast and a.event_dims < event_dims:
             tensor = tensor[(...,) + (None,) * (event_dims - a.event_dims)]
         # It can be possible that the ordering of the plates does not align with the ordering of the inputs.
         # This part corrects this.
@@ -166,6 +162,7 @@ def _prepare_args(
     add the plate size itself (default: False)
     :param dim: Replaces the dim input in fn_kwargs by the plate dimension corresponding to the given string (optional)
     :param dims: Replaces the dims input in fn_kwargs by the plate dimensions corresponding to the given strings (optional)
+    :param self_wrapper: storch.Tensor that wraps a
     :return: Handled non-keyword arguments, handled keyword arguments, list of parents, list of plates
     """
     parents: [storch.Tensor] = []
@@ -249,61 +246,71 @@ def _process_deterministic(
     )
 
 
+def _handle_deterministic(
+    fn,
+    fn_args,
+    fn_kwargs,
+    reduce_plates: Optional[Union[str, List[str]]] = None,
+    **wrapper_kwargs
+):
+    if storch.wrappers._context_stochastic:
+        raise NotImplementedError(
+            "It is currently not allowed to open a deterministic context in a stochastic context"
+        )
+        # TODO check if we can re-add this
+        # if storch.wrappers._context_deterministic > 0:
+        #     if is_cost:
+        #         raise RuntimeError("Cannot call storch.cost from within a deterministic context.")
+
+        # TODO: This is currently uncommented and it will in fact unwrap. This was required because it was, eg,
+        # possible to open a deterministic context, passing distributions with storch.Tensors as parameters,
+        # then doing computations on these parameters. This is because these storch.Tensors will not be unwrapped
+        # in the deterministic context as the unwrapping only considers lists.
+        # # We are already in a deterministic context, no need to wrap or unwrap as only the outer dependencies matter
+        # return fn(*args, **kwargs)
+
+    new_fn_args, new_fn_kwargs, parents, plates = _prepare_args(
+        fn_args, fn_kwargs, **wrapper_kwargs
+    )
+    if not parents:
+        return fn(*fn_args, **fn_kwargs)
+    args = new_fn_args
+    kwargs = new_fn_kwargs
+
+    storch.wrappers._context_deterministic += 1
+
+    try:
+        outputs = fn(*args, **kwargs)
+    finally:
+        storch.wrappers._context_deterministic -= 1
+
+    if storch.wrappers._ignore_wrap:
+        return outputs
+    if reduce_plates:
+        if isinstance(reduce_plates, str):
+            reduce_plates = [reduce_plates]
+        plates = [p for p in plates if p.name not in reduce_plates]
+    if is_iterable(outputs):
+        n_outputs = []
+        for o in outputs:
+            n_outputs.append(
+                _process_deterministic(
+                    o, parents, plates, fn.__name__ + str(len(n_outputs))
+                )
+            )
+        outputs = n_outputs
+    else:
+        outputs = _process_deterministic(outputs, parents, plates, fn.__name__)
+    return outputs
+
+
 def _deterministic(
     fn, reduce_plates: Optional[Union[str, List[str]]] = None, **wrapper_kwargs
 ):
     @wraps(fn)
     def wrapper(*args, **kwargs):
-        if storch.wrappers._context_stochastic:
-            raise NotImplementedError(
-                "It is currently not allowed to open a deterministic context in a stochastic context"
-            )
-            # TODO check if we can re-add this
-            # if storch.wrappers._context_deterministic > 0:
-            #     if is_cost:
-            #         raise RuntimeError("Cannot call storch.cost from within a deterministic context.")
-
-            # TODO: This is currently uncommented and it will in fact unwrap. This was required because it was, eg,
-            # possible to open a deterministic context, passing distributions with storch.Tensors as parameters,
-            # then doing computations on these parameters. This is because these storch.Tensors will not be unwrapped
-            # in the deterministic context as the unwrapping only considers lists.
-            # # We are already in a deterministic context, no need to wrap or unwrap as only the outer dependencies matter
-            # return fn(*args, **kwargs)
-
-        new_args, new_kwargs, parents, plates = _prepare_args(
-            args, kwargs, **wrapper_kwargs
-        )
-        if not parents:
-            return fn(*args, **kwargs)
-        args = new_args
-        kwargs = new_kwargs
-
-        storch.wrappers._context_deterministic += 1
-
-        try:
-            outputs = fn(*args, **kwargs)
-        finally:
-            storch.wrappers._context_deterministic -= 1
-
-        if storch.wrappers._ignore_wrap:
-            return outputs
         nonlocal reduce_plates
-        if reduce_plates:
-            if isinstance(reduce_plates, str):
-                reduce_plates = [reduce_plates]
-            plates = [p for p in plates if p.name not in reduce_plates]
-        if is_iterable(outputs):
-            n_outputs = []
-            for o in outputs:
-                n_outputs.append(
-                    _process_deterministic(
-                        o, parents, plates, fn.__name__ + str(len(n_outputs))
-                    )
-                )
-            outputs = n_outputs
-        else:
-            outputs = _process_deterministic(outputs, parents, plates, fn.__name__)
-        return outputs
+        return _handle_deterministic(fn, args, kwargs, reduce_plates, **wrapper_kwargs)
 
     return wrapper
 

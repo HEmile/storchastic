@@ -378,7 +378,7 @@ class SampleWithoutReplacementMethod(Method):
 
                 # Keep track of what parents were sampled for the arg top
                 # plates x amt_samples
-                chosen_parents = arg_top / size_domain
+                chosen_parents = arg_top // size_domain
                 sampled_support_indices = sampled_support_indices.gather(
                     dim=support_k_index,
                     index=right_expand_as(chosen_parents, sampled_support_indices),

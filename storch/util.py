@@ -5,12 +5,7 @@ from pyro.distributions import (
     RelaxedBernoulliStraightThrough,
 )
 
-from storch.tensor import (
-    Tensor,
-    CostTensor,
-    StochasticTensor,
-    Plate,
-)
+from storch.tensor import Tensor, CostTensor, StochasticTensor, Plate, is_tensor
 from torch.distributions import (
     Distribution,
     RelaxedOneHotCategorical,
@@ -66,9 +61,7 @@ def get_distr_parameters(
     for k in d.arg_constraints:
         try:
             p = getattr(d, k)
-            if isinstance(p, torch.Tensor) and (
-                not filter_requires_grad or p.requires_grad
-            ):
+            if is_tensor(p) and (not filter_requires_grad or p.requires_grad):
                 params[k] = p
         except AttributeError:
             from storch import _debug
