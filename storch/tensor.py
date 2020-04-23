@@ -9,9 +9,9 @@ from itertools import product
 from typing import Optional
 from storch.exceptions import IllegalStorchExposeError
 from storch.excluded_init import (
-    _exception_tensor,
-    _unwrap_only_tensor,
-    _excluded_tensor,
+    exception_methods,
+    excluded_methods,
+    unwrap_only_methods,
 )
 
 # from storch.typing import BatchTensor
@@ -169,11 +169,17 @@ class Tensor:
         """
         Called whenever a torch.* or torch.nn.functional.* method is being called on a storch.Tensor. This wraps
         that method in the deterministic wrapper to properly handle all input arguments and outputs.
-
-        TODO: This should probably filter the methods
         """
         if kwargs is None:
             kwargs = {}
+        func_name = func.__name__
+        if func_name in exception_methods:
+            raise IllegalStorchExposeError(
+                "Calling method " + func_name + " with storch tensors is not allowed."
+            )
+        if func_name in excluded_methods:
+            return func(*args, **kwargs)
+
         return storch.wrappers._handle_deterministic(func, args, kwargs)
 
     def __getattr__(self, item):
@@ -186,6 +192,15 @@ class Tensor:
         """
         attr = getattr(torch.Tensor, item)
         if isinstance(attr, Callable):
+            func_name = attr.__name__
+            if func_name in exception_methods:
+                raise IllegalStorchExposeError(
+                    "Calling method "
+                    + func_name
+                    + " with storch tensors is not allowed."
+                )
+            if func_name in excluded_methods:
+                return attr
             return storch.wrappers._self_deterministic(attr, self)
 
     @property

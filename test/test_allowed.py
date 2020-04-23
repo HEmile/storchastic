@@ -15,20 +15,19 @@ from storch.exceptions import IllegalStorchExposeError
 method = storch.method.Infer("oeps", Poisson)
 
 d = Normal(0, 1)
-
 s = method.sample(d)
 # print(s>1)
 try:
     if s:
-        print("Oeps")
+        assert False
 except IllegalStorchExposeError:
-    print("Good!!")
+    pass
 
 try:
     if s == s:
-        print("Oeps")
+        assert False
 except IllegalStorchExposeError:
-    print("Good!!")
+    pass
 
 d = Poisson(4)
 s = method.sample(d).int()
@@ -39,5 +38,18 @@ i = 0
 try:
     for _ in range(s):
         i += 1
+    assert False
 except IllegalStorchExposeError:
-    print("Good!")
+    pass
+
+try:
+    if torch.allclose(s, s):
+        assert False
+except IllegalStorchExposeError:
+    pass
+
+try:
+    if s.allclose(s):
+        assert False
+except IllegalStorchExposeError:
+    pass
