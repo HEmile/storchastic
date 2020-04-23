@@ -264,15 +264,11 @@ class SampleWithoutReplacementMethod(Method):
                     break
 
         # plates x k x events
-        sampled_support_indices = storch.Tensor(
-            support.new_zeros(
-                size=support.shape[:support_k_index]  # distr_plates
-                + (self.k,)
-                + support.shape[support_k_index + 1 : -len(element_shape)],  # events
-                dtype=torch.long,
-            ),
-            [],
-            all_plates,
+        sampled_support_indices = support.new_zeros(
+            size=support.shape[:support_k_index]  # distr_plates
+            + (self.k,)
+            + support.shape[support_k_index + 1 : -len(element_shape)],  # events
+            dtype=torch.long,
         )
 
         amt_samples = 0
@@ -282,13 +278,10 @@ class SampleWithoutReplacementMethod(Method):
             # Note that self.joint_log_probs.shape[-1] is amt_samples, not k. It's possible that amt_samples < k!
             amt_samples = self.joint_log_probs.shape[-1]
             # plates x k
-            self.parent_indexing = storch.Tensor(
-                support.new_zeros(
-                    size=support.shape[:amt_plates] + (self.k,), dtype=torch.long
-                ),
-                [],
-                all_plates,
+            self.parent_indexing = support.new_zeros(
+                size=support.shape[:amt_plates] + (self.k,), dtype=torch.long
             )
+
             # probably can go wrong if plates are missing.
             self.parent_indexing[..., :amt_samples] = left_expand_as(
                 torch.arange(amt_samples), self.parent_indexing
@@ -356,6 +349,7 @@ class SampleWithoutReplacementMethod(Method):
                 indexing = (
                     (slice(None),) * amt_plates + (slice(0, amt_samples),) + indices
                 )
+                print(sampled_support_indices[indexing])
                 sampled_support_indices[indexing] = arg_top
             else:
                 # plates x (k * |D_yv|) (k == prev_amt_samples, in this case)
