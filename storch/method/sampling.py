@@ -480,6 +480,9 @@ class AncestralPlate(storch.Plate):
             assert current_plate == plate
             for parent_plate in reversed(parent_plates):
                 self._in_recursion = True
+                # TODO: It's possible that self.selected_samples actually has more plates than tensor!
+                #  This happens if a later variable sample is conditionally dependent on another multi-plate-dim
+                #  Then expand_as won't work as tensor will not include these plate dimensions
                 expanded_selected_samples = expand_with_ignore_as(
                     self.selected_samples, tensor, self.name
                 )
@@ -539,7 +542,9 @@ def expand_with_ignore_as(
         )
 
     if isinstance(ignore_dim, str):
-        return storch.deterministic(_expand_with_ignore, dim=ignore_dim)(
-            tensor, expand_as
-        )
-    return storch.deterministic(_expand_with_ignore)(tensor, expand_as, ignore_dim)
+        return storch.deterministic(
+            _expand_with_ignore, expand_plates=True, dim=ignore_dim
+        )(tensor, expand_as)
+    return storch.deterministic(_expand_with_ignore, expand_plates=True)(
+        tensor, expand_as, ignore_dim
+    )

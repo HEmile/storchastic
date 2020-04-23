@@ -83,7 +83,7 @@ print("z5", z_5)
 
 assert z_5.shape == (plt_n1, plt_n2, k, d_yv) or z_5.shape == (plt_n2, plt_n1, k, d_yv)
 
-d6 = OneHotCategorical(logits=z_3 + z_4 - z_5)
+d6 = OneHotCategorical(logits=z_3 + z_4.unsqueeze(-2) - z_5.unsqueeze(-2))
 
 z_6 = swr_method.sample(d6)
 

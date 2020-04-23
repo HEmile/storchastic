@@ -59,6 +59,7 @@ def _unsqueeze_and_unwrap(
     multi_dim_plates: [storch.Plate],
     align_tensors: bool,
     l_broadcast: bool,
+    expand_plates: bool,
     event_dims: int,
 ):
     if isinstance(a, storch.Tensor):
@@ -93,15 +94,26 @@ def _unsqueeze_and_unwrap(
                     links[amt_recognized], links[j] = links[j], links[amt_recognized]
                 amt_recognized += 1
 
+        # Add singleton dimensions on missing plates
         for i, plate in enumerate(multi_dim_plates):
             if plate not in a.plates:
                 tensor = tensor.unsqueeze(i)
+
+        # Optionally expand the singleton dimensions to the plate size
+        if expand_plates:
+            plate_dims = tuple(map(lambda _p: _p.n, multi_dim_plates))
+            tensor = tensor.expand(plate_dims + tensor.shape[len(plate_dims) :])
         return tensor
     elif isinstance(a, Mapping):
         d = {}
         for k, _a in a.items():
             d[k] = _unsqueeze_and_unwrap(
-                _a, multi_dim_plates, align_tensors, l_broadcast, event_dims
+                _a,
+                multi_dim_plates,
+                align_tensors,
+                l_broadcast,
+                expand_plates,
+                event_dims,
             )
         return d
     elif is_iterable(a):
@@ -109,7 +121,12 @@ def _unsqueeze_and_unwrap(
         for _a in a:
             l.append(
                 _unsqueeze_and_unwrap(
-                    _a, multi_dim_plates, align_tensors, l_broadcast, event_dims
+                    _a,
+                    multi_dim_plates,
+                    align_tensors,
+                    l_broadcast,
+                    expand_plates,
+                    event_dims,
                 )
             )
         if isinstance(a, tuple):
@@ -125,6 +142,7 @@ def _prepare_args(
     unwrap=True,
     align_tensors=True,
     l_broadcast=True,
+    expand_plates=False,
     dim: Optional[str] = None,
     dims: Optional[Union[str, List[str]]] = None,
 ) -> (List, Dict, [storch.Tensor], [storch.Plate]):
@@ -140,6 +158,8 @@ def _prepare_args(
     :param unwrap: Whether to unwrap the arguments to their torch.Tensor counterpart (default: True)
     :param align_tensors: Whether to automatically align the input arguments (default: True)
     :param l_broadcast: Whether to automatically left-broadcast (default: True)
+    :param expand_plates: Instead of adding singleton dimensions on non-existent plates, this will
+    add the plate size itself (default: False)
     :param dim: Replaces the dim input in fn_kwargs by the plate dimension corresponding to the given string (optional)
     :param dims: Replaces the dims input in fn_kwargs by the plate dimensions corresponding to the given strings (optional)
     :return: Handled non-keyword arguments, handled keyword arguments, list of parents, list of plates
@@ -183,13 +203,23 @@ def _prepare_args(
         for t in fn_args:
             unsqueezed_args.append(
                 _unsqueeze_and_unwrap(
-                    t, multi_dim_plates, align_tensors, l_broadcast, max_event_dim
+                    t,
+                    multi_dim_plates,
+                    align_tensors,
+                    l_broadcast,
+                    expand_plates,
+                    max_event_dim,
                 )
             )
         unsqueezed_kwargs = {}
         for k, v in fn_kwargs.items():
             unsqueezed_kwargs[k] = _unsqueeze_and_unwrap(
-                v, multi_dim_plates, align_tensors, l_broadcast, max_event_dim
+                v,
+                multi_dim_plates,
+                align_tensors,
+                l_broadcast,
+                expand_plates,
+                max_event_dim,
             )
         return unsqueezed_args, unsqueezed_kwargs, parents, plates
     return fn_args, fn_kwargs, parents, plates
