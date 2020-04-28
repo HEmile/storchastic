@@ -8,21 +8,21 @@ torch.manual_seed(0)
 # LEGEND OF SHAPES
 # These are all different and > 1 to make them identifiable.
 # ================
-# k: Size of SWR
+# k: Size of Score Function samples (of which 1 is the kappa dimension)
 # |D_yv|: Size of sample from categorical (=4)
 # event: event created by repeating in d1
 # n1: Plate size of first normal
 # n2: Plate size of second normal
 
-k = 3
+k = 4
 d_yv = 4
 event = 2
 plt_n1 = 3
 plt_n2 = 2
 
 # Define swr method
-swr_method = storch.SampleWithoutReplacementMethod("z", k)
-normal_method1 = storch.Reparameterization("n1", plt_n1)
+swr_method = storch.ScoreFunctionWOR("z", k - 1)
+normal_method1 = storch.ScoreFunction("n1", plt_n1)
 
 l_entropy = torch.tensor([-3.0, -3.0, 2, -2.0], requires_grad=True)
 h_entropy = torch.tensor([-0.1, 0.1, 0.05, -0.05], requires_grad=True)
@@ -97,6 +97,10 @@ assert z_6.shape == (plt_n1, plt_n2, k, event, d_yv) or z_6.shape == (
     event,
     d_yv,
 )
+# Sum the amount of event 1's being true.
+cost = torch.sum(z_6[..., 0], -1)
+storch.add_cost(cost, "cost")
+storch.backward()
 
 # Print what values of z1 are selected in the final sample step. As it has very low entropy, this should be all [0,0,1,0]
 print("final z1", z_6.plates[2].on_unwrap_tensor(z_1))

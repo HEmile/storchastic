@@ -38,10 +38,13 @@ class Plate:
                 return False
             if self.weight._tensor is other.weight._tensor:
                 return True
+            if self.weight.shape != other.weight.shape:
+                return False
             return self.weight._tensor.__eq__(other.weight._tensor).all()
         if isinstance(other.weight, storch.Tensor):
             return False
-        return True  # Weights are equal if self.n == other.n
+        # Neither of the weights are Tensors, so the weights must be equal as self.n==other.n
+        return True
 
     def __str__(self):
         return self.name + ", " + str(self.n)

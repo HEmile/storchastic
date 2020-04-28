@@ -10,3 +10,4 @@ from storch.method.method import (
 from storch.method.relax import RELAX, REBAR, LAX
 from storch.method.baseline import Baseline, MovingAverageBaseline
 from storch.method.sampling import SampleWithoutReplacementMethod
+from storch.method.multi_sample_reinforce import ScoreFunctionWOR

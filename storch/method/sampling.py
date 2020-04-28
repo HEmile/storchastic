@@ -50,7 +50,7 @@ class SampleWithoutReplacementMethod(Method):
 
         k_index = 0
         if isinstance(samples, storch.Tensor):
-            k_index = len(samples.plates)
+            k_index = samples.plate_dims
             plates = samples.plates
             samples = samples._tensor
 
@@ -72,6 +72,8 @@ class SampleWithoutReplacementMethod(Method):
             self.variable_index,
             self.last_plate,
             self.parent_indexing,
+            self.joint_log_probs,
+            self.perturbed_log_probs,
             None,
         )
         plates.append(self.last_plate)
@@ -415,6 +417,8 @@ class AncestralPlate(storch.Plate):
         variable_index: int,
         parent_plate: AncestralPlate,
         selected_samples: storch.Tensor,
+        log_probs: storch.Tensor,
+        perturb_log_probs: storch.Tensor,
         weight: Optional[storch.Tensor] = None,
     ):
         super().__init__(name, n, weight)
@@ -423,6 +427,14 @@ class AncestralPlate(storch.Plate):
         )
         self.parent_plate = parent_plate
         self.selected_samples = selected_samples
+        self.log_probs = storch.Tensor(
+            log_probs._tensor, [log_probs], log_probs.plates + [self]
+        )
+        self.perturb_log_probs = storch.Tensor(
+            perturb_log_probs._tensor,
+            [perturb_log_probs],
+            perturb_log_probs.plates + [self],
+        )
         self.variable_index = variable_index
         self._in_recursion = False
         self._override_equality = False

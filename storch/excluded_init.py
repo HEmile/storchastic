@@ -47,6 +47,10 @@ _exception_init = {
     "q_per_channel_axis",
     "q_scale",
     "q_zero_point",
+    "bernouilli",
+    "multinomial",
+    "normal",
+    "poisson",
 }
 _to_test_init = {
     "allclose",

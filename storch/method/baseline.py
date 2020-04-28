@@ -50,6 +50,3 @@ class BatchAverageBaseline(Baseline):
         # TODO: Should reduce correctly
         baseline = (sum_costs - costs) / (tensor.n - 1)
         return baseline
-
-
-
