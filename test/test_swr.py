@@ -21,7 +21,7 @@ plt_n1 = 3
 plt_n2 = 2
 
 # Define swr method
-swr_method = storch.ScoreFunctionWOR("z", k - 1)
+swr_method = storch.ScoreFunctionWOR("z", k - 1, biased=True, use_baseline=False)
 normal_method1 = storch.ScoreFunction("n1", plt_n1)
 
 l_entropy = torch.tensor([-3.0, -3.0, 2, -2.0], requires_grad=True)
@@ -103,4 +103,4 @@ storch.add_cost(cost, "cost")
 storch.backward()
 
 # Print what values of z1 are selected in the final sample step. As it has very low entropy, this should be all [0,0,1,0]
-print("final z1", z_6.plates[2].on_unwrap_tensor(z_1))
+# print("final z1", z_6.plates[2].on_unwrap_tensor(z_1))

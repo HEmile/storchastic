@@ -91,7 +91,7 @@ class SampleWithoutReplacementMethod(Method):
             plate_size,
             self,
             distr,
-            requires_grad,
+            requires_grad or self.joint_log_probs.requires_grad,
         )
         # Increase variable index
         self.variable_index += 1
@@ -448,6 +448,11 @@ class AncestralPlate(storch.Plate):
             super().__eq__(other)
             and isinstance(other, AncestralPlate)
             and self.variable_index == other.variable_index
+        )
+
+    def __repr__(self):
+        return (
+            "(Ancestral, " + self.variable_index.__repr__() + super().__repr__() + ")"
         )
 
     def on_collecting_args(self, plates: [storch.Plate]) -> bool:

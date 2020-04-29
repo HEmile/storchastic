@@ -80,13 +80,13 @@ class ScoreFunctionWOR(SampleWithoutReplacementMethod):
                 # Equation 11
                 WS = storch.sum(iw, self.plate_name)
                 WiS = (WS - iw + probs).detach()
-                diff_cost = (cost_node - BS / WS).detach()
-                return storch.sum(iw / WiS * diff_cost, self.plate_name)
+                diff_cost = cost_node - BS / WS
+                return storch.sum(iw / WiS * diff_cost.detach(), self.plate_name)
             else:
                 # Equation 10
                 weighted_cost = cost_node * (1 - probs + iw)
-                diff_cost = (weighted_cost - BS).detach()
-                return storch.sum(iw * diff_cost, self.plate_name)
+                diff_cost = weighted_cost - BS
+                return storch.sum(iw * diff_cost.detach(), self.plate_name)
         else:
             # Equation 9
             iw = self._compute_iw(cost_plate, self.biased)
