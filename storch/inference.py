@@ -139,10 +139,10 @@ def backward(retain_graph=False, debug=False, print_costs=False) -> torch.Tensor
             # possibly extra dimensions...?
             parent_tensor = parent._tensor
             reduced_cost = c
-            parent_plates = list(parent.multi_dim_plates())
+            parent_plates = parent.multi_dim_plates()
 
             # Reduce all plates that are in the cost node but not in the parent node
-            for plate in c.multi_dim_plates():
+            for plate in storch.order_plates(c.multi_dim_plates(), reverse=True):
                 if plate not in parent_plates:
                     reduced_cost = plate.reduce(reduced_cost, detach_weights=True)
 

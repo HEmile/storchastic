@@ -92,10 +92,42 @@ def reduce_plates(
     :return: The reduced tensor
     """
     tensor, plates = _handle_inputs(tensor, plates, plate_names)
-    for plate in plates:
+    for plate in order_plates(plates, reverse=True):
         if plate.n > 1:
             tensor = plate.reduce(tensor, detach_weights=detach_weights)
     return tensor
+
+
+def order_plates(plates: [storch.Plate], reverse=False):
+    """
+    Topologically order the given plates.
+    Uses Kahn's algorithm.
+    :param plates:
+    """
+    sorted = []
+    roots = []
+    in_edges = {}
+    out_edges = {p.name: [] for p in plates}
+    for p in plates:
+        if not p.parents:
+            roots.append(p)
+        in_edges[p.name] = p.parents.copy()
+        for _p in p.parents:
+            out_edges[_p.name].append(p)
+    while roots:
+        n = roots.pop()
+        sorted.append(n)
+        for m in out_edges[n.name]:
+            remaining_edges = in_edges[m.name]
+            remaining_edges.remove(n)
+            if not remaining_edges:
+                roots.append(m)
+    for remaining_edges in in_edges.values():
+        if remaining_edges:
+            raise ValueError("List of plates do not represent a DAG")
+    if reverse:
+        return reversed(sorted)
+    return sorted
 
 
 def variance(

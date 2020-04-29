@@ -257,7 +257,7 @@ def split(
         if create_plates:
             n = _slice.stop - _slice.start
             final_plates = new_plates.copy()
-            final_plates[plates_index] = Plate(plate.name, n)
+            final_plates[plates_index] = Plate(plate.name, n, plate.parents)
             if n == 1:
                 new_tensor = new_tensor.squeeze(index)
             new_tensor = Tensor(new_tensor, [], final_plates, tensor.name)

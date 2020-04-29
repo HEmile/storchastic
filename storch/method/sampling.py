@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Optional, Union
+from typing import Optional, Union, List
 
 import storch
 import torch
@@ -69,6 +69,7 @@ class SampleWithoutReplacementMethod(Method):
         self.last_plate = AncestralPlate(
             self.plate_name,
             plate_size,
+            plates.copy(),
             self.variable_index,
             self.last_plate,
             self.parent_indexing,
@@ -414,6 +415,7 @@ class AncestralPlate(storch.Plate):
         self,
         name: str,
         n: int,
+        parents: List[storch.Plate],
         variable_index: int,
         parent_plate: AncestralPlate,
         selected_samples: storch.Tensor,
@@ -421,7 +423,7 @@ class AncestralPlate(storch.Plate):
         perturb_log_probs: storch.Tensor,
         weight: Optional[storch.Tensor] = None,
     ):
-        super().__init__(name, n, weight)
+        super().__init__(name, n, parents, weight)
         assert (not parent_plate and variable_index == 0) or (
             parent_plate.n <= self.n and parent_plate.variable_index < variable_index
         )

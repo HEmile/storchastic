@@ -224,7 +224,7 @@ class MonteCarloMethod(Method):
         if tensor.shape[0] == 1:
             tensor = tensor.squeeze(0)
 
-        plate = Plate(self.plate_name, plate_size)
+        plate = Plate(self.plate_name, plate_size, plates.copy())
         plates.insert(0, plate)
 
         if isinstance(tensor, storch.Tensor):
@@ -463,7 +463,7 @@ class Expect(Method):
 
         plate_size = enumerate_tensor.shape[0]
 
-        plate = Plate(self.plate_name, plate_size)
+        plate = Plate(self.plate_name, plate_size, plates.copy())
         plates.insert(0, plate)
 
         s_tensor = StochasticTensor(

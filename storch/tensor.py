@@ -18,12 +18,19 @@ from storch.excluded_init import (
 
 
 class Plate:
-    def __init__(self, name: str, n: int, weight: Optional[storch.Tensor] = None):
+    def __init__(
+        self,
+        name: str,
+        n: int,
+        parents: List[Plate],
+        weight: Optional[storch.Tensor] = None,
+    ):
         self.weight = weight
         if weight is None:
             self.weight = torch.tensor(1.0 / n)
         self.name = name
         self.n = n
+        self.parents = parents
 
     def __eq__(self, other):
         if not isinstance(other, Plate):
@@ -79,6 +86,11 @@ class Plate:
 
         # Case: The weight is a vector of numbers equal to batch dimension. Assumes it is a storch.Tensor
         else:
+            for parent_plate in self.parents:
+                if parent_plate not in tensor.plates:
+                    raise ValueError(
+                        "Plate missing when reducing tensor: " + parent_plate.name
+                    )
             weighted_tensor = tensor * plate_weighting
             return storch.sum(weighted_tensor, [self.name])
 
@@ -384,10 +396,8 @@ class Tensor:
         ranges = list(map(lambda a: list(range(a)), self.plate_shape))
         return product(*ranges)
 
-    def multi_dim_plates(self) -> Iterable[Plate]:
-        for plate in self.plates:
-            if plate.n > 1:
-                yield plate
+    def multi_dim_plates(self) -> List[Plate]:
+        return list(filter(lambda p: p.n > 1, self.plates))
 
     def backward(
         self,
@@ -629,7 +639,7 @@ class IndependentTensor(Tensor):
                     + ". A parent sample has already used"
                     " this name. Use a different name for this independent dimension."
                 )
-        plates.insert(0, Plate(plate_name, n, weight))
+        plates.insert(0, Plate(plate_name, n, plates.copy(), weight))
         super().__init__(tensor, parents, plates, tensor_name)
         self.n = n
 

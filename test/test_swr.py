@@ -68,7 +68,7 @@ print("z4", z_4)
 assert z_3.shape == (plt_n1, k, event, d_yv)
 assert z_4.shape == (plt_n1, k, d_yv)
 
-normal_method2 = storch.Reparameterization("n2", plt_n2)
+normal_method2 = storch.ScoreFunction("n2", plt_n2)
 # n2
 n2 = normal_method2.sample(dn1)
 # n2 x |D_yv|

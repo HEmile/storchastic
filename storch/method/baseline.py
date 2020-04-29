@@ -32,7 +32,7 @@ class MovingAverageBaseline(Baseline):
         self.moving_average = (
             self.exponential_decay * self.moving_average
             + (1 - self.exponential_decay) * avg_cost
-        )
+        )._tensor
         return self.moving_average
 
 
