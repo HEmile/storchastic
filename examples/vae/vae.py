@@ -15,6 +15,8 @@ from storch import deterministic, backward
 import storch
 from torch.distributions import Distribution
 
+torch.is_tensor = storch.is_tensor
+
 
 class VAE(nn.Module):
     def __init__(self, args):

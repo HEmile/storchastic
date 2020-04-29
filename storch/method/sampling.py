@@ -352,7 +352,6 @@ class SampleWithoutReplacementMethod(Method):
                 indexing = (
                     (slice(None),) * amt_plates + (slice(0, amt_samples),) + indices
                 )
-                print(sampled_support_indices[indexing])
                 sampled_support_indices[indexing] = arg_top
             else:
                 # plates x (k * |D_yv|) (k == prev_amt_samples, in this case)

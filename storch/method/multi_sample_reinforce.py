@@ -12,6 +12,8 @@ class ScoreFunctionWOR(SampleWithoutReplacementMethod):
     Use biased=True for the biased normalized version which has lower variance.
     """
 
+    EPS = 1e-8
+
     def __init__(
         self, plate_name: str, k: int, biased: bool = True, use_baseline: bool = True
     ):
@@ -36,7 +38,7 @@ class ScoreFunctionWOR(SampleWithoutReplacementMethod):
                 ).exp()
             ).exp()
         ).detach()
-        iw = plate.log_probs.exp() / q
+        iw = plate.log_probs.exp() / (q + self.EPS)
         # It's probably not going to like this? Would iw._tensor work?
         # Set the weight of the kth sample (kappa) to 0.
         iw[..., self.k - 1] = 0.0
