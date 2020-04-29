@@ -324,18 +324,10 @@ class SampleWithoutReplacementMethod(Method):
                     -1
                 ) + yv_log_probs.unsqueeze(-2)
 
-            # Sample plates x k? x |D_yv| Gumbel variables
-            gumbel_d = Gumbel(loc=all_joint_log_probs, scale=1.0)
-            G_yv = gumbel_d.rsample()
-
-            # Condition the Gumbel samples on the maximum of previous samples
-            # plates x k
-            Z = G_yv.max(dim=-1)[0]
-            T = self.perturbed_log_probs
-            vi = T - G_yv + log1mexp(G_yv - Z)
-            # plates (x k) x |D_yv|
-            cond_G_yv = T - vi.relu() - torch.nn.Softplus()(-vi.abs())
-
+            # Sample plates x k? x |D_yv| conditional Gumbel variables
+            cond_G_yv = cond_gumbel_sample(
+                all_joint_log_probs, self.perturbed_log_probs
+            )
             if first_sample:
                 # No parent has been sampled yet
                 # shape(cond_G_yv) is plates x |D_yv|
@@ -520,16 +512,30 @@ class AncestralPlate(storch.Plate):
         return tensor
 
 
-@storch.deterministic
 def log1mexp(a: torch.Tensor) -> torch.Tensor:
     """See appendix A of http://jmlr.org/papers/v21/19-985.html.
     Numerically stable implementation of log(1-exp(a))"""
     r = torch.zeros_like(a)
     c = -0.693
-    assert (a <= 0).all()
+    # assert (a <= 0).all()
     r[a > c] = (-a[a > c].expm1()).log()
     r[a <= c] = (-a[a <= c].exp()).log1p()
     return r
+
+
+@storch.deterministic
+def cond_gumbel_sample(all_joint_log_probs, perturbed_log_probs) -> torch.Tensor:
+    # Sample plates x k? x |D_yv| Gumbel variables
+    gumbel_d = Gumbel(loc=all_joint_log_probs, scale=1.0)
+    G_yv = gumbel_d.rsample()
+
+    # Condition the Gumbel samples on the maximum of previous samples
+    # plates x k
+    Z = G_yv.max(dim=-1)[0]
+    T = perturbed_log_probs
+    vi = T - G_yv + log1mexp(G_yv - Z.unsqueeze(-1))
+    # plates (x k) x |D_yv|
+    return T - vi.relu() - torch.nn.Softplus()(-vi.abs())
 
 
 @storch.deterministic(l_broadcast=False)
