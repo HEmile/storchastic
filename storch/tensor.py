@@ -334,8 +334,8 @@ class Tensor:
     def plate_shape(self) -> torch.Size:
         return self._tensor.shape[: self.plate_dims]
 
-    def size(self) -> torch.Size:
-        return self._tensor.size()
+    def size(self, *args) -> torch.Size:
+        return self._tensor.size(*args)
 
     @property
     def shape(self) -> torch.Size:
