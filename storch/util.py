@@ -1,4 +1,5 @@
 from typing import Dict, Optional, List, Tuple, Union
+from collections import deque
 
 from pyro.distributions import (
     RelaxedOneHotCategoricalStraightThrough,
@@ -79,19 +80,17 @@ def get_distr_parameters(
 def _walk_backward_graph(grad, depth_first=True):
     if not grad:
         return
-    if depth_first:
-        for t, _ in grad.next_functions:
-            if not t:
-                continue
-            yield t
-            for o in _walk_backward_graph(t, depth_first):
-                yield o
-    else:
-        for t, _ in grad.next_functions:
-            yield t
-        for t, _ in grad.next_functions:
-            for o in _walk_backward_graph(t, depth_first):
-                yield o
+    visited = set()
+    to_visit = deque()
+    to_visit.append(grad)
+    pop_func = to_visit.pop if depth_first else to_visit.popleft
+    while to_visit:
+        n = pop_func()
+        yield n
+        visited.add(n)
+        for t, _ in n.next_functions:
+            if t and t not in visited:
+                to_visit.append(t)
 
 
 def walk_backward_graph(tensor: torch.Tensor, depth_first=True):
@@ -112,25 +111,25 @@ def has_backwards_path(output: Tensor, input: Tensor, depth_first=False):
     """
 
     if isinstance(output, StochasticTensor):
-        outputs = get_distr_parameters(output.distribution)
-    else:
-        outputs = {None: output._tensor}
+        for param in get_distr_parameters(output.distribution).values():
+            if has_backwards_path(param, input, depth_first):
+                return True
+        return False
     input = input._tensor
     if not input.requires_grad:
         return False
-    for o in outputs.values():
-        if isinstance(o, Tensor):
-            o = o._tensor
-        if o is input:
-            # This can happen if the input is a parameter of the output distribution
+    if isinstance(output, Tensor):
+        output = output._tensor
+    if output is input:
+        # This can happen if the input is a parameter of the output distribution
+        return True
+    if not output.grad_fn:
+        return False
+    for p in walk_backward_graph(output, depth_first):
+        if hasattr(p, "variable") and p.variable is input:
             return True
-        if not o.grad_fn:
-            continue
-        for p in walk_backward_graph(o, depth_first):
-            if hasattr(p, "variable") and p.variable is input:
-                return True
-            elif input.grad_fn and p is input.grad_fn:
-                return True
+        elif input.grad_fn and p is input.grad_fn:
+            return True
     return False
 
 
@@ -257,7 +256,7 @@ def split(
         if create_plates:
             n = _slice.stop - _slice.start
             final_plates = new_plates.copy()
-            final_plates[plates_index] = Plate(plate.name, n)
+            final_plates[plates_index] = Plate(plate.name, n, plate.parents)
             if n == 1:
                 new_tensor = new_tensor.squeeze(index)
             new_tensor = Tensor(new_tensor, [], final_plates, tensor.name)

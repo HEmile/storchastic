@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Optional, Union
+from typing import Optional, Union, List
 
 import storch
 import torch
@@ -50,7 +50,7 @@ class SampleWithoutReplacementMethod(Method):
 
         k_index = 0
         if isinstance(samples, storch.Tensor):
-            k_index = len(samples.plates)
+            k_index = samples.plate_dims
             plates = samples.plates
             samples = samples._tensor
 
@@ -69,9 +69,12 @@ class SampleWithoutReplacementMethod(Method):
         self.last_plate = AncestralPlate(
             self.plate_name,
             plate_size,
+            plates.copy(),
             self.variable_index,
             self.last_plate,
             self.parent_indexing,
+            self.joint_log_probs,
+            self.perturbed_log_probs,
             None,
         )
         plates.append(self.last_plate)
@@ -88,7 +91,7 @@ class SampleWithoutReplacementMethod(Method):
             plate_size,
             self,
             distr,
-            requires_grad,
+            requires_grad or self.joint_log_probs.requires_grad,
         )
         # Increase variable index
         self.variable_index += 1
@@ -321,18 +324,10 @@ class SampleWithoutReplacementMethod(Method):
                     -1
                 ) + yv_log_probs.unsqueeze(-2)
 
-            # Sample plates x k? x |D_yv| Gumbel variables
-            gumbel_d = Gumbel(loc=all_joint_log_probs, scale=1.0)
-            G_yv = gumbel_d.rsample()
-
-            # Condition the Gumbel samples on the maximum of previous samples
-            # plates x k
-            Z = G_yv.max(dim=-1)[0]
-            T = self.perturbed_log_probs
-            vi = T - G_yv + log1mexp(G_yv - Z)
-            # plates (x k) x |D_yv|
-            cond_G_yv = T - vi.relu() - torch.nn.Softplus()(-vi.abs())
-
+            # Sample plates x k? x |D_yv| conditional Gumbel variables
+            cond_G_yv = cond_gumbel_sample(
+                all_joint_log_probs, self.perturbed_log_probs
+            )
             if first_sample:
                 # No parent has been sampled yet
                 # shape(cond_G_yv) is plates x |D_yv|
@@ -349,7 +344,6 @@ class SampleWithoutReplacementMethod(Method):
                 indexing = (
                     (slice(None),) * amt_plates + (slice(0, amt_samples),) + indices
                 )
-                print(sampled_support_indices[indexing])
                 sampled_support_indices[indexing] = arg_top
             else:
                 # plates x (k * |D_yv|) (k == prev_amt_samples, in this case)
@@ -412,17 +406,28 @@ class AncestralPlate(storch.Plate):
         self,
         name: str,
         n: int,
+        parents: List[storch.Plate],
         variable_index: int,
         parent_plate: AncestralPlate,
         selected_samples: storch.Tensor,
+        log_probs: storch.Tensor,
+        perturb_log_probs: storch.Tensor,
         weight: Optional[storch.Tensor] = None,
     ):
-        super().__init__(name, n, weight)
+        super().__init__(name, n, parents, weight)
         assert (not parent_plate and variable_index == 0) or (
             parent_plate.n <= self.n and parent_plate.variable_index < variable_index
         )
         self.parent_plate = parent_plate
         self.selected_samples = selected_samples
+        self.log_probs = storch.Tensor(
+            log_probs._tensor, [log_probs], log_probs.plates + [self]
+        )
+        self.perturb_log_probs = storch.Tensor(
+            perturb_log_probs._tensor,
+            [perturb_log_probs],
+            perturb_log_probs.plates + [self],
+        )
         self.variable_index = variable_index
         self._in_recursion = False
         self._override_equality = False
@@ -434,6 +439,11 @@ class AncestralPlate(storch.Plate):
             super().__eq__(other)
             and isinstance(other, AncestralPlate)
             and self.variable_index == other.variable_index
+        )
+
+    def __repr__(self):
+        return (
+            "(Ancestral, " + self.variable_index.__repr__() + super().__repr__() + ")"
         )
 
     def on_collecting_args(self, plates: [storch.Plate]) -> bool:
@@ -502,16 +512,30 @@ class AncestralPlate(storch.Plate):
         return tensor
 
 
-@storch.deterministic
 def log1mexp(a: torch.Tensor) -> torch.Tensor:
     """See appendix A of http://jmlr.org/papers/v21/19-985.html.
     Numerically stable implementation of log(1-exp(a))"""
     r = torch.zeros_like(a)
     c = -0.693
-    assert (a <= 0).all()
+    # assert (a <= 0).all()
     r[a > c] = (-a[a > c].expm1()).log()
     r[a <= c] = (-a[a <= c].exp()).log1p()
     return r
+
+
+@storch.deterministic
+def cond_gumbel_sample(all_joint_log_probs, perturbed_log_probs) -> torch.Tensor:
+    # Sample plates x k? x |D_yv| Gumbel variables
+    gumbel_d = Gumbel(loc=all_joint_log_probs, scale=1.0)
+    G_yv = gumbel_d.rsample()
+
+    # Condition the Gumbel samples on the maximum of previous samples
+    # plates x k
+    Z = G_yv.max(dim=-1)[0]
+    T = perturbed_log_probs
+    vi = T - G_yv + log1mexp(G_yv - Z.unsqueeze(-1))
+    # plates (x k) x |D_yv|
+    return T - vi.relu() - torch.nn.Softplus()(-vi.abs())
 
 
 @storch.deterministic(l_broadcast=False)

@@ -77,11 +77,12 @@ class Method(ABC, torch.nn.Module):
 
         s_tensor, plate = self._sample_tensor(distr, parents, plates, requires_grad)
 
-        batch_weighting = self.plate_weighting(s_tensor)
+        batch_weighting = self.plate_weighting(s_tensor, plate)
         if batch_weighting is not None:
             plate.weight = batch_weighting
-            if isinstance(batch_weighting, storch.Tensor):
-                batch_weighting.plates[0] = plate
+            # TODO: I don't think this code should be here.
+            # if isinstance(batch_weighting, storch.Tensor):
+            #     batch_weighting.plates[0] = plate
 
         for name, param in params.items():
             # TODO: Possibly could find the wrong gradients here if multiple distributions use the same parameter?
@@ -167,7 +168,7 @@ class Method(ABC, torch.nn.Module):
         pass
 
     def plate_weighting(
-        self, tensor: storch.StochasticTensor
+        self, tensor: storch.StochasticTensor, plate: Plate
     ) -> Optional[storch.Tensor]:
         # Weight by the size of the sample. Overload this if your gradient estimation uses some kind of weighting
         # of the different events, like importance sampling or computing the expectation.
@@ -223,7 +224,7 @@ class MonteCarloMethod(Method):
         if tensor.shape[0] == 1:
             tensor = tensor.squeeze(0)
 
-        plate = Plate(self.plate_name, plate_size)
+        plate = Plate(self.plate_name, plate_size, plates.copy())
         plates.insert(0, plate)
 
         if isinstance(tensor, storch.Tensor):
@@ -462,7 +463,7 @@ class Expect(Method):
 
         plate_size = enumerate_tensor.shape[0]
 
-        plate = Plate(self.plate_name, plate_size)
+        plate = Plate(self.plate_name, plate_size, plates.copy())
         plates.insert(0, plate)
 
         s_tensor = StochasticTensor(
@@ -478,7 +479,7 @@ class Expect(Method):
         return s_tensor, plate
 
     def plate_weighting(
-        self, tensor: storch.StochasticTensor
+        self, tensor: storch.StochasticTensor, plate: Plate
     ) -> Optional[storch.Tensor]:
         # Weight by the probability of each possible event
         log_probs = tensor.distribution.log_prob(tensor)

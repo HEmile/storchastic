@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch
 import storch
 from torch.distributions import OneHotCategorical, Distribution
-from storch.method import SampleWithoutReplacementMethod
+from storch.method import SampleWithoutReplacementMethod, ScoreFunctionWOR
 
 
 class DiscreteVAE(VAE):
@@ -39,6 +39,8 @@ class DiscreteVAE(VAE):
             )
         elif args.method == "without_replacement":
             return SampleWithoutReplacementMethod("z", k=args.samples)
+        elif args.method == "score_wor":
+            return ScoreFunctionWOR("z", k=args.samples)
         else:
             raise ValueError("Invalid method passed to program arguments.")
 

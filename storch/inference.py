@@ -122,14 +122,14 @@ def backward(retain_graph=False, debug=False, print_costs=False) -> torch.Tensor
         # Compute gradients for the cost nodes themselves, if they require one.
         if reduced_cost.requires_grad:
             accum_loss += reduced_cost
-
         for parent in c.walk_parents(depth_first=False):
             # Instance check here instead of parent.stochastic, as backward methods are only used on these.
             if isinstance(parent, StochasticTensor):
                 stochastic_nodes.add(parent)
+            else:
+                continue
             if (
-                not isinstance(parent, StochasticTensor)
-                or not parent.requires_grad
+                not parent.requires_grad
                 or not parent.sampling_method
                 or not parent.sampling_method.adds_loss(parent, c)
             ):
@@ -139,10 +139,10 @@ def backward(retain_graph=False, debug=False, print_costs=False) -> torch.Tensor
             # possibly extra dimensions...?
             parent_tensor = parent._tensor
             reduced_cost = c
-            parent_plates = list(parent.multi_dim_plates())
+            parent_plates = parent.multi_dim_plates()
 
             # Reduce all plates that are in the cost node but not in the parent node
-            for plate in c.multi_dim_plates():
+            for plate in storch.order_plates(c.multi_dim_plates(), reverse=True):
                 if plate not in parent_plates:
                     reduced_cost = plate.reduce(reduced_cost, detach_weights=True)
 

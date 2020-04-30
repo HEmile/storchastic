@@ -15,3 +15,7 @@ from .util import print_graph
 from .storch import *
 import storch.typing
 import storch.nn
+
+import torch
+
+torch.Tensor.to = deterministic(torch.Tensor.to)

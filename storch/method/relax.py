@@ -179,7 +179,7 @@ class RELAX(MonteCarloMethod):
             return self._discretize(tensor, tensor.distribution)
 
     def plate_weighting(
-        self, tensor: storch.StochasticTensor
+        self, tensor: storch.StochasticTensor, plate: storch.Plate
     ) -> Optional[storch.Tensor]:
         # if REBAR: only weight over the true samples, put the relaxed samples to weight 0. This also makes sure
         # that they will not be backpropagated through in the cost backwards pass
@@ -188,7 +188,7 @@ class RELAX(MonteCarloMethod):
             weighting = tensor.new_zeros((3 * n,))
             weighting[:n] = tensor.new_tensor(1.0 / n)
             return weighting
-        return super().plate_weighting(tensor)
+        return super().plate_weighting(tensor, plate)
 
     def _discretize(self, tensor: torch.Tensor, distr: Distribution) -> torch.Tensor:
         # Adapted from pyro.relaxed_straight_through

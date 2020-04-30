@@ -79,7 +79,7 @@ def _unsqueeze_and_unwrap(
         # It can be possible that the ordering of the plates does not align with the ordering of the inputs.
         # This part corrects this.
         amt_recognized = 0
-        links: [storch.Plate] = list(a.multi_dim_plates())
+        links: [storch.Plate] = a.multi_dim_plates()
 
         for i, plate in enumerate(multi_dim_plates):
             if plate in links:
