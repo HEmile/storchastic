@@ -515,12 +515,8 @@ class AncestralPlate(storch.Plate):
 def log1mexp(a: torch.Tensor) -> torch.Tensor:
     """See appendix A of http://jmlr.org/papers/v21/19-985.html.
     Numerically stable implementation of log(1-exp(a))"""
-    r = torch.zeros_like(a)
     c = -0.693
-    # assert (a <= 0).all()
-    r[a > c] = (-a[a > c].expm1()).log()
-    r[a <= c] = (-a[a <= c].exp()).log1p()
-    return r
+    return torch.where(a > c, (-a.expm1()).log(), (-a.exp()).log1p())
 
 
 @storch.deterministic
