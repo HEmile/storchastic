@@ -73,7 +73,7 @@ class Plate:
             plate_weighting = self.weight.detach()
         # Case: The weight is a single number. First sum, then multiply with the weight (usually taking the mean)
         if plate_weighting.ndim == 0:
-            return storch.sum(tensor, [self.name]) * plate_weighting
+            return storch.sum(tensor, self) * plate_weighting
 
         # Case: There is a weight for each plate which is not dependent on the other batch dimensions
         elif plate_weighting.ndim == 1:
@@ -82,7 +82,7 @@ class Plate:
                 (...,) + (None,) * (tensor.ndim - index - 1)
             ]
             weighted_tensor = tensor * plate_weighting
-            return storch.sum(weighted_tensor, [self.name])
+            return storch.sum(weighted_tensor, self)
 
         # Case: The weight is a vector of numbers equal to batch dimension. Assumes it is a storch.Tensor
         else:
@@ -92,7 +92,7 @@ class Plate:
                         "Plate missing when reducing tensor: " + parent_plate.name
                     )
             weighted_tensor = tensor * plate_weighting
-            return storch.sum(weighted_tensor, [self.name])
+            return storch.sum(weighted_tensor, self)
 
     def on_collecting_args(self, plates: [Plate]) -> bool:
         """
