@@ -516,7 +516,8 @@ def log1mexp(a: torch.Tensor) -> torch.Tensor:
     """See appendix A of http://jmlr.org/papers/v21/19-985.html.
     Numerically stable implementation of log(1-exp(a))"""
     c = -0.693
-    return torch.where(a > c, (-a.expm1()).log(), (-a.exp()).log1p())
+    a1 = -a.abs()
+    return torch.where(a1 > c, torch.log(-a1.expm1()), torch.log1p(-a1.exp()))
 
 
 @storch.deterministic

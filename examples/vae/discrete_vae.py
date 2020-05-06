@@ -5,7 +5,11 @@ import torch.nn as nn
 import torch
 import storch
 from torch.distributions import OneHotCategorical, Distribution
-from storch.method import SampleWithoutReplacementMethod, ScoreFunctionWOR
+from storch.method import (
+    SampleWithoutReplacementMethod,
+    ScoreFunctionWOR,
+    UnorderedSetEstimator,
+)
 
 
 class DiscreteVAE(VAE):
@@ -41,6 +45,8 @@ class DiscreteVAE(VAE):
             return SampleWithoutReplacementMethod("z", k=args.samples)
         elif args.method == "score_wor":
             return ScoreFunctionWOR("z", k=args.samples)
+        elif args.method == "unordered":
+            return UnorderedSetEstimator("z", k=args.samples)
         else:
             raise ValueError("Invalid method passed to program arguments.")
 
