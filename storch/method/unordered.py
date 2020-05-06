@@ -151,5 +151,4 @@ class UnorderedSetEstimator(SampleWithoutReplacementMethod):
             baseline._tensor, [baseline], baseline.plates + [plate]
         )
         advantage = cost_node - baseline
-        print(advantage)
         return plate.log_probs * advantage

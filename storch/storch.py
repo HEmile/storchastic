@@ -128,18 +128,24 @@ def order_plates(plates: [storch.Plate], reverse=False):
             roots.append(p)
         in_edges[p.name] = p.parents.copy()
         for _p in p.parents:
-            out_edges[_p.name].append(p)
+            if _p.name in out_edges:
+                out_edges[_p.name].append(p)
+            # This is possible if the input list of plates does not contain the parent. We still need to register it
+            # to make sure the list is sorted in global topological ordering!
+            else:
+                out_edges[_p.name] = []
     while roots:
         n = roots.pop()
-        sorted.append(n)
+        if n in plates:
+            sorted.append(n)
         for m in out_edges[n.name]:
             remaining_edges = in_edges[m.name]
             remaining_edges.remove(n)
             if not remaining_edges:
                 roots.append(m)
     for remaining_edges in in_edges.values():
-        if remaining_edges:
-            raise ValueError("List of plates do not represent a DAG")
+        if remaining_edges and any(map(lambda p: p in plates, remaining_edges)):
+            raise ValueError("List of plates contains a cycle")
     if reverse:
         return reversed(sorted)
     return sorted
