@@ -41,7 +41,7 @@ def train(epoch, model, train_loader, device, optimizer, args, writer):
 
             # Variance of expect method is 0 by definition.
             variances = {}
-            if args.method != "expect":
+            if args.method != "expect" and args.variance_samples > 1:
                 _consider_param = "probs"
                 if args.latents < 3:
                     old_method = model.sampling_method
@@ -120,6 +120,7 @@ def test(epoch, model, test_loader, device):
                 #                       recon_batch.detach_tensor()[0].view(args.batch_size, 1, 28, 28)[:n]]) # Take the first sample (0)
                 # deterministic(save_image)(comparison.cpu(),
                 #          'results/reconstruction_' + str(epoch) + '.png', nrow=n)
+            storch.reset()
 
     test_loss /= i + 1
     print("====> Test set loss: {:.4f}".format(test_loss))

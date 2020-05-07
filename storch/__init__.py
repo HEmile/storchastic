@@ -18,4 +18,5 @@ import storch.nn
 
 import torch
 
+torch.is_tensor = storch.is_tensor
 torch.Tensor.to = deterministic(torch.Tensor.to)

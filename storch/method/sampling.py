@@ -216,7 +216,9 @@ class SampleWithoutReplacementMethod(Method):
         support_k_index = amt_plates
 
         # Equal to events: Shape for the different conditional independent dimensions
-        events = support.shape[amt_plates + 1 : -len(element_shape)]
+        events = support.shape[
+            amt_plates + 1 : -len(element_shape) if len(element_shape) > 0 else None
+        ]
 
         ranges = []
         for size in events:
@@ -270,7 +272,11 @@ class SampleWithoutReplacementMethod(Method):
         sampled_support_indices = support.new_zeros(
             size=support.shape[:support_k_index]  # distr_plates
             + (self.k,)
-            + support.shape[support_k_index + 1 : -len(element_shape)],  # events
+            + support.shape[
+                support_k_index + 1 : -len(element_shape)
+                if len(element_shape) > 0
+                else None
+            ],  # events
             dtype=torch.long,
         )
 
@@ -340,7 +346,7 @@ class SampleWithoutReplacementMethod(Method):
                 # plates x amt_samples
                 self.joint_log_probs = all_joint_log_probs.gather(dim=-1, index=arg_top)
                 # Index for the selected samples. Uses slice(amt_samples) for the first index in case k > |D_yv|
-                # None * amt_plates + (indices for events) + amt_samples
+                # (:) * amt_plates + (indices for events) + amt_samples
                 indexing = (
                     (slice(None),) * amt_plates + (slice(0, amt_samples),) + indices
                 )
@@ -515,12 +521,9 @@ class AncestralPlate(storch.Plate):
 def log1mexp(a: torch.Tensor) -> torch.Tensor:
     """See appendix A of http://jmlr.org/papers/v21/19-985.html.
     Numerically stable implementation of log(1-exp(a))"""
-    r = torch.zeros_like(a)
     c = -0.693
-    # assert (a <= 0).all()
-    r[a > c] = (-a[a > c].expm1()).log()
-    r[a <= c] = (-a[a <= c].exp()).log1p()
-    return r
+    a1 = -a.abs()
+    return torch.where(a1 > c, torch.log(-a1.expm1()), torch.log1p(-a1.exp()))
 
 
 @storch.deterministic

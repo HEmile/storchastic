@@ -43,7 +43,7 @@ class ScoreFunctionWOR(SampleWithoutReplacementMethod):
         # Set the weight of the kth sample (kappa) to 0.
         iw[..., self.k - 1] = 0.0
         if biased:
-            WS = storch.sum(iw, self.plate_name).detach()
+            WS = storch.sum(iw, plate).detach()
             return iw / WS
         return iw
 
@@ -76,19 +76,19 @@ class ScoreFunctionWOR(SampleWithoutReplacementMethod):
                 break
         if self.use_baseline:
             iw = self._compute_iw(cost_plate, biased=False)
-            BS = storch.sum(iw * cost_node, self.plate_name)
+            BS = storch.sum(iw * cost_node, cost_plate)
             probs = cost_plate.log_probs.exp()
             if self.biased:
                 # Equation 11
-                WS = storch.sum(iw, self.plate_name)
+                WS = storch.sum(iw, cost_plate)
                 WiS = (WS - iw + probs).detach()
                 diff_cost = cost_node - BS / WS
-                return storch.sum(iw / WiS * diff_cost.detach(), self.plate_name)
+                return storch.sum(iw / WiS * diff_cost.detach(), cost_plate)
             else:
                 # Equation 10
                 weighted_cost = cost_node * (1 - probs + iw)
                 diff_cost = weighted_cost - BS
-                return storch.sum(iw * diff_cost.detach(), self.plate_name)
+                return storch.sum(iw * diff_cost.detach(), cost_plate)
         else:
             # Equation 9
             iw = self._compute_iw(cost_plate, self.biased)
