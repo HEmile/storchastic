@@ -138,7 +138,7 @@ class UnorderedSetEstimator(SampleWithoutReplacementMethod):
                 plate = _p
                 break
         if not self.use_baseline:
-            return plate.log_probs * cost_node
+            return plate.log_probs * cost_node.detach()
 
         # Subtract the 'average' cost of other samples, keeping in mind that samples are not independent.
         # TODO: Make sure the 2nd-order leave one out ratio is 0 for the diagonal.
@@ -151,4 +151,4 @@ class UnorderedSetEstimator(SampleWithoutReplacementMethod):
             baseline._tensor, [baseline], baseline.plates + [plate]
         )
         advantage = cost_node - baseline
-        return plate.log_probs * advantage
+        return plate.log_probs * advantage.detach()

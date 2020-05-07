@@ -36,8 +36,6 @@ def train(epoch, model, train_loader, device, optimizer, args, writer):
 
         optimizer.step()
         if cond_log:
-            # print("z", z._tensor[0])
-            # print("probs", z.distribution.probs._tensor[0])
             step = 100.0 * batch_idx / len(train_loader)
             global_step = 100 * (epoch - 1) + step
 
