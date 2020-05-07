@@ -216,7 +216,9 @@ class SampleWithoutReplacementMethod(Method):
         support_k_index = amt_plates
 
         # Equal to events: Shape for the different conditional independent dimensions
-        events = support.shape[amt_plates + 1 : -len(element_shape)]
+        events = support.shape[
+            amt_plates + 1 : -len(element_shape) if len(element_shape) > 0 else None
+        ]
 
         ranges = []
         for size in events:
@@ -270,7 +272,11 @@ class SampleWithoutReplacementMethod(Method):
         sampled_support_indices = support.new_zeros(
             size=support.shape[:support_k_index]  # distr_plates
             + (self.k,)
-            + support.shape[support_k_index + 1 : -len(element_shape)],  # events
+            + support.shape[
+                support_k_index + 1 : -len(element_shape)
+                if len(element_shape) > 0
+                else None
+            ],  # events
             dtype=torch.long,
         )
 
@@ -340,7 +346,7 @@ class SampleWithoutReplacementMethod(Method):
                 # plates x amt_samples
                 self.joint_log_probs = all_joint_log_probs.gather(dim=-1, index=arg_top)
                 # Index for the selected samples. Uses slice(amt_samples) for the first index in case k > |D_yv|
-                # None * amt_plates + (indices for events) + amt_samples
+                # (:) * amt_plates + (indices for events) + amt_samples
                 indexing = (
                     (slice(None),) * amt_plates + (slice(0, amt_samples),) + indices
                 )
