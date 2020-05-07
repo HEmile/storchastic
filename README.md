@@ -30,7 +30,7 @@ Use `pip install storchastic`. Requires [Pyro](http://pyro.ai) for now. Build on
 The first official release will be for PyTorch 1.5. This is because 1.5 introduces new functionality which allows for a
  much cleaner implementation of Storchastic. For more information, see [this issue](https://github.com/HEmile/storchastic/issues/59).
 
-## Implemented Algorithms
+## Algorithms
 Feel free to create an issue if an estimator is missing here.
 - Reparameterization [1, 3]
 - Score Function (REINFORCE) with Moving Average baseline [1, 4]
@@ -39,14 +39,17 @@ Feel free to create an issue if an estimator is missing here.
 - (Straight through) Gumbel Softmax [7, 8]
 - LAX, RELAX [9] 
 - REBAR [10]
+- REINFORCE Without Replacement [6]
+- Unordered Set Estimator [13]
 
 ### In development
 - Memory Augmented Policy Optimization [11]
 - Rao-Blackwellized REINFORCE [12]
-- Unordered Set Estimator [13]
+
 ### Planned
 - Measure valued derivatives [1, 14]
 - ARM [15]
+- Automatic Credit Assignment [16]
 - ...
 
 ## References
