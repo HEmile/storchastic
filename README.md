@@ -25,10 +25,9 @@ sequence models.
 [Example: Discrete Variational Auto-Encoder](TODO)
 
 ## Installation
-Use `pip install storchastic`. Requires [Pyro](http://pyro.ai) for now. Build on Python 3.7 and PyTorch 1.4.
+`pip install storchastic`
 
-The first official release will be for PyTorch 1.5. This is because 1.5 introduces new functionality which allows for a
- much cleaner implementation of Storchastic. For more information, see [this issue](https://github.com/HEmile/storchastic/issues/59).
+**Requires** Pytorch 1.5 (older versions will not do!) and [Pyro](http://pyro.ai). The code is build on Python 3.7.
 
 ## Algorithms
 Feel free to create an issue if an estimator is missing here.

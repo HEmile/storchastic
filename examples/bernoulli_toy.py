@@ -8,7 +8,7 @@ from torch.distributions import Bernoulli
 from storch.method import ScoreFunction, Expect, UnorderedSetEstimator
 
 p = torch.tensor([0.6, 0.51, 0.48])
-eta = torch.tensor(-4.0, requires_grad=True)
+eta = torch.tensor(-0.0, requires_grad=True)
 optim = torch.optim.SGD([eta], lr=1.0)
 
 
@@ -29,7 +29,7 @@ for n in range(2, 9):
     # _method = ScoreFunction("x", n, baseline_factory="batch_average")
     _method = UnorderedSetEstimator("x", n)
     gradients = []
-    for i in range(1):
+    for i in range(1000):
         gradients.append(experiment(_method).unsqueeze(0))
     gradients = torch.cat(gradients)
     print(n)

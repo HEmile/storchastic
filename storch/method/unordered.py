@@ -141,7 +141,6 @@ class UnorderedSetEstimator(SampleWithoutReplacementMethod):
             return plate.log_probs * cost_node.detach()
 
         # Subtract the 'average' cost of other samples, keeping in mind that samples are not independent.
-        # TODO: Make sure the 2nd-order leave one out ratio is 0 for the diagonal.
         # plates x k
         baseline = storch.sum(
             (plate.log_probs + plate.log_snd_leave_one_out).exp() * cost_node, plate
