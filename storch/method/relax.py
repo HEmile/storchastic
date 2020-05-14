@@ -57,9 +57,13 @@ class LAX(MonteCarloMethod):
         # TODO: Add baseline strength
 
     def mc_sample(
-        self, distr: Distribution, parents: [storch.Tensor], plates: [Plate]
+        self,
+        distr: Distribution,
+        parents: [storch.Tensor],
+        plates: [Plate],
+        n_samples: int,
     ) -> torch.Tensor:
-        sample = distr.rsample((self.n_samples,))
+        sample = distr.rsample((n_samples,))
         return sample
 
     def post_sample(self, tensor: storch.StochasticTensor) -> Optional[storch.Tensor]:
@@ -153,10 +157,14 @@ class RELAX(MonteCarloMethod):
         self.eta = 1.0
 
     def mc_sample(
-        self, distr: Distribution, parents: [storch.Tensor], plates: [Plate]
+        self,
+        distr: Distribution,
+        parents: [storch.Tensor],
+        plates: [Plate],
+        n_samples: int,
     ) -> torch.Tensor:
         relaxed_sample = rsample_gumbel(
-            distr, self.n_samples, self.temperature, straight_through=False
+            distr, n_samples, self.temperature, straight_through=False
         )
         # In REBAR, the objective function is evaluated for the Gumbel sample, the conditional Gumbel sample \tilde{z} and the argmax of the Gumbel sample.
         if self.rebar:
@@ -231,9 +239,7 @@ class RELAX(MonteCarloMethod):
                 probs.log() + probs.log1p() + v_prime.log() + v_prime.log1p()
             ) / self.temperature
             return log_sample.sigmoid()
-        # b=argmax(hard_sample)
         b = hard_sample.max(-1).indices
-        # b = F.one_hot(b, hard_sample.shape[-1])
 
         # See https://arxiv.org/abs/1711.00123
         log_v = v.log()

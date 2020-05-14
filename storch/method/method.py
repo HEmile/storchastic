@@ -159,7 +159,7 @@ class Method(ABC, torch.nn.Module):
         self, tensor: StochasticTensor, cost_node: CostTensor
     ) -> Optional[storch.Tensor]:
         """
-        
+
         :param tensor:
         :param cost_node:
         :return:
@@ -228,10 +228,10 @@ class Method(ABC, torch.nn.Module):
         )
 
 
-# For monte carlo sampled methods
 class MonteCarloMethod(Method):
     """
-    Monte Carlo methods use simple sampling methods that take n independent samples.
+    Monte Carlo methods are simple sampling methods that take n samples from sequences.
+    For discrete distributions, these sample with replacement.
     Unlike complex ancestral sampling methods such as SampleWithoutReplacementMethod, the sampling behaviour is not dependent
     on earlier samples in the stochastic computation graph (but the distributions are!).
     """
@@ -247,13 +247,20 @@ class MonteCarloMethod(Method):
         plates: [Plate],
         requires_grad: bool,
     ) -> (storch.StochasticTensor, Plate):
-        tensor = self.mc_sample(distr, parents, plates)
+        plate_in = False
+        for plate in plates:
+            if plate.name == self.plate_name:
+                plate_in = True
+                break
+        n_samples = 1 if plate_in else self.n_samples
+        tensor = self.mc_sample(distr, parents, plates, n_samples)
         plate_size = tensor.shape[0]
         if tensor.shape[0] == 1:
             tensor = tensor.squeeze(0)
 
-        plate = Plate(self.plate_name, plate_size, plates.copy())
-        plates.insert(0, plate)
+        if not plate_in:
+            plate = Plate(self.plate_name, plate_size, plates.copy())
+            plates.insert(0, plate)
 
         if isinstance(tensor, storch.Tensor):
             tensor = tensor._tensor
@@ -271,7 +278,16 @@ class MonteCarloMethod(Method):
         return s_tensor, plate
 
     @abstractmethod
-    def mc_sample(self, distr: Distribution, parents: [storch.Tensor], plates: [Plate]):
+    def mc_sample(
+        self,
+        distr: Distribution,
+        parents: [storch.Tensor],
+        plates: [Plate],
+        n_samples: int,
+    ):
+        pass
+
+    def on_plate_already_present(self, plate: Plate):
         pass
 
 
@@ -295,9 +311,13 @@ class Infer(MonteCarloMethod):
         self._score_method = ScoreFunction(plate_name, n_samples)
 
     def mc_sample(
-        self, distr: Distribution, parents: [storch.Tensor], plates: [Plate]
+        self,
+        distr: Distribution,
+        parents: [storch.Tensor],
+        plates: [Plate],
+        n_samples: int,
     ) -> torch.Tensor:
-        return self._method.mc_sample(distr, parents, plates)
+        return self._method.mc_sample(distr, parents, plates, n_samples)
 
     def estimator(
         self, tensor: StochasticTensor, cost_node: CostTensor
@@ -326,7 +346,11 @@ class Reparameterization(MonteCarloMethod):
     """
 
     def mc_sample(
-        self, distr: Distribution, parents: [storch.Tensor], plates: [Plate]
+        self,
+        distr: Distribution,
+        parents: [storch.Tensor],
+        plates: [Plate],
+        n_samples: int,
     ) -> torch.Tensor:
         if not distr.has_rsample:
             raise ValueError(
@@ -334,7 +358,7 @@ class Reparameterization(MonteCarloMethod):
                 "distribution, make sure to use eg GumbelSoftmax."
             )
         with storch.ignore_wrapping():
-            return distr.rsample((self.n_samples,))
+            return distr.rsample((n_samples,))
 
     def adds_loss(self, tensor: StochasticTensor, cost_node: CostTensor) -> bool:
         if has_differentiable_path(cost_node, tensor):
@@ -370,11 +394,15 @@ class GumbelSoftmax(Reparameterization):
         self.register_buffer("min_temperature", torch.tensor(min_temperature))
 
     def mc_sample(
-        self, distr: DiscreteDistribution, parents: [storch.Tensor], plates: [Plate],
+        self,
+        distr: DiscreteDistribution,
+        parents: [storch.Tensor],
+        plates: [Plate],
+        n_samples: int,
     ) -> torch.Tensor:
         with storch.ignore_wrapping():
             return rsample_gumbel(
-                distr, self.n_samples, self.temperature, self.straight_through
+                distr, n_samples, self.temperature, self.straight_through
             )
 
     def update_parameters(
@@ -412,10 +440,14 @@ class ScoreFunction(MonteCarloMethod):
                 raise ValueError("Invalid baseline name", baseline_factory)
 
     def mc_sample(
-        self, distr: Distribution, parents: [storch.Tensor], plates: [Plate]
+        self,
+        distr: Distribution,
+        parents: [storch.Tensor],
+        plates: [Plate],
+        n_samples: int,
     ) -> torch.Tensor:
         with storch.ignore_wrapping():
-            return distr.sample((self.n_samples,))
+            return distr.sample((n_samples,))
 
     def estimator(self, tensor: StochasticTensor, cost: CostTensor) -> storch.Tensor:
         log_prob = tensor.distribution.log_prob(tensor)

@@ -3,7 +3,7 @@ from typing import Optional
 import torch
 import storch
 
-from storch.method.sampling import SampleWithoutReplacementMethod, AncestralPlate
+from storch.method.swor_method import SampleWithoutReplacementMethod, AncestralPlate
 
 
 class ScoreFunctionWOR(SampleWithoutReplacementMethod):
