@@ -16,6 +16,32 @@ import itertools
 
 
 class Method(ABC, torch.nn.Module):
+    """
+    Base class of gradient estimation methods.
+
+    They are :class:`torch.nn.Modules`, and can therefore contain parameters to optimize.
+    Calling them (:meth:`forward`) with a :class:`torch.distributions.Distribution`
+    returns a sampled Tensor from that distribution that will use the gradient estimator in the backward pass.
+
+    Derived classes must implement :meth:`_sample_tensor`
+
+    """
+
+    def __init__(self, plate_name):
+        super().__init__()
+        self._estimation_pairs = []
+        self.register_buffer("iterations", torch.tensor(0, dtype=torch.long))
+        self.plate_name = plate_name
+
+    def forward(self, distr: Distribution) -> storch.tensor.StochasticTensor:
+        """
+        Calls the sample method to sample from the given distribution
+        :param torch.distribution.Distribution distr: The distribution to sample from.
+        :return: The sampled tensor
+        :rtype: storch.tensor.StochasticTensor
+        """
+        return self.sample(distr)
+
     @staticmethod
     def _create_hook(sample: StochasticTensor, name: str, plates: List[Plate]):
         accum_grads = sample.param_grads
@@ -38,16 +64,12 @@ class Method(ABC, torch.nn.Module):
 
         return hook
 
-    def __init__(self, plate_name):
-        super().__init__()
-        self._estimation_pairs = []
-        self.register_buffer("iterations", torch.tensor(0, dtype=torch.long))
-        self.plate_name = plate_name
-
-    def forward(self, distr: Distribution) -> storch.tensor.StochasticTensor:
-        return self.sample(distr)
-
     def sample(self, distr: Distribution) -> storch.tensor.StochasticTensor:
+        """
+        Samples from the given distribution according to this Method's sampling scheme.
+        :param distr:
+        :return:
+        """
         # Unwrap the distributions parameters
         params: Dict[str, storch.Tensor] = get_distr_parameters(
             distr, filter_requires_grad=False
@@ -136,6 +158,12 @@ class Method(ABC, torch.nn.Module):
     def _estimator(
         self, tensor: StochasticTensor, cost_node: CostTensor
     ) -> Optional[storch.Tensor]:
+        """
+        
+        :param tensor:
+        :param cost_node:
+        :return:
+        """
         self._estimation_pairs.append((tensor, cost_node))
         return self.estimator(tensor, cost_node)
 
