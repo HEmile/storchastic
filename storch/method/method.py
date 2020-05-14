@@ -230,13 +230,21 @@ class Method(ABC, torch.nn.Module):
 
 class MonteCarloMethod(Method):
     """
-    Monte Carlo methods are simple sampling methods that take n samples from sequences.
+    Base method for simple sampling methods that take n samples from sequences.
     For discrete distributions, these sample with replacement.
     Unlike complex ancestral sampling methods such as SampleWithoutReplacementMethod, the sampling behaviour is not dependent
     on earlier samples in the stochastic computation graph (but the distributions are!).
     """
 
-    def __init__(self, plate_name: str, n_samples: int = 1):
+    def __init__(
+        self, plate_name: str, n_samples: int = 1, optimize_duplicates: bool = True
+    ):
+        """
+        Creates a MonteCarloMethod
+        :param plate_name: Name of the plate
+        :param n_samples: Amount of samples to take
+        :param optimize_duplicates: Merges duplicate samples in the tensor to reduce computation
+        """
         super().__init__(plate_name)
         self.n_samples = n_samples
 

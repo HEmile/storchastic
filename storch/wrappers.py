@@ -227,10 +227,10 @@ def _prepare_args(
 
 
 def _process_deterministic(
-    o: Any, parents: [storch.Tensor], plates: [storch.Plate], name: str
+    o: Any, parents: [storch.Tensor], plates: [storch.Plate], name: str, index: int
 ):
     if o is None:
-        return
+        return None, index
     if isinstance(o, storch.Tensor):
         if o.stochastic:
             raise RuntimeError(
@@ -239,8 +239,16 @@ def _process_deterministic(
         # TODO: Does this require shape checking? Parent/Plate checking?
         return o
     if isinstance(o, torch.Tensor):  # Explicitly _not_ a storch.Tensor
-        t = storch.Tensor(o, parents, plates, name=name)
-        return t
+        t = storch.Tensor(o, parents, plates, name=name + str(index))
+        return t, index + 1
+    if is_iterable(o):
+        outputs = []
+        for _o in o:
+            t, index = _process_deterministic(_o, parents, plates, name, index)
+            outputs.append(t)
+        if isinstance(o, tuple):
+            return tuple(outputs), index
+        return outputs, index
     raise NotImplementedError(
         "Handling of other types of return values is currently not implemented: ", o
     )
@@ -290,17 +298,8 @@ def _handle_deterministic(
         if isinstance(reduce_plates, str):
             reduce_plates = [reduce_plates]
         plates = [p for p in plates if p.name not in reduce_plates]
-    if is_iterable(outputs):
-        n_outputs = []
-        for o in outputs:
-            n_outputs.append(
-                _process_deterministic(
-                    o, parents, plates, fn.__name__ + str(len(n_outputs))
-                )
-            )
-        outputs = n_outputs
-    else:
-        outputs = _process_deterministic(outputs, parents, plates, fn.__name__)
+
+    outputs = _process_deterministic(outputs, parents, plates, fn.__name__, 1)[0]
     return outputs
 
 
