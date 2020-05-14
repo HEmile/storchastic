@@ -2,7 +2,7 @@ from typing import Optional
 
 import torch
 import storch
-from storch.method.sampling import (
+from storch.method.swor_method import (
     SampleWithoutReplacementMethod,
     log1mexp,
 )

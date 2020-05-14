@@ -21,7 +21,7 @@ plt_n1 = 3
 plt_n2 = 2
 
 # Define swr method
-swr_method = storch.ScoreFunctionWOR("z", k - 1, biased=True, use_baseline=False)
+swr_method = storch.ScoreFunctionWOR("z", k, biased=True, use_baseline=False)
 normal_method1 = storch.ScoreFunction("n1", plt_n1)
 
 l_entropy = torch.tensor([-3.0, -3.0, 2, -2.0], requires_grad=True)
@@ -65,8 +65,8 @@ z_4 = swr_method.sample(d4)
 print("z3", z_3)
 print("z4", z_4)
 
-assert z_3.shape == (plt_n1, k, event, d_yv)
-assert z_4.shape == (plt_n1, k, d_yv)
+assert z_3.shape == (plt_n1, k, event, d_yv) or z_3.shape == (k, plt_n1, event, d_yv)
+assert z_4.shape == (plt_n1, k, d_yv) or z_4.shape == (k, plt_n1, d_yv)
 
 normal_method2 = storch.ScoreFunction("n2", plt_n2)
 # n2
@@ -81,8 +81,15 @@ d5 = OneHotCategorical(logits=n_l_entropy)
 z_5 = swr_method.sample(d5)
 
 print("z5", z_5)
-
-assert z_5.shape == (plt_n1, plt_n2, k, d_yv) or z_5.shape == (plt_n2, plt_n1, k, d_yv)
+if isinstance(swr_method, storch.SampleWithoutReplacementMethod):
+    assert z_5.shape == (plt_n1, plt_n2, k, d_yv) or z_5.shape == (
+        plt_n2,
+        plt_n1,
+        k,
+        d_yv,
+    )
+else:
+    assert z_5.shape == (plt_n2, k, d_yv) or z_5.shape == (k, plt_n2, d_yv)
 
 d6 = OneHotCategorical(logits=z_3 + z_4.unsqueeze(-2) - z_5.unsqueeze(-2))
 
