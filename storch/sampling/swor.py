@@ -14,6 +14,8 @@ class SampleWithoutReplacement(SamplingMethod):
     REINFORCE without replacement https://openreview.net/forum?id=r1lgTGL5DE
     """
 
+    EPS = 1e-8
+
     def __init__(self, plate_name: str, k: int, biased_iw: bool = False):
         super().__init__(plate_name)
         if k < 2:
@@ -406,7 +408,7 @@ class SampleWithoutReplacement(SamplingMethod):
     def plate_weighting(
         self, tensor: storch.StochasticTensor, plate: storch.Plate
     ) -> Optional[storch.Tensor]:
-        return self.compute_iw(plate, self.biased).detach()
+        return self.compute_iw(plate, self.biased_iw).detach()
 
     def compute_iw(self, plate: AncestralPlate, biased: bool):
         # Compute importance weights. The kth sample has 0 weight, and is only used to compute the importance weights

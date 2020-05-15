@@ -51,6 +51,14 @@ class LAX(Reparameterization):
         c_phi: Optional[Callable[[torch.Tensor], torch.Tensor]] = None,
         in_dim=None,
     ):
+        """
+        Either c_phi or in_dim needs to be non-None!
+        :param plate_name: Name of the plate
+        :param sampling_method: The sampling method to use
+        :param n_samples: The amount of samples to take
+        :param c_phi: The baseline network. Needs to be specified if `in_dim`  is not specified.
+        :param in_dim: The size of the default baseline. Needs to be set if `c_phi` is not specified.
+        """
         super().__init__(plate_name, sampling_method, n_samples)
         if c_phi:
             self.c_phi = c_phi

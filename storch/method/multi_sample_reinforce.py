@@ -12,8 +12,6 @@ class ScoreFunctionWOR(Method):
     Use biased=True for the biased normalized version which has lower variance.
     """
 
-    EPS = 1e-8
-
     def __init__(
         self, plate_name: str, k: int, biased: bool = True, use_baseline: bool = True
     ):
