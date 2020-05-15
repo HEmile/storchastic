@@ -1,15 +1,20 @@
 from __future__ import annotations
-from typing import Optional, Union, List
+from typing import Optional, Union, List, Callable
 
 import storch
 import torch
 from torch.distributions import Distribution, Gumbel
 import itertools
-from storch.method.method import Method
+from storch.sampling import SamplingMethod
 
 
-class SampleWithoutReplacementMethod(Method):
-    def __init__(self, plate_name: str, k: int):
+class SampleWithoutReplacement(SamplingMethod):
+    """
+    Implements Stochastic Beam Search https://arxiv.org/abs/1903.06059 with the weighting as defined by
+    REINFORCE without replacement https://openreview.net/forum?id=r1lgTGL5DE
+    """
+
+    def __init__(self, plate_name: str, k: int, biased_iw: bool = False):
         super().__init__(plate_name)
         if k < 2:
             raise ValueError(
@@ -17,6 +22,7 @@ class SampleWithoutReplacementMethod(Method):
             )
         self.k = k
         self.reset()
+        self.biased_iw = biased_iw
 
     def reset(self):
         # Cumulative log probabilities of the samples
@@ -30,7 +36,7 @@ class SampleWithoutReplacementMethod(Method):
         # The previously created plates
         self.last_plate = None
 
-    def _sample_tensor(
+    def sample(
         self,
         distr: Distribution,
         parents: [storch.Tensor],
@@ -89,7 +95,6 @@ class SampleWithoutReplacementMethod(Method):
             plates,
             self.plate_name,
             plate_size,
-            self,
             distr,
             requires_grad or self.joint_log_probs.requires_grad,
         )
@@ -398,6 +403,30 @@ class SampleWithoutReplacementMethod(Method):
         expanded_indices = right_expand_as(sampled_support_indices, support)
         return support.gather(dim=support_k_index, index=expanded_indices)
 
+    def plate_weighting(
+        self, tensor: storch.StochasticTensor, plate: storch.Plate
+    ) -> Optional[storch.Tensor]:
+        return self.compute_iw(plate, self.biased).detach()
+
+    def compute_iw(self, plate: AncestralPlate, biased: bool):
+        # Compute importance weights. The kth sample has 0 weight, and is only used to compute the importance weights
+        q = (
+            1
+            - (
+                -(
+                    plate.log_probs
+                    - plate.perturb_log_probs._tensor[..., self.k - 1].unsqueeze(-1)
+                ).exp()
+            ).exp()
+        ).detach()
+        iw = plate.log_probs.exp() / (q + self.EPS)
+        # Set the weight of the kth sample (kappa) to 0.
+        iw[..., self.k - 1] = 0.0
+        if biased:
+            WS = storch.sum(iw, plate).detach()
+            return iw / WS
+        return iw
+
     def on_plate_already_present(self, plate: storch.Plate):
         if (
             not isinstance(plate, AncestralPlate)
@@ -405,6 +434,16 @@ class SampleWithoutReplacementMethod(Method):
             or plate.n > self.k
         ):
             super().on_plate_already_present(plate)
+
+    def set_mc_sample(
+        self,
+        new_sample_func: Callable[
+            [Distribution, [storch.Tensor], [storch.Plate], int], torch.Tensor
+        ],
+    ) -> SamplingMethod:
+        raise RuntimeError(
+            "Cannot set monte carlo sampling for sampling without replacement."
+        )
 
 
 class AncestralPlate(storch.Plate):
