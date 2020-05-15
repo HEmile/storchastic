@@ -10,6 +10,7 @@ from storch.sampling import SamplingMethod
 
 class SampleWithoutReplacement(SamplingMethod):
     """
+    Base class for gradient estimation methods that sample without replacement from (sequences of) discrete distributions.
     Implements Stochastic Beam Search https://arxiv.org/abs/1903.06059 with the weighting as defined by
     REINFORCE without replacement https://openreview.net/forum?id=r1lgTGL5DE
     """
@@ -17,6 +18,7 @@ class SampleWithoutReplacement(SamplingMethod):
     EPS = 1e-8
 
     def __init__(self, plate_name: str, k: int, biased_iw: bool = False):
+
         super().__init__(plate_name)
         if k < 2:
             raise ValueError(
@@ -45,8 +47,15 @@ class SampleWithoutReplacement(SamplingMethod):
         plates: [storch.Plate],
         requires_grad: bool,
     ) -> (torch.Tensor, storch.Plate):
-        # Perform stochastic beam search given the log-probs and perturbed log probs so far.
-        # Samples k values from this distribution so that all total configurations are unique.
+        """
+        Perform stochastic beam search given the log-probs and perturbed log probs so far.
+        Samples k values from this distribution so that all total configurations are unique.
+        :param distr torch.distribution.Distribution: The distribution to sample from. Must be enumerable
+        :param parents [storch.Tensor]: Parents of this stochastic node
+        :param plates [storch.Plate]:
+        :param requires_grad bool:
+        :return: Tensor and plate
+        """
 
         multi_dim_plates = []
         for plate in plates:

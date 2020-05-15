@@ -170,7 +170,7 @@ class Method(ABC, torch.nn.Module):
         self, tensor: StochasticTensor, cost_node: CostTensor
     ) -> Optional[storch.Tensor]:
         """
-        
+
         :param tensor:
         :param cost_node:
         :return:
