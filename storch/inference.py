@@ -140,12 +140,14 @@ def backward(retain_graph=False, debug=False, print_costs=False) -> torch.Tensor
             parent_tensor = parent._tensor
             reduced_cost = c
             parent_plates = parent.multi_dim_plates()
-
+            print("----------")
+            print(reduced_cost.plates)
             # Reduce all plates that are in the cost node but not in the parent node
             for plate in storch.order_plates(c.multi_dim_plates(), reverse=True):
+                print(plate)
                 if plate not in parent_plates:
                     reduced_cost = plate.reduce(reduced_cost, detach_weights=True)
-
+                    print(reduced_cost.plates)
             # Align the parent tensor so that the plate dimensions are in the same order as the cost tensor
             for index_c, plate in enumerate(reduced_cost.multi_dim_plates()):
                 index_p = parent_plates.index(plate)
