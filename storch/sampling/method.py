@@ -102,15 +102,21 @@ class MonteCarlo(SamplingMethod):
         plates: [Plate],
         requires_grad: bool,
     ) -> (storch.StochasticTensor, Plate):
+        plate = None
+        for plate in plates:
+            if plate.name == self.plate_name:
+                plate = plate
+                break
+        n_samples = 1 if plate else self.n_samples
         with storch.ignore_wrapping():
-            # TODO: this is changed in the new version...
-            tensor = self.mc_sample(distr, parents, plates, self.n_samples)
+            tensor = self.mc_sample(distr, parents, plates, n_samples)
         plate_size = tensor.shape[0]
         if tensor.shape[0] == 1:
             tensor = tensor.squeeze(0)
 
-        plate = Plate(self.plate_name, plate_size, plates.copy())
-        plates.insert(0, plate)
+        if not plate:
+            plate = Plate(self.plate_name, plate_size, plates.copy())
+            plates.insert(0, plate)
 
         if isinstance(tensor, storch.Tensor):
             tensor = tensor._tensor
