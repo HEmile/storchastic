@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import itertools
 from abc import abstractmethod
-from typing import Union, List, Optional
+from typing import Union, List, Optional, Tuple
 
 from storch.sampling.method import SamplingMethod
 from torch.distributions import Distribution
@@ -398,6 +398,119 @@ class SequenceDecoding(SamplingMethod):
         )
 
 
+class IterDecoding(SequenceDecoding):
+    @abstractmethod
+    def decode(
+        self,
+        d_log_probs: storch.Tensor,
+        support: storch.Tensor,
+        joint_log_probs: Optional[storch.Tensor],
+        is_conditional_sample: bool,
+        amt_plates: int,
+        event_shape: torch.Size,
+        element_shape: torch.Size,
+    ) -> (storch.Tensor, storch.Tensor, storch.Tensor):
+        """
+        Decode given the input arguments
+        :param d_log_probs: Log probability given by the distribution. distr_plates x k? x |D_yv| x events
+        :param support: The support of this distribution. plates x |D_yv| x events x event_shape
+        :param joint_log_probs: The log probabilities of the samples so far. None if nothing is sampled yet. prev_plates x amt_samples
+        :param is_conditional_sample: True if a parent has already been sampled. This means the plates are more complex!
+        :param amt_plates: The total amount of plates in both the distribution and the previously sampled variables
+        :param event_shape: The shape of the conditionally independent events
+        :param element_shape: The shape of a domain element. (|D_yv|,) for `torch.distributions.OneHotCategorical`, otherwise (,).
+        :return: 3-tuple of `storch.Tensor`. 1: The sampled value. 2: The new joint log probabilities of the samples.
+        3: How the samples index the parent samples. Can just be a range if there is no choosing happening.
+        """
+        ranges = []
+        for size in event_shape:
+            ranges.append(list(range(size)))
+
+        amt_samples = 0
+        parent_indexing = None
+        if joint_log_probs is not None:
+            # Initialize a tensor (self.parent_indexing) that keeps track of what samples link to previous choices of samples
+            # Note that joint_log_probs.shape[-1] is amt_samples, not k. It's possible that amt_samples < k!
+            amt_samples = joint_log_probs.shape[-1]
+            # plates x k
+            parent_indexing = support.new_zeros(
+                size=support.shape[:amt_plates] + (self.k,), dtype=torch.long
+            )
+
+            # probably can go wrong if plates are missing.
+            parent_indexing[..., :amt_samples] = left_expand_as(
+                torch.arange(amt_samples), parent_indexing
+            )
+        # plates x k x events
+        sampled_support_indices = support.new_zeros(
+            size=support.shape[:amt_plates]  # plates
+            + (self.k,)
+            + support.shape[
+                amt_plates + 1 : -len(element_shape) if len(element_shape) > 0 else None
+            ],  # events
+            dtype=torch.long,
+        )
+        # Sample independent tensors in sequence
+        # Iterate over the different (conditionally) independent samples being taken (the events)
+        for indices in itertools.product(*ranges):
+            # Log probabilities of the different options for this sample step (event)
+            # distr_plates x k? x |D_yv|
+            yv_log_probs = d_log_probs[(...,) + indices]
+            (
+                sampled_support_indices,
+                joint_log_probs,
+                parent_indexing,
+                amt_samples,
+            ) = self.decode_step(
+                indices,
+                yv_log_probs,
+                joint_log_probs,
+                sampled_support_indices,
+                parent_indexing,
+                is_conditional_sample,
+                amt_plates,
+                amt_samples,
+            )
+        # Finally, index the support using the sampled indices to get the sample!
+        if amt_samples < self.k:
+            # plates x amt_samples x events
+            sampled_support_indices = sampled_support_indices[
+                (...,) + (slice(amt_samples),) + (slice(None),) * len(ranges)
+            ]
+        expanded_indices = right_expand_as(sampled_support_indices, support)
+        sample = support.gather(dim=amt_plates, index=expanded_indices)
+        return sample, joint_log_probs, parent_indexing
+
+    @abstractmethod
+    def decode_step(
+        self,
+        indices: Tuple[int],
+        yv_log_probs: storch.Tensor,
+        joint_log_probs: Optional[storch.Tensor],
+        sampled_support_indices: Optional[storch.Tensor],
+        parent_indexing: Optional[storch.Tensor],
+        is_conditional_sample: bool,
+        amt_plates: int,
+        amt_samples: int,
+    ) -> (storch.Tensor, storch.Tensor, storch.Tensor, int):
+        """
+        Decode given the input arguments for a specific event
+        :param indices: Tuple of integers indexing the current event to sample.
+        :param yv_log_probs:  Log probabilities of the different options for this event. distr_plates x k? x |D_yv|
+        :param joint_log_probs: The log probabilities of the samples so far. None if `not is_conditional_sample`. prev_plates x amt_samples
+        :param sampled_support_indices: Tensor of samples so far. None if this is the first set of indices. plates x k x events
+        :param parent_indexing: Tensor indexing the parent sample. None if `not is_conditional_sample`.
+        :param is_conditional_sample: True if a parent has already been sampled. This means the plates are more complex!
+        :param amt_plates: The total amount of plates in both the distribution and the previously sampled variables
+        :param amt_samples: The amount of active samples.
+        :return: 3-tuple of `storch.Tensor`. 1: sampled_support_indices, with `:, indices` referring to the indices for the support.
+        2: The updated `joint_log_probs` of the samples.
+        3: The updated `parent_indexing`. How the samples index the parent samples. Can just return parent_indexing if nothing happens.
+        4: The amount of active samples after this step.
+        """
+        pass
+
+
 def expand_with_ignore_as(
     tensor, expand_as, ignore_dim: Union[str, int]
 ) -> torch.Tensor:
@@ -424,3 +537,16 @@ def expand_with_ignore_as(
     return storch.deterministic(_expand_with_ignore, expand_plates=True)(
         tensor, expand_as, ignore_dim
     )
+
+
+@storch.deterministic(l_broadcast=False)
+def right_expand_as(tensor, expand_as):
+    diff = expand_as.ndim - tensor.ndim
+    return tensor[(...,) + (None,) * diff].expand(
+        (-1,) * tensor.ndim + expand_as.shape[tensor.ndim :]
+    )
+
+
+def left_expand_as(tensor, expand_as):
+    diff = expand_as.ndim - tensor.ndim
+    return tensor[(None,) * diff].expand(expand_as.shape[:diff] + (-1,) * tensor.ndim)
