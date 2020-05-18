@@ -216,7 +216,8 @@ class Method(ABC, torch.nn.Module):
 
 class Infer(Method):
     """
-    Method that automatically chooses reparameterization if it is available, otherwise the score function.
+    Method that automatically chooses reparameterization if it is available, and otherwise the score function
+    with appropriate baseline (moving average if n_samples = 1, else batch average).
     """
 
     def __init__(
@@ -233,7 +234,14 @@ class Infer(Method):
         ):
             _method = GumbelSoftmax(plate_name, sampling_method, n_samples)
         else:
-            _method = ScoreFunction(plate_name, sampling_method, n_samples)
+            _method = ScoreFunction(
+                plate_name,
+                sampling_method,
+                n_samples,
+                baseline_factory="moving_average"
+                if n_samples == 1
+                else "batch_average",
+            )
         super().__init__(plate_name, _method.sampling_method)
         self._score_method = ScoreFunction(plate_name, sampling_method, n_samples)
         self._method = _method

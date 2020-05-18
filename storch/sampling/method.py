@@ -103,9 +103,9 @@ class MonteCarlo(SamplingMethod):
         requires_grad: bool,
     ) -> (storch.StochasticTensor, Plate):
         plate = None
-        for plate in plates:
-            if plate.name == self.plate_name:
-                plate = plate
+        for _plate in plates:
+            if _plate.name == self.plate_name:
+                plate = _plate
                 break
         n_samples = 1 if plate else self.n_samples
         with storch.ignore_wrapping():

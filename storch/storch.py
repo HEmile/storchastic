@@ -3,6 +3,7 @@ from typing import List, Union, Optional, Tuple
 import storch
 import torch
 
+from storch.typing import AnyTensor
 
 _index = Union[str, int, storch.Plate]
 _indices = Union[List[_index], _index]
@@ -54,7 +55,7 @@ def expand_as(tensor: _tensor, expand_as: _tensor) -> torch.Tensor:
 
 
 def _handle_inputs(
-    tensor: torch.Tensor,
+    tensor: AnyTensor,
     plates: Optional[List[storch.Plate]],
     plate_names: Optional[List[str]],
 ) -> (storch.Tensor, List[storch.Plate]):
@@ -91,7 +92,7 @@ def gather(input: storch.Tensor, dim: str, index: storch.Tensor):
 
 
 def reduce_plates(
-    tensor: torch.Tensor,
+    tensor: AnyTensor,
     *,
     plates: Optional[List[storch.Plate]] = None,
     plate_names: Optional[List[str]] = None,

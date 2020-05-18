@@ -399,7 +399,6 @@ class SequenceDecoding(SamplingMethod):
 
 
 class IterDecoding(SequenceDecoding):
-    @abstractmethod
     def decode(
         self,
         d_log_probs: storch.Tensor,

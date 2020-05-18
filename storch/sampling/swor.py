@@ -29,7 +29,7 @@ class SampleWithoutReplacement(IterDecoding):
     def reset(self):
         super().reset()
         # Cumulative perturbed log probabilities of the samples
-        self.perturbed_log_probs = None
+        self.perturbed_log_probs: Optional[storch.Tensor] = None
 
     def decode_step(
         self,
@@ -43,7 +43,7 @@ class SampleWithoutReplacement(IterDecoding):
         amt_samples: int,
     ) -> (storch.Tensor, storch.Tensor, storch.Tensor):
         """
-        Decode given the input arguments for a specific event using stochastic beam search. 
+        Decode given the input arguments for a specific event using stochastic beam search.
         :param indices: Tuple of integers indexing the current event to sample.
         :param yv_log_probs:  Log probabilities of the different options for this event. distr_plates x k? x |D_yv|
         :param joint_log_probs: The log probabilities of the samples so far. None if `not is_conditional_sample`. prev_plates x amt_samples
@@ -141,9 +141,9 @@ class SampleWithoutReplacement(IterDecoding):
     def create_plate(self, plate_size: int, plates: [storch.Plate]) -> AncestralPlate:
         plate = super().create_plate(plate_size, plates)
         plate.perturb_log_probs = storch.Tensor(
-            self.perturb_log_probs._tensor,
-            [self.perturb_log_probs],
-            self.perturb_log_probs.plates + [plate],
+            self.perturbed_log_probs._tensor,
+            [self.perturbed_log_probs],
+            self.perturbed_log_probs.plates + [plate],
         )
         return plate
 
