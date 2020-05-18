@@ -123,9 +123,10 @@ class SequenceDecoding(SamplingMethod):
 
     EPS = 1e-8
 
-    def __init__(self, plate_name: str, k: int):
+    def __init__(self, plate_name: str, k: int, eos: None):
         super().__init__(plate_name)
         self.k = k
+        self.eos = eos
         self.reset()
 
     def reset(self):
@@ -138,6 +139,8 @@ class SequenceDecoding(SamplingMethod):
         self.variable_index = 0
         # The previously created plates
         self.last_plate = None
+        # What runs are already finished
+        self.finished_samples = None
 
     def sample(
         self,
@@ -193,9 +196,18 @@ class SequenceDecoding(SamplingMethod):
         #  (can be 0, eg Categorical, or equal to |D_yv| for OneHotCategorical)
 
         # Do the decoding step given the prepared tensors
-        samples, self.joint_log_probs, self.parent_indexing = self.decode(
-            distr, self.joint_log_probs, orig_distr_plates
+        samples, new_joint_log_probs, self.parent_indexing = self.decode(
+            distr, self.joint_log_probs, parents, orig_distr_plates
         )
+
+        if self.finished_samples:
+            # Make sure we do not change the log probabilities for samples that were already finished
+            self.joint_log_probs = (
+                self.joint_log_probs * self.finished_samples
+                + new_joint_log_probs * (1 - self.finished_samples)
+            )
+        else:
+            self.joint_log_probs = new_joint_log_probs
 
         k_index = 0
         plates = orig_distr_plates
@@ -232,26 +244,42 @@ class SequenceDecoding(SamplingMethod):
             distr,
             requires_grad or self.joint_log_probs.requires_grad,
         )
+
+        # Find out what sequences have reached the EOS token, and make sure to always sample EOS after that.
+        if self.eos:
+            finished = s_tensor.eq(self.eos)
+            if self.finished_samples:
+                self.finished_samples = torch.max(finished, self.finished_samples)
+            else:
+                self.finished_samples = finished
+            s_tensor._tensor[finished] = self.eos
         # Increase variable index
         self.variable_index += 1
         return s_tensor, self.last_plate
+
+    def plate_weighting(
+        self, tensor: storch.StochasticTensor, plate: storch.Plate
+    ) -> Optional[storch.Tensor]:
+        if self.eos:
+            active = 1 - self.finished_samples
+            amt_active: storch.Tensor = storch.sum(active, plate)
+            return active / amt_active
+        return super().plate_weighting(tensor, plate)
 
     @abstractmethod
     def decode(
         self,
         distribution: Distribution,
         joint_log_probs: Optional[storch.Tensor],
+        parents: [storch.Tensor],
         orig_distr_plates: [storch.Plate],
     ) -> (storch.Tensor, storch.Tensor, storch.Tensor):
         """
         Decode given the input arguments
-        :param d_log_probs: Log probability given by the distribution. distr_plates x k? x |D_yv| x events
-        :param support: The support of this distribution. plates x |D_yv| x events x event_shape
+        :param distribution: The distribution to decode
         :param joint_log_probs: The log probabilities of the samples so far. prev_plates x amt_samples
-        :param is_conditional_sample: True if a parent has already been sampled. This means the plates are more complex!
-        :param amt_plates: The total amount of plates in both the distribution and the previously sampled variables
-        :param event_shape: The shape of the conditionally independent events
-        :param element_shape: The shape of a domain element. (|D_yv|,) for `torch.distributions.OneHotCategorical`, otherwise (,).
+        :param parents: List of parents of this tensor
+        :param orig_distr_plates: List of plates from the distribution. Can include the self plate k.
         :return: 3-tuple of `storch.Tensor`. 1: The sampled value. 2: The new joint log probabilities of the samples.
         3: How the samples index the parent samples. Can just be a range if there is no choosing happening.
         For all of these, the last plate index should be the plate index, with the other plates like `all_plates`
@@ -271,22 +299,50 @@ class SequenceDecoding(SamplingMethod):
         )
 
 
+class MCDecoder(SequenceDecoding):
+    def decode(
+        self,
+        distribution: Distribution,
+        joint_log_probs: Optional[storch.Tensor],
+        parents: [storch.Tensor],
+        orig_distr_plates: [storch.Plate],
+    ) -> (storch.Tensor, storch.Tensor, storch.Tensor):
+
+        is_conditional_sample = False
+
+        for plate in orig_distr_plates:
+            if plate.name == self.plate_name:
+                is_conditional_sample = True
+
+        if is_conditional_sample:
+            sample = self.mc_sample(
+                distribution, parents, orig_distr_plates, 1
+            ).squeeze(0)
+        else:
+            sample = self.mc_sample(distribution, parents, orig_distr_plates, self.k)
+
+        s_log_probs = distribution.log_prob(sample)
+        if joint_log_probs:
+            joint_log_probs += s_log_probs
+        else:
+            joint_log_probs = s_log_probs
+        return sample, joint_log_probs, None
+
+
 class IterDecoding(SequenceDecoding):
     def decode(
         self,
         distr: Distribution,
         joint_log_probs: Optional[storch.Tensor],
+        parents: [storch.Tensor],
         orig_distr_plates: [storch.Plate],
     ) -> (storch.Tensor, storch.Tensor, storch.Tensor):
         """
         Decode given the input arguments
-        :param d_log_probs: Log probability given by the distribution. distr_plates x k? x |D_yv| x events
-        :param support: The support of this distribution. plates x |D_yv| x events x event_shape
-        :param joint_log_probs: The log probabilities of the samples so far. None if nothing is sampled yet. prev_plates x amt_samples
-        :param is_conditional_sample: True if a parent has already been sampled. This means the plates are more complex!
-        :param amt_plates: The total amount of plates in both the distribution and the previously sampled variables
-        :param event_shape: The shape of the conditionally independent events
-        :param element_shape: The shape of a domain element. (|D_yv|,) for `torch.distributions.OneHotCategorical`, otherwise (,).
+        :param distribution: The distribution to decode
+        :param joint_log_probs: The log probabilities of the samples so far. prev_plates x amt_samples
+        :param parents: List of parents of this tensor
+        :param orig_distr_plates: List of plates from the distribution. Can include the self plate k.
         :return: 3-tuple of `storch.Tensor`. 1: The sampled value. 2: The new joint log probabilities of the samples.
         3: How the samples index the parent samples. Can just be a range if there is no choosing happening.
         """

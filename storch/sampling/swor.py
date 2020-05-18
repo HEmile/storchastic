@@ -18,8 +18,8 @@ class SampleWithoutReplacement(IterDecoding):
 
     EPS = 1e-8
 
-    def __init__(self, plate_name: str, k: int, biased_iw: bool = False):
-        super().__init__(plate_name, k)
+    def __init__(self, plate_name: str, k: int, biased_iw: bool = False, eos=None):
+        super().__init__(plate_name, k, eos)
         if k < 2:
             raise ValueError(
                 "Can only sample with replacement for more than 1 samples."
@@ -65,7 +65,7 @@ class SampleWithoutReplacement(IterDecoding):
             # First condition on max being 0:
             self.perturbed_log_probs = 0.0
             first_sample = True
-        elif is_conditional_sample:
+        elif is_conditional_sample > 0:
             # Make sure we are selecting the correct log-probabilities. As parents have been selected, this might change!
             # plates x amt_samples x |D_yv|
             yv_log_probs = yv_log_probs.gather(
