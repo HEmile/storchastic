@@ -2,7 +2,7 @@ import storch
 import torch
 from torch.distributions import Bernoulli, OneHotCategorical
 
-expect = storch.Expect("x")
+expect = storch.method.Expect("x")
 probs = torch.tensor([0.01, 0.01, 0.01, 0.01, 0.01, 0.95], requires_grad=True)
 indices = torch.tensor([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
 b = OneHotCategorical(probs=probs)
@@ -14,7 +14,7 @@ storch.backward()
 
 expect_grad = z.grad["probs"].clone()
 
-method = storch.ScoreFunction("x", 1, baseline_factory="none")
+method = storch.method.UnorderedSetEstimator("x", k=6)
 # method = storch.REBAR()
 grads = []
 for i in range(100):

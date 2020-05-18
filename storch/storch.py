@@ -3,6 +3,7 @@ from typing import List, Union, Optional, Tuple
 import storch
 import torch
 
+from storch.typing import AnyTensor
 
 _index = Union[str, int, storch.Plate]
 _indices = Union[List[_index], _index]
@@ -54,7 +55,7 @@ def expand_as(tensor: _tensor, expand_as: _tensor) -> torch.Tensor:
 
 
 def _handle_inputs(
-    tensor: torch.Tensor,
+    tensor: AnyTensor,
     plates: Optional[List[storch.Plate]],
     plate_names: Optional[List[str]],
 ) -> (storch.Tensor, List[storch.Plate]):
@@ -91,7 +92,7 @@ def gather(input: storch.Tensor, dim: str, index: storch.Tensor):
 
 
 def reduce_plates(
-    tensor: torch.Tensor,
+    tensor: AnyTensor,
     *,
     plates: Optional[List[storch.Plate]] = None,
     plate_names: Optional[List[str]] = None,
@@ -113,6 +114,18 @@ def reduce_plates(
     return tensor
 
 
+def _isroot(plate: storch.Plate, plates: [storch.Plate]):
+    """
+    Returns true if the plate is a root of the list of plates.
+    """
+    for parent in plate.parents:
+        if parent in plates:
+            return False
+        if not _isroot(parent, plates):
+            return False
+    return True
+
+
 def order_plates(plates: [storch.Plate], reverse=False):
     """
     Topologically order the given plates.
@@ -124,7 +137,7 @@ def order_plates(plates: [storch.Plate], reverse=False):
     in_edges = {}
     out_edges = {p.name: [] for p in plates}
     for p in plates:
-        if not p.parents:
+        if _isroot(p, plates):
             roots.append(p)
         in_edges[p.name] = p.parents.copy()
         for _p in p.parents:

@@ -7,7 +7,7 @@ import storch
 
 
 _cost_tensors: [CostTensor] = []
-_sampling_methods: [storch.Method] = []
+_sampling_methods: [storch.method.Method] = []
 
 
 def denote_independent(
@@ -130,8 +130,8 @@ def backward(retain_graph=False, debug=False, print_costs=False) -> torch.Tensor
                 continue
             if (
                 not parent.requires_grad
-                or not parent.sampling_method
-                or not parent.sampling_method.adds_loss(parent, c)
+                or not parent.method
+                or not parent.method.adds_loss(parent, c)
             ):
                 continue
 
@@ -140,12 +140,10 @@ def backward(retain_graph=False, debug=False, print_costs=False) -> torch.Tensor
             parent_tensor = parent._tensor
             reduced_cost = c
             parent_plates = parent.multi_dim_plates()
-
             # Reduce all plates that are in the cost node but not in the parent node
             for plate in storch.order_plates(c.multi_dim_plates(), reverse=True):
                 if plate not in parent_plates:
                     reduced_cost = plate.reduce(reduced_cost, detach_weights=True)
-
             # Align the parent tensor so that the plate dimensions are in the same order as the cost tensor
             for index_c, plate in enumerate(reduced_cost.multi_dim_plates()):
                 index_p = parent_plates.index(plate)
@@ -167,18 +165,16 @@ def backward(retain_graph=False, debug=False, print_costs=False) -> torch.Tensor
                 parent_plates,
                 parent.name,
                 parent.n,
-                parent.sampling_method,
                 parent.distribution,
                 parent._requires_grad,
+                parent.method,
             )
             # Fake the new parent to be the old parent within the graph by mimicing its place in the graph
             new_parent._parents = parent._parents
             for p, has_link in new_parent._parents:
                 p._children.append((new_parent, has_link))
             new_parent._children = parent._children
-            cost_per_sample = parent.sampling_method._estimator(
-                new_parent, reduced_cost
-            )
+            cost_per_sample = parent.method._estimator(new_parent, reduced_cost)
 
             if cost_per_sample is not None:
                 # The backwards call for reparameterization happens in the
@@ -195,8 +191,8 @@ def backward(retain_graph=False, debug=False, print_costs=False) -> torch.Tensor
         accum_loss._tensor.backward(retain_graph=retain_graph)
 
     for s_node in stochastic_nodes:
-        if s_node.sampling_method:
-            s_node.sampling_method._update_parameters()
+        if s_node.method:
+            s_node.method._update_parameters()
 
     if not retain_graph:
         reset()

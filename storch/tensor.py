@@ -658,15 +658,15 @@ class StochasticTensor(Tensor):
         plates: [Plate],
         name: str,
         n: int,
-        sampling_method: Optional[storch.Method],
         distribution: Distribution,
         requires_grad: bool,
+        method: Optional[storch.Method] = None,
     ):
         self.distribution = distribution
         super().__init__(tensor, parents, plates, name)
         self._requires_grad = requires_grad
         self.n = n
-        self.sampling_method = sampling_method
+        self.method = method
         self.param_grads = {}
         self._grad = None
 
@@ -683,6 +683,9 @@ class StochasticTensor(Tensor):
     @property
     def grad(self):
         return self.param_grads
+
+    def _set_method(self, method: storch.Method):
+        self.method = method
 
 
 is_tensor = lambda a: isinstance(a, torch.Tensor) or isinstance(a, Tensor)

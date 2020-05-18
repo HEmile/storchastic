@@ -10,10 +10,10 @@ torch.manual_seed(0)
 mu_prior = torch.tensor([2.0, -3.0], requires_grad=True)
 theta = torch.tensor([4.0, 5])
 
-lax_method = storch.LAX("mu", in_dim=2)
-expect = storch.Expect("k")
-score_method = storch.ScoreFunction("white_noise_1", n_samples=2)
-infer_method = storch.Infer("white_noise_2", Normal)
+lax_method = storch.method.LAX("mu", in_dim=2)
+expect = storch.method.Expect("k")
+score_method = storch.method.ScoreFunction("white_noise_1", n_samples=2)
+infer_method = storch.method.Infer("white_noise_2", Normal)
 
 
 def loss(v):

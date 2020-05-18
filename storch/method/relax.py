@@ -9,8 +9,9 @@ from torch.nn import Parameter
 
 import storch
 from storch import Plate, CostTensor, StochasticTensor, deterministic
-from storch.method.method import MonteCarloMethod
+from storch.sampling import MonteCarlo, SamplingMethod
 from storch.typing import Dims
+from storch.method.method import Reparameterization, GumbelSoftmax
 
 import torch.nn.functional as F
 
@@ -34,7 +35,7 @@ class Baseline(torch.nn.Module):
         return self.fc2(F.relu(self.fc1(x))).squeeze(-1)
 
 
-class LAX(MonteCarloMethod):
+class LAX(Reparameterization):
     """
     Gradient estimator for continuous random variables.
     Implements the LAX estimator from Grathwohl et al, 2018 https://arxiv.org/abs/1711.00123
@@ -45,28 +46,31 @@ class LAX(MonteCarloMethod):
         self,
         plate_name: str,
         *,
+        sampling_method: Optional[SamplingMethod] = None,
         n_samples: int = 1,
         c_phi: Optional[Callable[[torch.Tensor], torch.Tensor]] = None,
         in_dim=None,
     ):
-        super().__init__(plate_name, n_samples)
+        """
+        Either c_phi or in_dim needs to be non-None!
+        :param plate_name: Name of the plate
+        :param sampling_method: The sampling method to use
+        :param n_samples: The amount of samples to take
+        :param c_phi: The baseline network. Needs to be specified if `in_dim`  is not specified.
+        :param in_dim: The size of the default baseline. Needs to be set if `c_phi` is not specified.
+        """
+        super().__init__(plate_name, sampling_method, n_samples)
         if c_phi:
             self.c_phi = c_phi
         else:
             self.c_phi = Baseline(in_dim)
         # TODO: Add baseline strength
 
-    def mc_sample(
-        self,
-        distr: Distribution,
-        parents: [storch.Tensor],
-        plates: [Plate],
-        n_samples: int,
-    ) -> torch.Tensor:
-        sample = distr.rsample((n_samples,))
-        return sample
-
     def post_sample(self, tensor: storch.StochasticTensor) -> Optional[storch.Tensor]:
+        """
+        We do a reparameterized sample, but we have to make sure we detach afterwards. The rsample is to make sure we
+        can backpropagate through the sample in the estimator.
+        """
         return tensor.detach()
 
     def estimator(
@@ -129,7 +133,61 @@ class LAX(MonteCarloMethod):
         return True
 
 
-class RELAX(MonteCarloMethod):
+def discretize(tensor: torch.Tensor, distr: Distribution) -> torch.Tensor:
+    # Adapted from pyro.relaxed_straight_through
+    if isinstance(distr, Bernoulli):
+        return tensor.round()
+    argmax = tensor.max(-1)[1]
+    hard_sample = torch.zeros_like(tensor)
+    if argmax.dim() < hard_sample.dim():
+        argmax = argmax.unsqueeze(-1)
+    return hard_sample.scatter_(-1, argmax, 1)
+
+
+@deterministic
+def conditional_gumbel_rsample(
+    hard_sample: torch.Tensor, distr: Distribution, temperature,
+) -> torch.Tensor:
+    """
+    Conditionally re-samples from the distribution given the hard sample.
+    This samples z \sim p(z|b), where b is the hard sample and p(z) is a gumbel distribution.
+    """
+    # Adapted from torch.distributions.relaxed_bernoulli and torch.distributions.relaxed_categorical
+    shape = hard_sample.shape
+    probs = (
+        distr.probs
+        if not isinstance(hard_sample, storch.Tensor)
+        else distr.probs._tensor
+    )
+    probs = clamp_probs(probs.expand_as(hard_sample))
+    v = clamp_probs(torch.rand(shape, dtype=probs.dtype, device=probs.device))
+    if isinstance(distr, Bernoulli):
+        pos_probs = probs[hard_sample == 1]
+        v_prime = torch.zeros_like(hard_sample)
+        # See https://arxiv.org/abs/1711.00123
+        v_prime[hard_sample == 1] = v[hard_sample == 1] * pos_probs + (1 - pos_probs)
+        v_prime[hard_sample == 0] = v[hard_sample == 0] * (1 - probs[hard_sample == 0])
+        log_sample = (
+            probs.log() + probs.log1p() + v_prime.log() + v_prime.log1p()
+        ) / temperature
+        return log_sample.sigmoid()
+    # b=argmax(hard_sample)
+    b = hard_sample.max(-1).indices
+    # b = F.one_hot(b, hard_sample.shape[-1])
+
+    # See https://arxiv.org/abs/1711.00123
+    log_v = v.log()
+    # i != b (indexing could maybe be improved here, but i doubt it'd be more efficient)
+    log_v_b = torch.gather(log_v, -1, b.unsqueeze(-1))
+    cond_gumbels = -(-(log_v / probs) - log_v_b).log()
+    # i = b
+    index_sample = hard_sample.bool()
+    cond_gumbels[index_sample] = -(-log_v[index_sample]).log()
+    scores = cond_gumbels / temperature
+    return (scores - scores.logsumexp(dim=-1, keepdim=True)).exp()
+
+
+class RELAX(GumbelSoftmax):
     """
     Gradient estimator for Bernoulli and Categorical distributions on any function.
     Implements the RELAX estimator from Grathwohl et al, 2018, https://arxiv.org/abs/1711.00123
@@ -141,39 +199,26 @@ class RELAX(MonteCarloMethod):
         self,
         plate_name: str,
         *,
+        sampling_method: Optional[SamplingMethod] = None,
         n_samples: int = 1,
         c_phi: Callable[[torch.Tensor], torch.Tensor] = None,
         in_dim: Dims = None,
         rebar=False,
     ):
-        super().__init__(plate_name, n_samples)
+        if not sampling_method:
+            sampling_method = MonteCarlo(plate_name, n_samples)
+        super().__init__(plate_name, sampling_method.set_mc_sample(self.mc_sample))
         if c_phi:
             self.c_phi = c_phi
         else:
             self.c_phi = Baseline(in_dim)
-        self.rebar = rebar
+
         self.temperature = Parameter(torch.tensor(1.0))
+        self.rebar = rebar
+        if self.rebar:
+            self.sampling_method = REBARMC(plate_name, n_samples, self.temperature)
         # TODO: Automatically learn eta
         self.eta = 1.0
-
-    def mc_sample(
-        self,
-        distr: Distribution,
-        parents: [storch.Tensor],
-        plates: [Plate],
-        n_samples: int,
-    ) -> torch.Tensor:
-        relaxed_sample = rsample_gumbel(
-            distr, n_samples, self.temperature, straight_through=False
-        )
-        # In REBAR, the objective function is evaluated for the Gumbel sample, the conditional Gumbel sample \tilde{z} and the argmax of the Gumbel sample.
-        if self.rebar:
-            hard_sample = self._discretize(relaxed_sample, distr)
-            cond_sample = self._conditional_gumbel_rsample(hard_sample, distr)
-            return torch.cat([hard_sample, relaxed_sample, cond_sample], 0)
-        else:
-            return relaxed_sample
-        # sample relaxed if not rebar else sample z then return -> (H(z), z, z|H(z) and n*3
 
     def post_sample(self, tensor: storch.StochasticTensor) -> Optional[storch.Tensor]:
         if self.rebar:
@@ -186,72 +231,6 @@ class RELAX(MonteCarloMethod):
             # Return H(z) for the function evaluation if using RELAX
             return self._discretize(tensor, tensor.distribution)
 
-    def plate_weighting(
-        self, tensor: storch.StochasticTensor, plate: storch.Plate
-    ) -> Optional[storch.Tensor]:
-        # if REBAR: only weight over the true samples, put the relaxed samples to weight 0. This also makes sure
-        # that they will not be backpropagated through in the cost backwards pass
-        if self.rebar:
-            n = int(tensor.n / 3)
-            weighting = tensor.new_zeros((3 * n,))
-            weighting[:n] = tensor.new_tensor(1.0 / n)
-            return weighting
-        return super().plate_weighting(tensor, plate)
-
-    def _discretize(self, tensor: torch.Tensor, distr: Distribution) -> torch.Tensor:
-        # Adapted from pyro.relaxed_straight_through
-        if isinstance(distr, Bernoulli):
-            return tensor.round()
-        argmax = tensor.max(-1)[1]
-        hard_sample = torch.zeros_like(tensor)
-        if argmax.dim() < hard_sample.dim():
-            argmax = argmax.unsqueeze(-1)
-        return hard_sample.scatter_(-1, argmax, 1)
-
-    @deterministic
-    def _conditional_gumbel_rsample(
-        self, hard_sample: torch.Tensor, distr: Distribution
-    ) -> torch.Tensor:
-        """
-        Conditionally re-samples from the distribution given the hard sample.
-        This samples z \sim p(z|b), where b is the hard sample and p(z) is a gumbel distribution.
-        """
-        # Adapted from torch.distributions.relaxed_bernoulli and torch.distributions.relaxed_categorical
-        shape = hard_sample.shape
-        probs = (
-            distr.probs
-            if not isinstance(hard_sample, storch.Tensor)
-            else distr.probs._tensor
-        )
-        probs = clamp_probs(probs.expand_as(hard_sample))
-        v = clamp_probs(torch.rand(shape, dtype=probs.dtype, device=probs.device))
-        if isinstance(distr, Bernoulli):
-            pos_probs = probs[hard_sample == 1]
-            v_prime = torch.zeros_like(hard_sample)
-            # See https://arxiv.org/abs/1711.00123
-            v_prime[hard_sample == 1] = v[hard_sample == 1] * pos_probs + (
-                1 - pos_probs
-            )
-            v_prime[hard_sample == 0] = v[hard_sample == 0] * (
-                1 - probs[hard_sample == 0]
-            )
-            log_sample = (
-                probs.log() + probs.log1p() + v_prime.log() + v_prime.log1p()
-            ) / self.temperature
-            return log_sample.sigmoid()
-        b = hard_sample.max(-1).indices
-
-        # See https://arxiv.org/abs/1711.00123
-        log_v = v.log()
-        # i != b (indexing could maybe be improved here, but i doubt it'd be more efficient)
-        log_v_b = torch.gather(log_v, -1, b.unsqueeze(-1))
-        cond_gumbels = -(-(log_v / probs) - log_v_b).log()
-        # i = b
-        index_sample = hard_sample.bool()
-        cond_gumbels[index_sample] = -(-log_v[index_sample]).log()
-        scores = cond_gumbels / self.temperature
-        return (scores - scores.logsumexp(dim=-1, keepdim=True)).exp()
-
     def estimator(
         self, tensor: StochasticTensor, cost_node: CostTensor
     ) -> Optional[storch.Tensor]:
@@ -263,10 +242,10 @@ class RELAX(MonteCarloMethod):
             hard_cost, relaxed_cost, cond_cost = split(cost_node, plate, amt_slices=3)
 
         else:
-            hard_sample = self._discretize(tensor, tensor.distribution)
+            hard_sample = discretize(tensor, tensor.distribution)
             relaxed_sample = tensor
-            cond_sample = self._conditional_gumbel_rsample(
-                hard_sample, tensor.distribution
+            cond_sample = conditional_gumbel_rsample(
+                hard_sample, tensor.distribution, self.temperature
             )
 
             hard_cost = cost_node
@@ -339,6 +318,41 @@ class RELAX(MonteCarloMethod):
 
     def adds_loss(self, tensor: StochasticTensor, cost_node: CostTensor) -> bool:
         return True
+
+
+class REBARMC(MonteCarlo):
+    def __init__(self, plate_name: str, n_samples: int, temperature):
+        super().__init__(plate_name, n_samples)
+        self.temperature = temperature
+
+    def mc_sample(
+        self,
+        distr: Distribution,
+        parents: [storch.Tensor],
+        plates: [Plate],
+        amt_samples: int,
+    ) -> torch.Tensor:
+        relaxed_sample = rsample_gumbel(
+            distr, amt_samples, self.temperature, straight_through=False
+        )
+        # TODO: For rebar, what if sample from a sequence, and amt_samples is 1? Then three are sampled (for each one, also hard_sample and cond_sample.)
+        #    That'd still blow up... But I guess it's required?
+        # In REBAR, the objective function is evaluated for the Gumbel sample, the conditional Gumbel sample \tilde{z} and the argmax of the Gumbel sample.
+        hard_sample = discretize(relaxed_sample, distr)
+        cond_sample = conditional_gumbel_rsample(hard_sample, distr, self.temperature)
+
+        # return (H(z), z, z|H(z)
+        return torch.cat([hard_sample, relaxed_sample, cond_sample], 0)
+
+    def plate_weighting(
+        self, tensor: storch.StochasticTensor, plate: storch.Plate
+    ) -> Optional[storch.Tensor]:
+        # if REBAR: only weight over the true samples, put the relaxed samples to weight 0. This also makes sure
+        # that they will not be backpropagated through in the cost backwards pass
+        n = int(tensor.n / 3)
+        weighting = tensor.new_zeros((tensor.n,))
+        weighting[:n] = tensor.new_tensor(1.0 / n)
+        return weighting
 
 
 class REBAR(RELAX):
