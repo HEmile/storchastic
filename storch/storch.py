@@ -3,11 +3,7 @@ from typing import List, Union, Optional, Tuple
 import storch
 import torch
 
-from storch.typing import AnyTensor
-
-_index = Union[str, int, storch.Plate]
-_indices = Union[List[_index], _index]
-_tensor = Union[torch.Tensor, storch.Tensor]
+from storch.typing import AnyTensor, _indices
 
 
 def _convert_indices(tensor: storch.Tensor, dims: _indices) -> (List[int], List[str]):
@@ -50,7 +46,7 @@ def logsumexp(tensor: storch.Tensor, dims: _indices) -> storch.Tensor:
     return storch.reduce(torch.logsumexp, plates=reduced_batches)(tensor, indices)
 
 
-def expand_as(tensor: _tensor, expand_as: _tensor) -> torch.Tensor:
+def expand_as(tensor: AnyTensor, expand_as: AnyTensor) -> AnyTensor:
     return storch.deterministic(torch.expand_as)(tensor, expand_as)
 
 

@@ -88,6 +88,14 @@ class SampleWithoutReplacement(IterDecoding):
 
         # Sample plates x k? x |D_yv| conditional Gumbel variables
         cond_G_yv = cond_gumbel_sample(all_joint_log_probs, self.perturbed_log_probs)
+
+        # If there are finished samples, ensure eos is always sampled.
+        if self.finished_samples:
+            # TODO: This shape stuff likely doesn't work
+            # Set the probability of continuing on finished sequences to -infinity so that they are filtered out during topk.
+            cond_G_yv[self.finished_samples] = -float("inf")
+            # Then make sure the log probability of the eos token is 0.
+            cond_G_yv[self.finished_samples, self.eos] = 0.0
         if first_sample:
             # No parent has been sampled yet
             # shape(cond_G_yv) is plates x |D_yv|
@@ -107,7 +115,8 @@ class SampleWithoutReplacement(IterDecoding):
             # plates x (k * |D_yv|) (k == prev_amt_samples, in this case)
             cond_G_yv = cond_G_yv.reshape(cond_G_yv.shape[:-2] + (-1,))
             # We can sample at most the amount of what we previous sampled, combined with every option in the current domain
-            # That is: prev_amt_samples * |D_yv|. But we also want to limit by k.
+            # That is: prev_amt_samples * |D_yv|.
+
             amt_samples = min(self.k, cond_G_yv.shape[-1])
             # Take the top k over conditional perturbed log probs
             # plates x amt_samples

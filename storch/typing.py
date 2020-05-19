@@ -19,3 +19,6 @@ Dims = Union[int, _size]
 DiscreteDistribution = Union[Bernoulli, Categorical, OneHotCategorical]
 
 BaselineFactory = Callable[[storch.StochasticTensor, storch.CostTensor], Baseline]
+
+_index = Union[str, int, storch.Plate]
+_indices = Union[List[_index], _index]

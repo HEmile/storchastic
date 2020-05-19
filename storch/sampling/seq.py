@@ -138,9 +138,11 @@ class SequenceDecoding(SamplingMethod):
         # The index of the currently sampled variable
         self.variable_index = 0
         # The previously created plates
-        self.last_plate = None
+        self.new_plate = None
         # What runs are already finished
         self.finished_samples = None
+        # The sampled sequence so far
+        self.seq = []
 
     def sample(
         self,
@@ -196,18 +198,9 @@ class SequenceDecoding(SamplingMethod):
         #  (can be 0, eg Categorical, or equal to |D_yv| for OneHotCategorical)
 
         # Do the decoding step given the prepared tensors
-        samples, new_joint_log_probs, self.parent_indexing = self.decode(
+        samples, self.joint_log_probs, self.parent_indexing = self.decode(
             distr, self.joint_log_probs, parents, orig_distr_plates
         )
-
-        if self.finished_samples:
-            # Make sure we do not change the log probabilities for samples that were already finished
-            self.joint_log_probs = (
-                self.joint_log_probs * self.finished_samples
-                + new_joint_log_probs * (1 - self.finished_samples)
-            )
-        else:
-            self.joint_log_probs = new_joint_log_probs
 
         k_index = 0
         plates = orig_distr_plates
@@ -228,11 +221,13 @@ class SequenceDecoding(SamplingMethod):
             plates.remove(to_remove)
 
         # Create the newly updated plate
-        self.last_plate = self.create_plate(plate_size, plates.copy())
-        plates.append(self.last_plate)
+        self.new_plate = self.create_plate(plate_size, plates.copy())
+        plates.append(self.new_plate)
+
+        self.seq = list(map(lambda t: self.new_plate.on_unwrap_tensor(t), self.seq))
 
         if self.parent_indexing is not None:
-            self.parent_indexing.plates.append(self.last_plate)
+            self.parent_indexing.plates.append(self.new_plate)
 
         # Construct the stochastic tensor
         s_tensor = storch.StochasticTensor(
@@ -245,6 +240,8 @@ class SequenceDecoding(SamplingMethod):
             requires_grad or self.joint_log_probs.requires_grad,
         )
 
+        self.seq.append(s_tensor)
+
         # Find out what sequences have reached the EOS token, and make sure to always sample EOS after that.
         if self.eos:
             finished = s_tensor.eq(self.eos)
@@ -252,10 +249,9 @@ class SequenceDecoding(SamplingMethod):
                 self.finished_samples = torch.max(finished, self.finished_samples)
             else:
                 self.finished_samples = finished
-            s_tensor._tensor[finished] = self.eos
         # Increase variable index
         self.variable_index += 1
-        return s_tensor, self.last_plate
+        return s_tensor, self.new_plate
 
     def plate_weighting(
         self, tensor: storch.StochasticTensor, plate: storch.Plate
@@ -292,11 +288,28 @@ class SequenceDecoding(SamplingMethod):
             plate_size,
             plates.copy(),
             self.variable_index,
-            self.last_plate,
+            self.new_plate,
             self.parent_indexing,
             self.joint_log_probs,
             None,
         )
+
+    def get_sampled_seq(self, finished: bool = False) -> [storch.StochasticTensor]:
+        if finished:
+            return list(map(lambda t: t[self.finished_samples], self.seq))
+        return self.seq
+
+    def get_amt_finished(self):
+        if not self.eos:
+            raise RuntimeError(
+                "Cannot get the amount of finished sequences when eos is not set."
+            )
+        if not self.finished_samples:
+            return 0
+        return storch.sum(self.finished_samples, self.plate_name)
+
+    def get_unique_seqs(self):
+        cat_seq = torch.cat(self.seq, dim=self.seq[-1].plate_dims)
 
 
 class MCDecoder(SequenceDecoding):
@@ -326,6 +339,15 @@ class MCDecoder(SequenceDecoding):
             joint_log_probs += s_log_probs
         else:
             joint_log_probs = s_log_probs
+
+        if self.finished_samples:
+            # Make sure we do not change the log probabilities for samples that were already finished
+            joint_log_probs = (
+                joint_log_probs * self.finished_samples
+                + joint_log_probs * (1 - self.finished_samples)
+            )
+            sample[self.finished_samples] = self.eos
+
         return sample, joint_log_probs, None
 
 
@@ -414,7 +436,7 @@ class IterDecoding(SequenceDecoding):
             # Gather the correct log probabilities
             # distr_plate[0] x ... k ... x distr_plate[n-1] x |D_yv| x events
             # TODO: Move this down below to the other scary TODO
-            d_log_probs = self.last_plate.on_unwrap_tensor(d_log_probs)
+            d_log_probs = self.new_plate.on_unwrap_tensor(d_log_probs)
             # Permute the dimensions of d_log_probs st the k dimension is after the plates.
             for i, plate in enumerate(d_log_probs.multi_dim_plates()):
                 if plate.name == self.plate_name:
