@@ -14,8 +14,9 @@ class UnorderedSet(SampleWithoutReplacement):
         exact_integration: bool = False,
         num_int_points: int = 1000,
         a: float = 5.0,
+        eos=None,
     ):
-        super().__init__(plate_name, k)
+        super().__init__(plate_name, k, eos=eos)
         self.comp_leave_two_out = comp_leave_two_out
         self.exact_integration = exact_integration
         self.num_int_points = num_int_points

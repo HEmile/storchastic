@@ -4,6 +4,7 @@ import itertools
 from abc import abstractmethod
 from typing import Union, List, Optional, Tuple
 
+from storch.typing import AnyTensor
 from storch.sampling.method import SamplingMethod
 from torch.distributions import Distribution
 import storch
@@ -202,6 +203,15 @@ class SequenceDecoding(SamplingMethod):
             distr, self.joint_log_probs, parents, orig_distr_plates
         )
 
+        # Find out what sequences have reached the EOS token, and make sure to always sample EOS after that.
+        # Does not contain the ancestral plate as this uses samples instead of s_tensor.
+        if self.eos:
+            finished = samples.eq(self.eos)
+            if self.finished_samples is not None:
+                self.finished_samples = torch.max(finished, self.finished_samples)
+            else:
+                self.finished_samples = finished
+
         k_index = 0
         plates = orig_distr_plates
         if isinstance(samples, storch.Tensor):
@@ -224,10 +234,10 @@ class SequenceDecoding(SamplingMethod):
         self.new_plate = self.create_plate(plate_size, plates.copy())
         plates.append(self.new_plate)
 
-        self.seq = list(map(lambda t: self.new_plate.on_unwrap_tensor(t), self.seq))
-
         if self.parent_indexing is not None:
             self.parent_indexing.plates.append(self.new_plate)
+
+        self.seq = list(map(lambda t: self.new_plate.on_unwrap_tensor(t), self.seq))
 
         # Construct the stochastic tensor
         s_tensor = storch.StochasticTensor(
@@ -242,13 +252,6 @@ class SequenceDecoding(SamplingMethod):
 
         self.seq.append(s_tensor)
 
-        # Find out what sequences have reached the EOS token, and make sure to always sample EOS after that.
-        if self.eos:
-            finished = s_tensor.eq(self.eos)
-            if self.finished_samples:
-                self.finished_samples = torch.max(finished, self.finished_samples)
-            else:
-                self.finished_samples = finished
         # Increase variable index
         self.variable_index += 1
         return s_tensor, self.new_plate
@@ -299,17 +302,27 @@ class SequenceDecoding(SamplingMethod):
             return list(map(lambda t: t[self.finished_samples], self.seq))
         return self.seq
 
-    def get_amt_finished(self):
+    def get_amt_finished(self) -> AnyTensor:
         if not self.eos:
             raise RuntimeError(
                 "Cannot get the amount of finished sequences when eos is not set."
             )
-        if not self.finished_samples:
+        if self.finished_samples is None:
             return 0
-        return storch.sum(self.finished_samples, self.plate_name)
+        return torch.sum(self.finished_samples, -1)
 
     def get_unique_seqs(self):
-        cat_seq = torch.cat(self.seq, dim=self.seq[-1].plate_dims)
+        # TODO: Very experimental code
+        seq_dim = self.seq[-1].plate_dims
+        cat_seq = torch.cat(self.seq, dim=seq_dim)
+        return storch.unique(cat_seq, event_dim=0)
+
+    def all_finished(self) -> bool:
+        t = self.get_amt_finished().eq(self.k)
+        # This is required because storch.Tensor's do not support .all() and .bool()
+        if isinstance(t, storch.Tensor):
+            return t._tensor.all().bool()
+        return t.all().bool()
 
 
 class MCDecoder(SequenceDecoding):

@@ -90,12 +90,17 @@ class SampleWithoutReplacement(IterDecoding):
         cond_G_yv = cond_gumbel_sample(all_joint_log_probs, self.perturbed_log_probs)
 
         # If there are finished samples, ensure eos is always sampled.
-        if self.finished_samples:
-            # TODO: This shape stuff likely doesn't work
+        if self.finished_samples is not None:
+            # TODO: Is this the correct way of ensuring self.eos is always sampled for finished sequences?
+            #  Coudl it bias things in any way?
             # Set the probability of continuing on finished sequences to -infinity so that they are filtered out during topk.
-            cond_G_yv[self.finished_samples] = -float("inf")
+            # |D_yv|
+            finished_vec = cond_G_yv._tensor.new_full(
+                (cond_G_yv.shape[-1],), -float("inf")
+            )
             # Then make sure the log probability of the eos token is 0.
-            cond_G_yv[self.finished_samples, self.eos] = 0.0
+            finished_vec[self.eos] = 0.0
+            cond_G_yv[self.finished_samples] = finished_vec
         if first_sample:
             # No parent has been sampled yet
             # shape(cond_G_yv) is plates x |D_yv|

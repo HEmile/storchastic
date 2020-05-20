@@ -419,7 +419,7 @@ class Tensor:
     def __index__(self):
         raise IllegalStorchExposeError("Cannot use storch tensors as index.")
 
-    # TODO: shouldn't this have @deterministic?
+    @storch.deterministic
     def eq(self, other):
         return self.eq(other)
 

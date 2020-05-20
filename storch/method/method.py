@@ -3,15 +3,14 @@ from torch.distributions import Distribution, OneHotCategorical, Bernoulli, Cate
 
 from storch.tensor import CostTensor, StochasticTensor, Plate
 import torch
-from typing import Optional, Type, Union, Dict, List
+from typing import Optional, Type, Union, Dict, List, Callable
 from storch.util import (
     has_differentiable_path,
     get_distr_parameters,
     rsample_gumbel,
 )
-from storch.typing import BaselineFactory
 import storch
-from storch.method.baseline import MovingAverageBaseline, BatchAverageBaseline
+from storch.method.baseline import MovingAverageBaseline, BatchAverageBaseline, Baseline
 from storch.sampling import (
     SamplingMethod,
     MonteCarlo,
@@ -355,6 +354,9 @@ class GumbelSoftmax(Method):
             "We cannot use reparameterization. Use a different gradient estimator, or make sure your"
             "code is differentiable."
         )
+
+
+BaselineFactory = Callable[[storch.StochasticTensor, storch.CostTensor], Baseline]
 
 
 class ScoreFunction(Method):

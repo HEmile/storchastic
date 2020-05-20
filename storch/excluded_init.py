@@ -119,6 +119,7 @@ _unwrap_only_tensor = {
     "new_tensor",
     "new_zeros",
     "new_ones",
+    "new_full",
 }
 
 _to_test_tensor = {"_make_subclass"}
