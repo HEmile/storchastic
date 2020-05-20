@@ -7,12 +7,15 @@ from .wrappers import (
     ignore_wrapping,
 )
 from .tensor import Tensor, CostTensor, StochasticTensor, Plate, is_tensor
+
 import storch.sampling
 import storch.method
+import storch.typing
 from .inference import backward, add_cost, reset, denote_independent, gather_samples
 from .util import print_graph
 from .storch import *
-import storch.typing
+from .unique import unique, undo_unique
+
 import storch.nn
 
 
