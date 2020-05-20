@@ -60,6 +60,7 @@ def _unsqueeze_and_unwrap(
     align_tensors: bool,
     l_broadcast: bool,
     expand_plates: bool,
+    flatten_plates: bool,
     event_dims: int,
 ):
     if isinstance(a, storch.Tensor):
@@ -103,6 +104,11 @@ def _unsqueeze_and_unwrap(
         # Optionally expand the singleton dimensions to the plate size
         if expand_plates:
             tensor = tensor.expand(tuple(plate_dims) + tensor.shape[len(plate_dims) :])
+        # Optionally flatten the plate dimensions to a single batch dimension
+        if flatten_plates:
+            assert expand_plates
+            tensor = tensor.reshape((-1,) + tensor.shape[len(plate_dims) :])
+
         return tensor
     elif isinstance(a, Mapping):
         d = {}
@@ -113,6 +119,7 @@ def _unsqueeze_and_unwrap(
                 align_tensors,
                 l_broadcast,
                 expand_plates,
+                flatten_plates,
                 event_dims,
             )
         return d
@@ -126,6 +133,7 @@ def _unsqueeze_and_unwrap(
                     align_tensors,
                     l_broadcast,
                     expand_plates,
+                    flatten_plates,
                     event_dims,
                 )
             )
@@ -143,6 +151,7 @@ def _prepare_args(
     align_tensors=True,
     l_broadcast=True,
     expand_plates=False,
+    flatten_plates=False,
     dim: Optional[str] = None,
     dims: Optional[Union[str, List[str]]] = None,
 ) -> (List, Dict, [storch.Tensor], [storch.Plate]):
@@ -159,7 +168,10 @@ def _prepare_args(
     :param align_tensors: Whether to automatically align the input arguments (default: True)
     :param l_broadcast: Whether to automatically left-broadcast (default: True)
     :param expand_plates: Instead of adding singleton dimensions on non-existent plates, this will
-    add the plate size itself (default: False)
+    add the plate size itself (default: False) flatten_plates sets this to True automatically.
+    :param flatten_plates: Flattens the plate dimensions into a single batch dimension if set to true.
+    This can be useful for functions that are written to only work for tensors with a single batch dimension.
+    Note that outputs are unflattened automatically. (default: False)
     :param dim: Replaces the dim input in fn_kwargs by the plate dimension corresponding to the given string (optional)
     :param dims: Replaces the dims input in fn_kwargs by the plate dimensions corresponding to the given strings (optional)
     :param self_wrapper: storch.Tensor that wraps a
@@ -199,6 +211,7 @@ def _prepare_args(
         fn_kwargs["dims"] = dimz
 
     if unwrap:
+        expand_plates = expand_plates or flatten_plates
         # Unsqueeze and align batched dimensions so that batching works easily.
         unsqueezed_args = []
         for t in fn_args:
@@ -209,6 +222,7 @@ def _prepare_args(
                     align_tensors,
                     l_broadcast,
                     expand_plates,
+                    flatten_plates,
                     max_event_dim,
                 )
             )
@@ -220,14 +234,20 @@ def _prepare_args(
                 align_tensors,
                 l_broadcast,
                 expand_plates,
+                flatten_plates,
                 max_event_dim,
             )
         return unsqueezed_args, unsqueezed_kwargs, parents, plates
     return fn_args, fn_kwargs, parents, plates
 
 
-def _process_deterministic(
-    o: Any, parents: [storch.Tensor], plates: [storch.Plate], name: str, index: int
+def _prepare_outputs_det(
+    o: Any,
+    parents: [storch.Tensor],
+    plates: [storch.Plate],
+    name: str,
+    index: int,
+    unflatten_plates,
 ):
     if o is None:
         return None, index
@@ -239,12 +259,17 @@ def _process_deterministic(
         # TODO: Does this require shape checking? Parent/Plate checking?
         return o
     if isinstance(o, torch.Tensor):  # Explicitly _not_ a storch.Tensor
+        if unflatten_plates:
+            plate_dims = tuple([plate.n for plate in plates if plate.n > 1])
+            o = o.reshape(plate_dims + o.shape[1:])
         t = storch.Tensor(o, parents, plates, name=name + str(index))
         return t, index + 1
     if is_iterable(o):
         outputs = []
         for _o in o:
-            t, index = _process_deterministic(_o, parents, plates, name, index)
+            t, index = _prepare_outputs_det(
+                _o, parents, plates, name, index, unflatten_plates=unflatten_plates
+            )
             outputs.append(t)
         if isinstance(o, tuple):
             return tuple(outputs), index
@@ -259,6 +284,7 @@ def _handle_deterministic(
     fn_args,
     fn_kwargs,
     reduce_plates: Optional[Union[str, List[str]]] = None,
+    flatten_plates: bool = False,
     **wrapper_kwargs
 ):
     if storch.wrappers._context_stochastic:
@@ -278,7 +304,7 @@ def _handle_deterministic(
         # return fn(*args, **kwargs)
 
     new_fn_args, new_fn_kwargs, parents, plates = _prepare_args(
-        fn_args, fn_kwargs, **wrapper_kwargs
+        fn_args, fn_kwargs, flatten_plates=flatten_plates, **wrapper_kwargs
     )
     if not parents:
         return fn(*fn_args, **fn_kwargs)
@@ -299,7 +325,9 @@ def _handle_deterministic(
             reduce_plates = [reduce_plates]
         plates = [p for p in plates if p.name not in reduce_plates]
 
-    outputs = _process_deterministic(outputs, parents, plates, fn.__name__, 1)[0]
+    outputs = _prepare_outputs_det(
+        outputs, parents, plates, fn.__name__, 1, unflatten_plates=flatten_plates
+    )[0]
     return outputs
 
 
