@@ -100,7 +100,10 @@ def backward(retain_graph=False, debug=False, print_costs=False) -> torch.Tensor
     hierarchy of multiple samples.
     :return:
     """
+
     costs: [storch.Tensor] = storch.inference._cost_tensors
+    if not costs:
+        raise RuntimeError("No cost nodes registered for backward call.")
     if debug:
         print_graph(costs)
 

@@ -22,5 +22,7 @@ import storch.nn
 import torch as _torch
 
 _debug = False
+# Hard-coded monkey patches: These do not support __torch_function__
 _torch.is_tensor = storch.is_tensor
 _torch.Tensor.to = deterministic(_torch.Tensor.to)
+_torch.cat = deterministic(_torch.cat)

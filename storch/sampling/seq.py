@@ -206,11 +206,7 @@ class SequenceDecoding(SamplingMethod):
         # Find out what sequences have reached the EOS token, and make sure to always sample EOS after that.
         # Does not contain the ancestral plate as this uses samples instead of s_tensor.
         if self.eos:
-            finished = samples.eq(self.eos)
-            if self.finished_samples is not None:
-                self.finished_samples = torch.max(finished, self.finished_samples)
-            else:
-                self.finished_samples = finished
+            self.finished_samples = samples.eq(self.eos)
 
         k_index = 0
         plates = orig_distr_plates
@@ -298,9 +294,10 @@ class SequenceDecoding(SamplingMethod):
         )
 
     def get_sampled_seq(self, finished: bool = False) -> [storch.StochasticTensor]:
+        # TODO: the finished one doesn't return proper tensors.
         if finished:
             return list(map(lambda t: t[self.finished_samples], self.seq))
-        return self.seq
+        return torch.cat(self.seq, dim=self.seq[0].plate_dims)
 
     def get_amt_finished(self) -> AnyTensor:
         if not self.eos:
@@ -313,7 +310,7 @@ class SequenceDecoding(SamplingMethod):
 
     def get_unique_seqs(self):
         # TODO: Very experimental code
-        seq_dim = self.seq[-1].plate_dims
+        seq_dim = self.seq[0].plate_dims
         cat_seq = torch.cat(self.seq, dim=seq_dim)
         return storch.unique(cat_seq, event_dim=0)
 

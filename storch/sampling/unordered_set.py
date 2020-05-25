@@ -31,6 +31,7 @@ class UnorderedSet(SampleWithoutReplacement):
         # For details, see https://openreview.net/pdf?id=rklEj2EFvB
         # Code based on https://github.com/wouterkool/estimating-gradients-without-replacement/blob/master/bernoulli/gumbel.py
         log_probs = plate.log_probs.detach()
+        # print("--------------------")
 
         # Compute integration points for the trapezoid rule: v should range from 0 to 1, where both v=0 and v=1 give a value of 0.
         # As the computation happens in log-space, take the logarithm of the result.
@@ -59,6 +60,7 @@ class UnorderedSet(SampleWithoutReplacement):
         terms = torch.where(
             g_bound >= 10, -g_bound - y / 2 + y ** 2 / 24 - y ** 4 / 2880, log1mexp(y)
         )
+        # print("terms", terms._tensor[0])
 
         # Compute integrands (without subtracting the special value s)
         # plates x N
@@ -102,6 +104,10 @@ class UnorderedSet(SampleWithoutReplacement):
             log_p_S_without_ss = integrand_without_ss.logsumexp(dim=-1)
 
             plate.log_snd_leave_one_out = log_p_S_without_ss - log_p_S_without_s
+
+        # print("lloo", log_leave_one_out._tensor[0])
+        # print("log_probs", log_probs._tensor[0])
+        # print("weighting", (log_leave_one_out + log_probs).exp()._tensor[0])
 
         # Return the unordered set estimator weighting
         return (log_leave_one_out + log_probs).exp().detach()

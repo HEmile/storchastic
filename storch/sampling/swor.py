@@ -94,12 +94,17 @@ class SampleWithoutReplacement(IterDecoding):
             # TODO: Is this the correct way of ensuring self.eos is always sampled for finished sequences?
             #  Coudl it bias things in any way?
             # Set the probability of continuing on finished sequences to -infinity so that they are filtered out during topk.
-            # |D_yv|
-            finished_vec = cond_G_yv._tensor.new_full(
-                (cond_G_yv.shape[-1],), -float("inf")
+            # amt_finished
+            finished_perturb_log_probs = self.perturbed_log_probs._tensor[
+                self.finished_samples._tensor
+            ]
+            # amt_finished x |D_yv|
+            finished_vec = finished_perturb_log_probs.new_full(
+                (finished_perturb_log_probs.shape[0], cond_G_yv.shape[-1],),
+                -float("inf"),
             )
-            # Then make sure the log probability of the eos token is 0.
-            finished_vec[self.eos] = 0.0
+            # Then make sure the log probability of the eos token is equal to the last perturbed log prob.
+            finished_vec[:, self.eos] = finished_perturb_log_probs
             cond_G_yv[self.finished_samples] = finished_vec
         if first_sample:
             # No parent has been sampled yet
