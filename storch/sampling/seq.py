@@ -75,6 +75,7 @@ class AncestralPlate(storch.Plate):
         """
         Gets called whenever the given tensor is being unwrapped and unsqueezed for batch use.
         This method should not be called on tensors whose variable index is higher than this plates.
+
         :param tensor: The input tensor that is being unwrapped
         :return: The tensor that will be unwrapped and unsqueezed in the future. Can be a modification of the input tensor.
         """

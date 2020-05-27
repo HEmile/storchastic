@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Union, Any, Tuple, List, Optional, Dict
+from typing import Union, Any, Tuple, List, Optional, Dict, Callable
 
 import storch
 import torch
@@ -342,14 +342,18 @@ def _deterministic(
     return wrapper
 
 
-def deterministic(fn=None, **kwargs):
+def deterministic(fn: Optional[Callable] = None, **kwargs):
     """
     Wraps the input function around a deterministic storch wrapper.
     This wrapper unwraps :class:`~storch.Tensor` objects to :class:`~torch.Tensor` objects, aligning the tensors
     according to the plates, then runs `fn` on the unwrapped Tensors.
-    :param fn: Function to wrap.
-    :param unwrap: Set to False to prevent unwrapping :classs:`~storch.Tensor` objects.
-    :return: The wrapped function `fn`.
+
+    Args:
+        fn: Optional function to wrap. If None, this returns another wrapper that accepts a function that will be instantiated
+        by the given kwargs.
+        unwrap: Set to False to prevent unwrapping :class:`~storch.Tensor` objects.
+    Returns:
+        Callable: The wrapped function `fn`.
     """
     if fn:
         return _deterministic(fn, **kwargs)
@@ -358,11 +362,14 @@ def deterministic(fn=None, **kwargs):
 
 def reduce(fn, plates: Union[str, List[str]]):
     """
-        Wraps the input function around a deterministic storch wrapper.
-        This wrapper unwraps :class:`~storch.Tensor` objects to :class:`~torch.Tensor` objects, aligning the tensors
-        according to the plates, then runs `fn` on the unwrapped Tensors. It will reduce the plates given by `plates`.
-        :param fn: Function to wrap.
-        :return: The wrapped function `fn`.
+    Wraps the input function around a deterministic storch wrapper.
+    This wrapper unwraps :class:`~storch.Tensor` objects to :class:`~torch.Tensor` objects, aligning the tensors
+    according to the plates, then runs `fn` on the unwrapped Tensors. It will reduce the plates given by `plates`.
+
+    Args:
+        fn (Callable): Function to wrap.
+    Returns:
+        Callable: The wrapped function `fn`.
         """
     if storch._debug:
         print("Reducing plates", plates)
@@ -406,6 +413,7 @@ def stochastic(fn):
     """
     Applies `fn` to the `inputs`. `fn` should return one or multiple `storch.Tensor`s.
     `fn` should not call `storch.stochastic` or `storch.deterministic`. `inputs` can include `storch.Tensor`s.
+
     :param fn:
     :return:
     """

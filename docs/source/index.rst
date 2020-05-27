@@ -21,16 +21,19 @@ Note: Documentation is currently under construction.
 
 Mail e.van.krieken@vu.nl for any help or questions.
 
-Guide
-^^^^^
 .. toctree::
    :maxdepth: 3
    :caption: Contents:
 
+   installation
    license
    help
+   examples
+   storch.tensor
+   storch.method
+   storch.sampling
    storch
-   discrete_vae
+
 
 
 

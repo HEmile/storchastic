@@ -15,6 +15,7 @@ from .inference import backward, add_cost, reset, denote_independent, gather_sam
 from .util import print_graph
 from .storch import *
 from .unique import unique, undo_unique
+from .exceptions import IllegalStorchExposeError
 
 import storch.nn
 

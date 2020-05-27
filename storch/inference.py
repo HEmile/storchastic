@@ -90,15 +90,21 @@ def add_cost(cost: Tensor, name: str):
     return cost
 
 
-def backward(retain_graph=False, debug=False, print_costs=False) -> torch.Tensor:
+def backward(
+    retain_graph: bool = False, debug: bool = False, print_costs: bool = False
+) -> torch.Tensor:
     """
+    Computes the gradients of the cost nodes with respect to the parameter nodes. It uses the storch
+    methods used to sample stochastic nodes to properly estimate their gradient.
 
-    :param retain_graph: If set to False, it will deregister the added cost nodes. Should usually be set to False.
-    :param debug: Prints debug information on the backwards call.
-    :param accum_grads: Saves gradient information in stochastic nodes. Note that this is an expensive option as it
-    requires doing O(n) backward calls for each stochastic node sampled multiple times. Especially if this is a
-    hierarchy of multiple samples.
-    :return:
+    Args:
+        retain_graph (bool): If set to False, it will deregister the added cost nodes. Should usually be set to False.
+        debug: Prints debug information on the backwards call.
+        accum_grads: Saves gradient information in stochastic nodes. Note that this is an expensive option as it
+        requires doing O(n) backward calls for each stochastic node sampled multiple times. Especially if this is a
+        hierarchy of multiple samples.
+    Returns:
+        torch.Tensor: The average total cost normalized by the sampling weights.
     """
 
     costs: [storch.Tensor] = storch.inference._cost_tensors

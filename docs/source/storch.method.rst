@@ -1,10 +1,12 @@
-storch.method package
+Gradient Estimation Methods
 =====================
 
-Submodules
-----------
+.. automodule:: storch.method.method
+   :members:
+   :undoc-members:
+   :show-inheritance:
 
-storch.method.baseline module
+Baselines
 -----------------------------
 
 .. automodule:: storch.method.baseline
@@ -12,27 +14,27 @@ storch.method.baseline module
    :undoc-members:
    :show-inheritance:
 
-storch.method.method module
----------------------------
+Multi-sample estimators
+---------------------------------------------
 
-.. automodule:: storch.method.method
+.. automodule:: storch.method.multi_sample_reinforce
    :members:
    :undoc-members:
    :show-inheritance:
 
-storch.method.sampling module
------------------------------
+RELAX
+--------------------------
 
-.. automodule:: storch.method.sampling
+.. automodule:: storch.method.relax
    :members:
    :undoc-members:
    :show-inheritance:
 
+Unordered set estimator
+------------------------------
 
-Module contents
----------------
-
-.. automodule:: storch.method
+.. automodule:: storch.method.unordered
    :members:
    :undoc-members:
    :show-inheritance:
+
