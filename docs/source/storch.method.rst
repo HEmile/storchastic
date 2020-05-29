@@ -1,38 +1,65 @@
-storch.method package
-=====================
+Gradient Estimation Methods
+===========================
 
-Submodules
-----------
+.. autoclass:: storch.method.Method
+   :members:
+   :undoc-members:
+   :show-inheritance:
 
-storch.method.baseline module
------------------------------
+.. autoclass:: storch.method.Infer
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. autoclass:: storch.method.Reparameterization
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. autoclass:: storch.method.ScoreFunction
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. autoclass:: storch.method.GumbelSoftmax
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. autoclass:: storch.method.Expect
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Baselines
+---------
 
 .. automodule:: storch.method.baseline
    :members:
    :undoc-members:
    :show-inheritance:
 
-storch.method.method module
----------------------------
+Multi-sample estimators
+-----------------------
 
-.. automodule:: storch.method.method
+.. automodule:: storch.method.multi_sample_reinforce
    :members:
    :undoc-members:
    :show-inheritance:
 
-storch.method.sampling module
------------------------------
+RELAX
+--------------------------
 
-.. automodule:: storch.method.sampling
+.. automodule:: storch.method.relax
    :members:
    :undoc-members:
    :show-inheritance:
 
+Unordered set estimator
+-----------------------
 
-Module contents
----------------
-
-.. automodule:: storch.method
+.. automodule:: storch.method.unordered
    :members:
    :undoc-members:
    :show-inheritance:
+

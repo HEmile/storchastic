@@ -4,6 +4,7 @@ import itertools
 from abc import abstractmethod
 from typing import Union, List, Optional, Tuple
 
+from storch.typing import AnyTensor
 from storch.sampling.method import SamplingMethod
 from torch.distributions import Distribution
 import storch
@@ -74,6 +75,7 @@ class AncestralPlate(storch.Plate):
         """
         Gets called whenever the given tensor is being unwrapped and unsqueezed for batch use.
         This method should not be called on tensors whose variable index is higher than this plates.
+
         :param tensor: The input tensor that is being unwrapped
         :return: The tensor that will be unwrapped and unsqueezed in the future. Can be a modification of the input tensor.
         """
@@ -123,9 +125,10 @@ class SequenceDecoding(SamplingMethod):
 
     EPS = 1e-8
 
-    def __init__(self, plate_name: str, k: int):
+    def __init__(self, plate_name: str, k: int, eos: None):
         super().__init__(plate_name)
         self.k = k
+        self.eos = eos
         self.reset()
 
     def reset(self):
@@ -137,13 +140,17 @@ class SequenceDecoding(SamplingMethod):
         # The index of the currently sampled variable
         self.variable_index = 0
         # The previously created plates
-        self.last_plate = None
+        self.new_plate = None
+        # What runs are already finished
+        self.finished_samples = None
+        # The sampled sequence so far
+        self.seq = []
 
     def sample(
         self,
         distr: Distribution,
         parents: [storch.Tensor],
-        plates: [storch.Plate],
+        orig_distr_plates: [storch.Plate],
         requires_grad: bool,
     ) -> (torch.Tensor, storch.Plate):
 
@@ -179,7 +186,8 @@ class SequenceDecoding(SamplingMethod):
         # orig_distr_plates: refers to the plates on the parameters of the distribution, and *can* include
         #  the k? ancestral plate (possibly empty)
         # prev_plates: refers to the plates of the previous sampled variable in this swr sample (possibly empty)
-        # plates: refers to all plates except this ancestral plate, of which there are amt_plates.
+        # plates: refers to all plates except this ancestral plate, of which there are amt_plates. The first plates are
+        #  the distr_plates, after that the prev_plates that are _not_ in distr_plates.
         #  It is composed of distr_plate x (ancstr_plates - distr_plates)
         # events: refers to the conditionally independent dimensions of the distribution (the distributions batch shape minus the plates)
         # k: refers to self.k
@@ -191,138 +199,18 @@ class SequenceDecoding(SamplingMethod):
         # event_shape: refers to the *shape* of the domain elements
         #  (can be 0, eg Categorical, or equal to |D_yv| for OneHotCategorical)
 
-        orig_distr_plates = []
-        for plate in plates:
-            if plate.n > 1:
-                orig_distr_plates.append(plate)
-        # Sample using stochastic beam search
-        # plates? x k x events x
-        ancestral_distrplate_index = -1
-        is_conditional_sample = False
-        distr_plates = orig_distr_plates
-        for i, plate in enumerate(orig_distr_plates):
-            if plate.name == self.plate_name:
-                ancestral_distrplate_index = i
-                is_conditional_sample = True
-                distr_plates = orig_distr_plates.copy()
-                distr_plates.remove(plate)
-                break
-
-        # TODO: This doesn't properly combine two ancestral plates with the same name but different variable index
-        #  (they should merge).
-        all_plates = distr_plates.copy()
-        prev_plate_shape = ()
-        if self.variable_index > 0:
-            # Previous variables have been sampled. add the prev_plates to all_plates
-            for plate in self.joint_log_probs.plates:
-                if plate not in distr_plates:
-                    all_plates.append(plate)
-                    prev_plate_shape = prev_plate_shape + (plate.n,)
-
-        amt_plates = len(all_plates)
-        amt_distr_plates = len(distr_plates)
-        amt_orig_distr_plates = len(orig_distr_plates)
-        if not distr.has_enumerate_support:
-            raise ValueError("Can only decode distributions with enumerable support.")
-
-        # |D_yv| x distr_plate[0] x ... x k? x ... x distr_plate[n-1] x events x event_shape
-        support = distr.enumerate_support(expand=True)
-
-        if ancestral_distrplate_index != -1:
-            # Reduce ancestral dimension in the support. As the dimension is just an expanded version, this should
-            # not change the underlying data.
-            # |D_yv| x distr_plates x events x event_shape
-            support = support[
-                (..., 0)
-                + (slice(None),) * (len(support.shape) - ancestral_distrplate_index - 2)
-            ]
-
-        # Equal to event_shape
-        element_shape = distr.event_shape
-        support_permutation = (
-            tuple(range(1, amt_distr_plates + 1))
-            + (0,)
-            + tuple(range(amt_distr_plates + 1, len(support.shape)))
-        )
-        # distr_plates x |D_yv| x events x event_shape
-        support = support.permute(support_permutation)
-
-        if amt_plates != amt_distr_plates:
-            # If previous samples had a plate that are not in the distribution plates, add these to the support.
-            support = support[
-                (slice(None),) * amt_distr_plates
-                + (None,) * (amt_plates - amt_distr_plates)
-            ]
-            # plates x |D_yv| x events x event_shape
-            support = support.expand(
-                (-1,) * amt_distr_plates
-                + prev_plate_shape
-                + (-1,) * (len(support.shape) - amt_distr_plates - 1)
-            )
-        support = storch.Tensor(support, [], all_plates)
-
-        # Equal to events: Shape for the different conditional independent dimensions
-        event_shape = support.shape[
-            amt_plates + 1 : -len(element_shape) if len(element_shape) > 0 else None
-        ]
-
-        with storch.ignore_wrapping():
-            # |D_yv| x (|distr_plates| + |k?| + |event_dims|) * (1,) x |D_yv|
-            support_non_expanded: torch.Tensor = distr.enumerate_support(expand=False)
-            # Compute the log-probability of the different events
-            # |D_yv| x distr_plate[0] x ... k? ... x distr_plate[n-1] x events
-            d_log_probs = distr.log_prob(support_non_expanded)
-
-            # Note: Use amt_orig_distr_plates here because it might include k? dimension. amt_distr_plates filters this one.
-            # distr_plate[0] x ... k? ... x distr_plate[n-1] x |D_yv| x events
-            d_log_probs = storch.Tensor(
-                d_log_probs.permute(
-                    tuple(range(1, amt_orig_distr_plates + 1))
-                    + (0,)
-                    + tuple(
-                        range(
-                            amt_orig_distr_plates + 1,
-                            amt_orig_distr_plates + 1 + len(event_shape),
-                        )
-                    )
-                ),
-                [],
-                orig_distr_plates,
-            )
-        if is_conditional_sample:
-            # Gather the correct log probabilities
-            # distr_plate[0] x ... k ... x distr_plate[n-1] x |D_yv| x events
-            # TODO: Move this down below to the other scary TODO
-            d_log_probs = self.last_plate.on_unwrap_tensor(d_log_probs)
-            # Permute the dimensions of d_log_probs st the k dimension is after the plates.
-            for i, plate in enumerate(d_log_probs.multi_dim_plates()):
-                if plate.name == self.plate_name:
-                    # k is present in the plates
-                    d_log_probs.plates.remove(plate)
-                    # distr_plates x k x |D_yv| x events
-                    d_log_probs._tensor = d_log_probs._tensor.permute(
-                        tuple(range(0, i))
-                        + tuple(range(i + 1, amt_orig_distr_plates))
-                        + (i,)
-                        + tuple(range(amt_orig_distr_plates, len(d_log_probs.shape)))
-                    )
-                    break
-
-        # Seperate classes into AbstractBeam class and this one, where this one doesn't compute all prerequisites.
-        # AbstractBeam is for BeamSearch and SWOR (stochastic beam)
-
         # Do the decoding step given the prepared tensors
         samples, self.joint_log_probs, self.parent_indexing = self.decode(
-            d_log_probs,
-            support,
-            self.joint_log_probs,
-            is_conditional_sample,
-            amt_plates,
-            event_shape,
-            element_shape,
+            distr, self.joint_log_probs, parents, orig_distr_plates
         )
 
+        # Find out what sequences have reached the EOS token, and make sure to always sample EOS after that.
+        # Does not contain the ancestral plate as this uses samples instead of s_tensor.
+        if self.eos:
+            self.finished_samples = samples.eq(self.eos)
+
         k_index = 0
+        plates = orig_distr_plates
         if isinstance(samples, storch.Tensor):
             k_index = samples.plate_dims
             plates = samples.plates
@@ -340,11 +228,13 @@ class SequenceDecoding(SamplingMethod):
             plates.remove(to_remove)
 
         # Create the newly updated plate
-        self.last_plate = self.create_plate(plate_size, plates.copy())
-        plates.append(self.last_plate)
+        self.new_plate = self.create_plate(plate_size, plates.copy())
+        plates.append(self.new_plate)
 
         if self.parent_indexing is not None:
-            self.parent_indexing.plates.append(self.last_plate)
+            self.parent_indexing.plates.append(self.new_plate)
+
+        self.seq = list(map(lambda t: self.new_plate.on_unwrap_tensor(t), self.seq))
 
         # Construct the stochastic tensor
         s_tensor = storch.StochasticTensor(
@@ -356,32 +246,39 @@ class SequenceDecoding(SamplingMethod):
             distr,
             requires_grad or self.joint_log_probs.requires_grad,
         )
+
+        self.seq.append(s_tensor)
+
         # Increase variable index
         self.variable_index += 1
-        return s_tensor, self.last_plate
+        return s_tensor, self.new_plate
+
+    def plate_weighting(
+        self, tensor: storch.StochasticTensor, plate: storch.Plate
+    ) -> Optional[storch.Tensor]:
+        if self.eos:
+            active = 1 - self.finished_samples
+            amt_active: storch.Tensor = storch.sum(active, plate)
+            return active / amt_active
+        return super().plate_weighting(tensor, plate)
 
     @abstractmethod
     def decode(
         self,
-        d_log_probs: storch.Tensor,
-        support: storch.Tensor,
+        distribution: Distribution,
         joint_log_probs: Optional[storch.Tensor],
-        is_conditional_sample: bool,
-        amt_plates: int,
-        event_shape: torch.Size,
-        element_shape: torch.Size,
+        parents: [storch.Tensor],
+        orig_distr_plates: [storch.Plate],
     ) -> (storch.Tensor, storch.Tensor, storch.Tensor):
         """
         Decode given the input arguments
-        :param d_log_probs: Log probability given by the distribution. distr_plates x k? x |D_yv| x events
-        :param support: The support of this distribution. plates x |D_yv| x events x event_shape
+        :param distribution: The distribution to decode
         :param joint_log_probs: The log probabilities of the samples so far. prev_plates x amt_samples
-        :param is_conditional_sample: True if a parent has already been sampled. This means the plates are more complex!
-        :param amt_plates: The total amount of plates in both the distribution and the previously sampled variables
-        :param event_shape: The shape of the conditionally independent events
-        :param element_shape: The shape of a domain element. (|D_yv|,) for `torch.distributions.OneHotCategorical`, otherwise (,).
+        :param parents: List of parents of this tensor
+        :param orig_distr_plates: List of plates from the distribution. Can include the self plate k.
         :return: 3-tuple of `storch.Tensor`. 1: The sampled value. 2: The new joint log probabilities of the samples.
         3: How the samples index the parent samples. Can just be a range if there is no choosing happening.
+        For all of these, the last plate index should be the plate index, with the other plates like `all_plates`
         """
         pass
 
@@ -391,36 +288,214 @@ class SequenceDecoding(SamplingMethod):
             plate_size,
             plates.copy(),
             self.variable_index,
-            self.last_plate,
+            self.new_plate,
             self.parent_indexing,
             self.joint_log_probs,
             None,
         )
 
+    def get_sampled_seq(self, finished: bool = False) -> [storch.StochasticTensor]:
+        # TODO: the finished one doesn't return proper tensors.
+        if finished:
+            return list(map(lambda t: t[self.finished_samples], self.seq))
+        return torch.cat(self.seq, dim=self.seq[0].plate_dims)
+
+    def get_amt_finished(self) -> AnyTensor:
+        if not self.eos:
+            raise RuntimeError(
+                "Cannot get the amount of finished sequences when eos is not set."
+            )
+        if self.finished_samples is None:
+            return 0
+        return torch.sum(self.finished_samples, -1)
+
+    def get_unique_seqs(self):
+        # TODO: Very experimental code
+        seq_dim = self.seq[0].plate_dims
+        cat_seq = torch.cat(self.seq, dim=seq_dim)
+        return storch.unique(cat_seq, event_dim=0)
+
+    def all_finished(self) -> bool:
+        t = self.get_amt_finished().eq(self.k)
+        # This is required because storch.Tensor's do not support .all() and .bool()
+        if isinstance(t, storch.Tensor):
+            return t._tensor.all().bool()
+        return t.all().bool()
+
+
+class MCDecoder(SequenceDecoding):
+    def decode(
+        self,
+        distribution: Distribution,
+        joint_log_probs: Optional[storch.Tensor],
+        parents: [storch.Tensor],
+        orig_distr_plates: [storch.Plate],
+    ) -> (storch.Tensor, storch.Tensor, storch.Tensor):
+
+        is_conditional_sample = False
+
+        for plate in orig_distr_plates:
+            if plate.name == self.plate_name:
+                is_conditional_sample = True
+
+        if is_conditional_sample:
+            sample = self.mc_sample(
+                distribution, parents, orig_distr_plates, 1
+            ).squeeze(0)
+        else:
+            sample = self.mc_sample(distribution, parents, orig_distr_plates, self.k)
+
+        s_log_probs = distribution.log_prob(sample)
+        if joint_log_probs:
+            joint_log_probs += s_log_probs
+        else:
+            joint_log_probs = s_log_probs
+
+        if self.finished_samples:
+            # Make sure we do not change the log probabilities for samples that were already finished
+            joint_log_probs = (
+                joint_log_probs * self.finished_samples
+                + joint_log_probs * (1 - self.finished_samples)
+            )
+            sample[self.finished_samples] = self.eos
+
+        return sample, joint_log_probs, None
+
 
 class IterDecoding(SequenceDecoding):
     def decode(
         self,
-        d_log_probs: storch.Tensor,
-        support: storch.Tensor,
+        distr: Distribution,
         joint_log_probs: Optional[storch.Tensor],
-        is_conditional_sample: bool,
-        amt_plates: int,
-        event_shape: torch.Size,
-        element_shape: torch.Size,
+        parents: [storch.Tensor],
+        orig_distr_plates: [storch.Plate],
     ) -> (storch.Tensor, storch.Tensor, storch.Tensor):
         """
         Decode given the input arguments
-        :param d_log_probs: Log probability given by the distribution. distr_plates x k? x |D_yv| x events
-        :param support: The support of this distribution. plates x |D_yv| x events x event_shape
-        :param joint_log_probs: The log probabilities of the samples so far. None if nothing is sampled yet. prev_plates x amt_samples
-        :param is_conditional_sample: True if a parent has already been sampled. This means the plates are more complex!
-        :param amt_plates: The total amount of plates in both the distribution and the previously sampled variables
-        :param event_shape: The shape of the conditionally independent events
-        :param element_shape: The shape of a domain element. (|D_yv|,) for `torch.distributions.OneHotCategorical`, otherwise (,).
+        :param distribution: The distribution to decode
+        :param joint_log_probs: The log probabilities of the samples so far. prev_plates x amt_samples
+        :param parents: List of parents of this tensor
+        :param orig_distr_plates: List of plates from the distribution. Can include the self plate k.
         :return: 3-tuple of `storch.Tensor`. 1: The sampled value. 2: The new joint log probabilities of the samples.
         3: How the samples index the parent samples. Can just be a range if there is no choosing happening.
         """
+        ancestral_distrplate_index = -1
+        is_conditional_sample = False
+
+        multi_dim_distr_plates = []
+        multi_dim_index = 0
+        for plate in orig_distr_plates:
+            if plate.n > 1:
+                if plate.name == self.plate_name:
+                    ancestral_distrplate_index = multi_dim_index
+                    is_conditional_sample = True
+                else:
+                    multi_dim_distr_plates.append(plate)
+                multi_dim_index += 1
+        # plates? x k x events x
+
+        # TODO: This doesn't properly combine two ancestral plates with the same name but different variable index
+        #  (they should merge).
+        all_multi_dim_plates = multi_dim_distr_plates.copy()
+        if self.variable_index > 0:
+            # Previous variables have been sampled. add the prev_plates to all_plates
+            for plate in self.joint_log_probs.multi_dim_plates():
+                if plate not in multi_dim_distr_plates:
+                    all_multi_dim_plates.append(plate)
+
+        amt_multi_dim_plates = len(all_multi_dim_plates)
+        amt_multi_dim_distr_plates = len(multi_dim_distr_plates)
+        amt_multi_dim_orig_distr_plates = amt_multi_dim_distr_plates + (
+            1 if is_conditional_sample else 0
+        )
+        amt_multi_dim_prev_plates = amt_multi_dim_plates - amt_multi_dim_distr_plates
+        if not distr.has_enumerate_support:
+            raise ValueError("Can only decode distributions with enumerable support.")
+
+        with storch.ignore_wrapping():
+            # |D_yv| x (|distr_plates| + |k?| + |event_dims|) * (1,) x |D_yv|
+            support_non_expanded: torch.Tensor = distr.enumerate_support(expand=False)
+            # Compute the log-probability of the different events
+            # |D_yv| x distr_plate[0] x ... k? ... x distr_plate[n-1] x events
+            d_log_probs = distr.log_prob(support_non_expanded)
+
+            # Note: Use amt_orig_distr_plates here because it might include k? dimension. amt_distr_plates filters this one.
+            # distr_plate[0] x ... k? ... x distr_plate[n-1] x |D_yv| x events
+            d_log_probs = storch.Tensor(
+                d_log_probs.permute(
+                    tuple(range(1, amt_multi_dim_orig_distr_plates + 1))
+                    + (0,)
+                    + tuple(
+                        range(
+                            amt_multi_dim_orig_distr_plates + 1, len(d_log_probs.shape)
+                        )
+                    )
+                ),
+                [],
+                orig_distr_plates,
+            )
+
+        # |D_yv| x distr_plate[0] x ... x k? x ... x distr_plate[n-1] x events x event_shape
+        support = distr.enumerate_support(expand=True)
+
+        if is_conditional_sample:
+            # Reduce ancestral dimension in the support. As the dimension is just an expanded version, this should
+            # not change the underlying data.
+            # |D_yv| x distr_plates x events x event_shape
+            support = support[(slice(None),) * (ancestral_distrplate_index + 1) + (0,)]
+
+            # Gather the correct log probabilities
+            # distr_plate[0] x ... k ... x distr_plate[n-1] x |D_yv| x events
+            # TODO: Move this down below to the other scary TODO
+            d_log_probs = self.new_plate.on_unwrap_tensor(d_log_probs)
+            # Permute the dimensions of d_log_probs st the k dimension is after the plates.
+            for i, plate in enumerate(d_log_probs.multi_dim_plates()):
+                if plate.name == self.plate_name:
+                    d_log_probs.plates.remove(plate)
+                    # distr_plates x k x |D_yv| x events
+                    d_log_probs._tensor = d_log_probs._tensor.permute(
+                        tuple(range(0, i))
+                        + tuple(range(i + 1, amt_multi_dim_orig_distr_plates))
+                        + (i,)
+                        + tuple(
+                            range(
+                                amt_multi_dim_orig_distr_plates, len(d_log_probs.shape)
+                            )
+                        )
+                    )
+                    break
+
+        # Equal to event_shape
+        element_shape = distr.event_shape
+        support_permutation = (
+            tuple(range(1, amt_multi_dim_distr_plates + 1))
+            + (0,)
+            + tuple(range(amt_multi_dim_distr_plates + 1, len(support.shape)))
+        )
+        # distr_plates x |D_yv| x events x event_shape
+        support = support.permute(support_permutation)
+
+        if amt_multi_dim_plates != amt_multi_dim_distr_plates:
+            # If previous samples had plate dimensions that are not in the distribution plates, add these to the support.
+            support = support[
+                (slice(None),) * amt_multi_dim_distr_plates
+                + (None,) * amt_multi_dim_prev_plates
+            ]
+            all_plate_dims = tuple(map(lambda _p: _p.n, all_multi_dim_plates))
+            # plates x |D_yv| x events x event_shape (where plates = distr_plates x prev_plates)
+            support = support.expand(
+                all_plate_dims + (-1,) * (len(support.shape) - amt_multi_dim_plates)
+            )
+        # plates x |D_yv| x events x event_shape
+        support = storch.Tensor(support, [], all_multi_dim_plates)
+
+        # Equal to events: Shape for the different conditional independent dimensions
+        event_shape = support.shape[
+            amt_multi_dim_plates + 1 : -len(element_shape)
+            if len(element_shape) > 0
+            else None
+        ]
+
         ranges = []
         for size in event_shape:
             ranges.append(list(range(size)))
@@ -433,7 +508,7 @@ class IterDecoding(SequenceDecoding):
             amt_samples = joint_log_probs.shape[-1]
             # plates x k
             parent_indexing = support.new_zeros(
-                size=support.shape[:amt_plates] + (self.k,), dtype=torch.long
+                size=support.shape[:amt_multi_dim_plates] + (self.k,), dtype=torch.long
             )
 
             # probably can go wrong if plates are missing.
@@ -442,10 +517,12 @@ class IterDecoding(SequenceDecoding):
             )
         # plates x k x events
         sampled_support_indices = support.new_zeros(
-            size=support.shape[:amt_plates]  # plates
+            size=support.shape[:amt_multi_dim_plates]  # plates
             + (self.k,)
             + support.shape[
-                amt_plates + 1 : -len(element_shape) if len(element_shape) > 0 else None
+                amt_multi_dim_plates + 1 : -len(element_shape)
+                if len(element_shape) > 0
+                else None
             ],  # events
             dtype=torch.long,
         )
@@ -467,7 +544,7 @@ class IterDecoding(SequenceDecoding):
                 sampled_support_indices,
                 parent_indexing,
                 is_conditional_sample,
-                amt_plates,
+                amt_multi_dim_plates,
                 amt_samples,
             )
         # Finally, index the support using the sampled indices to get the sample!
@@ -477,7 +554,7 @@ class IterDecoding(SequenceDecoding):
                 (...,) + (slice(amt_samples),) + (slice(None),) * len(ranges)
             ]
         expanded_indices = right_expand_as(sampled_support_indices, support)
-        sample = support.gather(dim=amt_plates, index=expanded_indices)
+        sample = support.gather(dim=amt_multi_dim_plates, index=expanded_indices)
         return sample, joint_log_probs, parent_indexing
 
     @abstractmethod

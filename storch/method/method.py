@@ -3,15 +3,14 @@ from torch.distributions import Distribution, OneHotCategorical, Bernoulli, Cate
 
 from storch.tensor import CostTensor, StochasticTensor, Plate
 import torch
-from typing import Optional, Type, Union, Dict, List
+from typing import Optional, Type, Union, Dict, List, Callable
 from storch.util import (
     has_differentiable_path,
     get_distr_parameters,
     rsample_gumbel,
 )
-from storch.typing import BaselineFactory
 import storch
-from storch.method.baseline import MovingAverageBaseline, BatchAverageBaseline
+from storch.method.baseline import MovingAverageBaseline, BatchAverageBaseline, Baseline
 from storch.sampling import (
     SamplingMethod,
     MonteCarlo,
@@ -23,12 +22,13 @@ class Method(ABC, torch.nn.Module):
     """
     Base class of gradient estimation methods.
 
-    They are :class:`torch.nn.Modules`, and can therefore contain parameters to optimize.
-    Calling them (:meth:`forward`) with a :class:`torch.distributions.Distribution`
-    returns a sampled Tensor from that distribution that will use the gradient estimator in the backward pass.
+    A :class:`Method` is a :class:`torch.nn.Module`, and can therefore contain parameters to optimize.
+    Calling them (:meth:`forward`) with a PyTorch distribution returns a sampled Tensor of type :class:`storch.StochasticTensor`
+    from that distribution that will use the gradient estimator in the backward pass when :func:`storch.backward` is called.
 
-    Derived classes must implement :meth:`_sample_tensor`
-
+    Args:
+        plate_name (str): The name of the :class:`.Plate` that samples of this method will use.
+        sampling_method (storch.sampling.SamplingMethod): The method to sample tensors with given an input distribution.
     """
 
     def __init__(self, plate_name: str, sampling_method: SamplingMethod):
@@ -186,9 +186,16 @@ class Method(ABC, torch.nn.Module):
     def estimator(
         self, tensor: StochasticTensor, cost_node: CostTensor
     ) -> Optional[storch.Tensor]:
-        # Estimators should optionally return a torch.Tensor that is going to be added to the total cost function.
-        # In the case of for example reparameterization, None is returned to denote that no cost function is added.
-        # When adding a loss function, adds_loss should return True
+        """
+        Returns the surrogate loss of this estimator, if it adds one. A method such as :class:`storch.method.Reparameterization`
+        will not add a surrogate loss.
+
+        Note that this method is only called if :meth:`adds_loss` returns True.
+
+        Args:
+            tensor (storch.StochasticTensor): The sampled tensor to find the surrogate loss for.
+            cost_node (storch.CostTensor):
+        """
         return None
 
     def update_parameters(
@@ -268,7 +275,7 @@ class Infer(Method):
 
 class Reparameterization(Method):
     """
-    Can only be used for reparameterizable distributions.
+    Can only be used for reparameterizable distributions and when the function to minimize is differentiable.
     Default option for reparameterizable distributions.
     """
 
@@ -309,9 +316,9 @@ class Reparameterization(Method):
 
 class GumbelSoftmax(Method):
     """
-    Method that automatically chooses between Gumbel Softmax relaxation and the score function depending on the
-    differentiability requirements of cost nodes. Can only be used for reparameterizable distributions.
-    Default option for reparameterizable distributions.
+    Method that implements the Gumbel Softmax relaxation with temperature annealing.
+    Can only be used to find the derivative when all paths to the cost nodes are differentiable.
+    Introduced in https://arxiv.org/abs/1611.01144 and https://arxiv.org/abs/1611.00712
     """
 
     def __init__(
@@ -355,6 +362,9 @@ class GumbelSoftmax(Method):
             "We cannot use reparameterization. Use a different gradient estimator, or make sure your"
             "code is differentiable."
         )
+
+
+BaselineFactory = Callable[[storch.StochasticTensor, storch.CostTensor], Baseline]
 
 
 class ScoreFunction(Method):

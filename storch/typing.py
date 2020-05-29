@@ -1,7 +1,6 @@
 from __future__ import annotations
 import torch
 import storch
-from storch.method.baseline import Baseline
 from typing import Union, List, Tuple, Callable
 from torch import Size
 from torch.distributions import Bernoulli, Categorical, OneHotCategorical
@@ -18,4 +17,6 @@ Dims = Union[int, _size]
 
 DiscreteDistribution = Union[Bernoulli, Categorical, OneHotCategorical]
 
-BaselineFactory = Callable[[storch.StochasticTensor, storch.CostTensor], Baseline]
+
+_index = Union[str, int, storch.Plate]
+_indices = Union[List[_index], _index]

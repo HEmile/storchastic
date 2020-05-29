@@ -3,7 +3,7 @@ import torch
 import storch
 from torch.distributions import Distribution
 from collections import deque
-from typing import List, Iterable, Any, Callable
+from typing import List, Iterable, Any, Callable, Iterator
 import builtins
 from itertools import product
 from typing import Optional
@@ -97,21 +97,58 @@ class Plate:
     def on_collecting_args(self, plates: [Plate]) -> bool:
         """
         Gets called after a wrapper collected plates from its input arguments.
-        :param plates: All collected plates
-        :return: Return True if this plate should remain in the collected plates.
+
+        Args:
+            plates ([Plate]):  All collected plates
+
+        Returns:
+            bool: True if this plate should remain in the collected plates.
+
         """
         return True
 
     def on_unwrap_tensor(self, tensor: storch.Tensor) -> storch.Tensor:
         """
         Gets called whenever the given tensor is being unwrapped and unsqueezed for batch use.
-        :param tensor: The input tensor that is being unwrapped
-        :return: The tensor that will be unwrapped and unsqueezed in the future. Can be a modification of the input tensor.
+
+        Args:
+            tensor (storch.Tensor): The input tensor that is being unwrapped
+
+        Returns:
+            storch.Tensor: The tensor that will be unwrapped and unsqueezed in the future. Can be a modification of the input tensor.
+
         """
         return tensor
 
 
 class Tensor:
+    """
+    A :class:`storch.Tensor` is a wrapper around a :class:`torch.Tensor` that acts like a normal :class:`torch.Tensor`
+    with some restrictions and some extra data.
+
+    By design, :class:`storch.Tensor` cannot expose the wrapped :class:`torch.Tensor` to regular Python control flow.
+    For example, using a :class:`storch.Tensor` inside an ``if`` condition or in a ``for`` loop will throw an
+    :class:`~storch.exceptions.IllegalStorchExposeError`. This is done because a node could be dependent on a Tensor that is used as
+    a conditional to branch between different computation paths.  However, Python control flow will not register dependencies
+    between nodes in the computation graph.
+
+    The underlying :class:`torch.Tensor` can be unwrapped in two ways. The safe way is using the :func:`.deterministic`
+    wrapper, which safely unwraps the :class:`storch.Tensor` and runs the function on the unwrapped :class:`torch.Tensor`.
+    Note that all ``torch`` methods are automatically wrapped using :func:`.deterministic` when an input argument
+    is :class:`storch.Tensor`.
+    The unsafe way to unwrap the tensor is to access :attr:`storch.Tensor._tensor`. This should only be use when one is
+    sure this will not introduce missing dependency links.
+
+    Args:
+        tensor (torch.Tensor): The tensor to wrap. The leftmost dimensions should correspond to the sizes of ``plates``
+            that are larger than 1.
+        parents ([storch.Tensor]): The parents of this Tensor. Parents represent the incoming links in stochastic
+            computation graphs.
+        plates ([storch.Plate]): The plates of this Tensor. Plates contain information about the sampling procedure and
+            dependencies of this Tensor with respect to earlier samples.
+        name (Optional[str]): The name of this Tensor.
+    """
+
     def __init__(
         self,
         tensor: torch.Tensor,
@@ -224,6 +261,9 @@ class Tensor:
 
     @property
     def is_sparse(self):
+        """
+        Returns: True if the underlying tensor is sparse.
+        """
         return self._tensor.is_sparse
 
     def __str__(self):
@@ -259,7 +299,7 @@ class Tensor:
         only_differentiable=False,
         repeat_visited=False,
         walk_fn=lambda x: x,
-    ):
+    ) -> Iterator:
         visited = set()
         if depth_first:
             S = [self]
@@ -292,6 +332,18 @@ class Tensor:
         repeat_visited=False,
         walk_fn=lambda x: x,
     ):
+        """
+        Searches through the parents of this Tensor in the stochastic computation graph.
+
+        Args:
+            depth_first: True to use depth first, otherwise breadth first.
+            only_differentiable: True to only walk over edges that are differentiable
+            repeat_visited:
+            walk_fn: Optional function on :class:`storch.Tensor` that manipulates the nodes found.
+
+        Returns:
+            Iterator of type that is equal to the output type of ``walk_fn``.
+        """
         return self._walk(
             lambda p: p._parents,
             depth_first,
@@ -307,6 +359,18 @@ class Tensor:
         repeat_visited=False,
         walk_fn=lambda x: x,
     ):
+        """
+        Searches through the children of this Tensor in the stochastic computation graph.
+
+        Args:
+            depth_first: True to use depth first, otherwise breadth first.
+            only_differentiable: True to only walk over edges that are differentiable
+            repeat_visited:
+            walk_fn: Optional function on :class:`storch.Tensor` that manipulates the nodes found.
+
+        Returns:
+            Iterator of type that is equal to the output type of ``walk_fn``.
+        """
         return self._walk(
             lambda p: p._children,
             depth_first,
@@ -315,15 +379,27 @@ class Tensor:
             walk_fn,
         )
 
-    def detach_tensor(self) -> torch.Tensor:
+    def detach_tensor(self) -> storch.Tensor:
+        """
+        Returns: A :class:`storch.Tensor` that is removed from PyTorch's differention graph.
+            However, the tensor will remain present on the stochastic computation graph.
+        """
         return self._tensor.detach()
 
     @property
     def stochastic(self) -> bool:
+        """
+        Returns:
+            bool: True if this is a stochastic node in the stochastic computation graph, False otherwise.
+        """
         return False
 
     @property
     def is_cost(self) -> bool:
+        """
+        Returns:
+            bool: True if this is a cost node in the stochastic computation graph, False otherwise.
+        """
         return False
 
     @property
@@ -419,7 +495,7 @@ class Tensor:
     def __index__(self):
         raise IllegalStorchExposeError("Cannot use storch tensors as index.")
 
-    # TODO: shouldn't this have @deterministic?
+    @storch.deterministic
     def eq(self, other):
         return self.eq(other)
 
@@ -650,6 +726,17 @@ class IndependentTensor(Tensor):
 
 
 class StochasticTensor(Tensor):
+    """
+    A :class:`storch.Tensor` that represents a stochastic node in the stochastic computation graph.
+
+    Args:
+        n (int): The size of the plate dimension created by this stochastic node.
+        distribution: The distribution of this stochastic node.
+        requires_grad (bool): True if we are interested in the gradients with respect to the parameters of the distribution of
+            this stochastic node.
+        
+    """
+
     # TODO: Copy original tensor to make sure it cannot change using inplace
     def __init__(
         self,

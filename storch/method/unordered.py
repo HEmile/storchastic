@@ -26,6 +26,7 @@ class UnorderedSetEstimator(Method):
         exact_integration: bool = False,
         num_int_points: int = 1000,
         a: float = 5.0,
+        eos=None,
     ):
         """
         Creates an Unordered Set Estimator method.
@@ -41,7 +42,13 @@ class UnorderedSetEstimator(Method):
         super().__init__(
             plate_name,
             UnorderedSet(
-                plate_name, k, use_baseline, exact_integration, num_int_points, a
+                plate_name,
+                k,
+                use_baseline,
+                exact_integration,
+                num_int_points,
+                a,
+                eos=eos,
             ),
         )
         self.use_baseline = use_baseline

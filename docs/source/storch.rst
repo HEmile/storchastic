@@ -1,35 +1,8 @@
-storch package
+Storch package
 ==============
 
-Subpackages
------------
 
-.. toctree::
-
-   storch.method
-   storch.nn
-   storch.seq
-
-Submodules
-----------
-
-storch.exceptions module
-------------------------
-
-.. automodule:: storch.exceptions
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-storch.excluded\_init module
-----------------------------
-
-.. automodule:: storch.excluded_init
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-storch.inference module
+Inference
 -----------------------
 
 .. automodule:: storch.inference
@@ -37,39 +10,9 @@ storch.inference module
    :undoc-members:
    :show-inheritance:
 
-storch.storch module
---------------------
 
-.. automodule:: storch.storch
-   :members:
-   :undoc-members:
-   :show-inheritance:
 
-storch.tensor module
---------------------
-
-.. automodule:: storch.tensor
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-storch.typing module
---------------------
-
-.. automodule:: storch.typing
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-storch.util module
-------------------
-
-.. automodule:: storch.util
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-storch.wrappers module
+Wrappers
 ----------------------
 
 .. automodule:: storch.wrappers
@@ -77,11 +20,34 @@ storch.wrappers module
    :undoc-members:
    :show-inheritance:
 
+Exceptions
+------------------------
 
-Module contents
----------------
+.. automodule:: storch.exceptions
+   :members:
+   :undoc-members:
+   :show-inheritance:
 
-.. automodule:: storch
+
+Unique
+--------------------
+This module is highly experimental
+
+.. automodule:: storch.unique
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Utilities
+--------------------
+
+.. automodule:: storch.storch
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+
+.. automodule:: storch.util
    :members:
    :undoc-members:
    :show-inheritance:

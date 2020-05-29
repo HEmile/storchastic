@@ -17,7 +17,7 @@ class Baseline(ABC, torch.nn.Module):
 
 class MovingAverageBaseline(Baseline):
     """
-    Takes the (unconditional) average over the different costs. This is not as precise as a conditional baseline.
+    Takes the (unconditional) average over the different costs.
     """
 
     def __init__(self, exponential_decay=0.95):
@@ -37,7 +37,11 @@ class MovingAverageBaseline(Baseline):
 
 
 class BatchAverageBaseline(Baseline):
-    # Uses the means of the other samples
+    """
+    Uses the average over the other samples as baseline.
+    Introduced by https://arxiv.org/abs/1602.06725
+    """
+
     def compute_baseline(
         self, tensor: StochasticTensor, costs: CostTensor
     ) -> torch.Tensor:

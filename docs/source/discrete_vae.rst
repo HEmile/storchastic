@@ -1,5 +1,4 @@
-
-Example: Discrete Variational Autoencoder
+Discrete Variational Autoencoder
 =========================================
     .. code-block:: python
 
@@ -64,7 +63,7 @@ Example: Discrete Variational Autoencoder
         import storch
         from vae import minibatches, encode, decode, KLD
 
-        method = storch.ScoreFunction(baseline_factory="batch_average")
+        method = storch.ScoreFunction("z", 8, baseline_factory="batch_average")
         for data in minibatches():
             optimizer.zero_grad()
             # Denote the minibatch dimension as being independent
@@ -72,7 +71,7 @@ Example: Discrete Variational Autoencoder
 
             # Define the variational distribution given the data, and sample latent variables
             q = torch.distributions.OneHotCategorical(logits=encode(data))
-            z = method("z", q, n=8)
+            z = method(q)
 
             # Compute and register the KL divergence and reconstruction losses to form the ELBO
             reconstruction = decode(z)
