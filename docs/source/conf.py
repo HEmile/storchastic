@@ -36,6 +36,10 @@ extensions = [
     "sphinx.ext.autodoc",
     "sphinx.ext.napoleon",
     "sphinx.ext.viewcode",
+    "sphinx.ext.intersphinx",
+    "sphinxcontrib.bibtex",
+    "sphinx.ext.autosectionlabel",
+    "sphinx.ext.mathjax",
 ]
 
 # Add any paths that contain templates here, relative to this directory.
@@ -64,3 +68,9 @@ html_static_path = ["_static"]
 html_sidebars = {
     "**": ["globaltoc.html", "relations.html", "sourcelink.html", "searchbox.html"]
 }
+
+intersphinx_mapping = {
+    "torch": ("https://pytorch.org/docs/master/", None),
+}
+
+# add_module_names = False

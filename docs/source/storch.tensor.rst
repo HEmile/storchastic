@@ -1,10 +1,10 @@
 Storch Tensors
---------------------
+--------------
 
 To keep track of the stochastic computation graph, Storchastic returns wrapped :class:`torch.Tensor` that are subclasses of
 :class:`storch.Tensor`. This wrapper contains information that allows Storchastic to analyse the computation graph
 during inference to properly estimate gradients. Furthermore, :class:`storch.Tensor` contains plate information that allows
-for automatic broadcasting with other :class:`storch.Tensor` s with other plate information.
+for automatic broadcasting with other :class:`storch.Tensor` objects with different plate information.
 
 .. autoclass:: storch.Tensor
    :members:

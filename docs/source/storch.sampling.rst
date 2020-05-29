@@ -1,5 +1,5 @@
 Sampling Methods
-=======================
+================
 
 .. automodule:: storch.sampling.method
    :members:
@@ -7,7 +7,7 @@ Sampling Methods
    :show-inheritance:
 
 Expectation
------------------------------
+-----------
 
 .. automodule:: storch.sampling.expect
    :members:
@@ -15,7 +15,7 @@ Expectation
    :show-inheritance:
 
 Sequence decoding
---------------------------
+-----------------
 
 .. automodule:: storch.sampling.seq
    :members:
@@ -23,7 +23,7 @@ Sequence decoding
    :show-inheritance:
 
 Sampling without replacement
----------------------------
+----------------------------
 
 .. automodule:: storch.sampling.swor
    :members:
