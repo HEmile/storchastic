@@ -1,1 +1,4 @@
 sphinxcontrib.bibtex
+pytorch
+torchvision
+pyro-ppl

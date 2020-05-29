@@ -61,7 +61,7 @@ A very common method to approximate expectations is to use *Monte Carlo* methods
 Gradient estimation
 ^^^^^^^^^^^^^^^^^^^
 We have shown a simple model with a stochastic node, and we have shown how to compute samples of the output. Next, assume
-we are interested in the derivative with respect to input :math:`c` :math:`\frac{\partial}{\partial c}\mathbb{E}_{e\sim \mathcal{N}(c+b, 1)}[(a+b)\cdote]`. For the same reason as before, we will use Monte Carlo estimation and sample some values
+we are interested in the derivative with respect to input :math:`c` :math:`\frac{\partial}{\partial c}\mathbb{E}_{e\sim \mathcal{N}(c+b, 1)}[(a+b)\cdot e]`. For the same reason as before, we will use Monte Carlo estimation and sample some values
 from the distribution to estimate the derivatives.
 
 There is however a big issue here: Sampling is not a differentiable procedure! An easy way to see this is by looking at
