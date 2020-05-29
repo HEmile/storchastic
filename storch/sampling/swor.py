@@ -106,15 +106,18 @@ class SampleWithoutReplacement(IterDecoding):
             # Then make sure the log probability of the eos token is equal to the last perturbed log prob.
             finished_vec[:, self.eos] = finished_perturb_log_probs
             cond_G_yv[self.finished_samples] = finished_vec
+
+        if not first_sample:
+            # plates x (k * |D_yv|) (k == prev_amt_samples, in this case)
+            cond_G_yv = cond_G_yv.reshape(cond_G_yv.shape[:-2] + (-1,))
+
+        # Select the samples given the perturbed log probabilities
+        self.perturbed_log_probs, arg_top = self.select_samples(
+            cond_G_yv, all_joint_log_probs
+        )
+        amt_samples = arg_top.shape[-1]
+
         if first_sample:
-            # No parent has been sampled yet
-            # shape(cond_G_yv) is plates x |D_yv|
-            amt_samples = min(self.k, cond_G_yv.shape[-1])
-            # Compute top k over the conditional perturbed log probs
-            # plates x amt_samples
-            self.perturbed_log_probs, arg_top = torch.topk(
-                cond_G_yv, amt_samples, dim=-1
-            )
             # plates x amt_samples
             joint_log_probs = all_joint_log_probs.gather(dim=-1, index=arg_top)
             # Index for the selected samples. Uses slice(amt_samples) for the first index in case k > |D_yv|
@@ -122,17 +125,6 @@ class SampleWithoutReplacement(IterDecoding):
             indexing = (slice(None),) * amt_plates + (slice(0, amt_samples),) + indices
             sampled_support_indices[indexing] = arg_top
         else:
-            # plates x (k * |D_yv|) (k == prev_amt_samples, in this case)
-            cond_G_yv = cond_G_yv.reshape(cond_G_yv.shape[:-2] + (-1,))
-            # We can sample at most the amount of what we previous sampled, combined with every option in the current domain
-            # That is: prev_amt_samples * |D_yv|.
-
-            amt_samples = min(self.k, cond_G_yv.shape[-1])
-            # Take the top k over conditional perturbed log probs
-            # plates x amt_samples
-            self.perturbed_log_probs, arg_top = torch.topk(
-                cond_G_yv, amt_samples, dim=-1
-            )
             # Gather corresponding joint log probabilities. First reshape like previous to plates x (k * |D_yv|).
             joint_log_probs = all_joint_log_probs.reshape(cond_G_yv.shape).gather(
                 dim=-1, index=arg_top
@@ -156,6 +148,25 @@ class SampleWithoutReplacement(IterDecoding):
             indexing = (slice(None),) * amt_plates + (slice(0, amt_samples),) + indices
             sampled_support_indices[indexing] = chosen_samples
         return sampled_support_indices, joint_log_probs, parent_indexing, amt_samples
+
+    def select_samples(
+        self, perturbed_log_probs: storch.Tensor, joint_log_probs: storch.Tensor,
+    ) -> (storch.Tensor, storch.Tensor):
+        """
+        Given the perturbed log probabilities and the joint log probabilities of the new options, select which one to
+        use for the sample.
+        :param perturbed_log_probs: plates x (k? * |D_yv|). Perturbed log-probabilities. k is present if first_sample.
+        :param joint_log_probs: plates x k? x (k? * |D_yv|). Joint log probabilities of the options. k is present if first_sample.
+        :param first_sample:
+        :return:
+        """
+
+        # We can sample at most the amount of what we previous sampled, combined with every option in the current domain
+        # That is: prev_amt_samples * |D_yv|.
+        amt_samples = min(self.k, perturbed_log_probs.shape[-1])
+        # Take the top k over conditional perturbed log probs
+        # plates x amt_samples
+        return torch.topk(perturbed_log_probs, amt_samples, dim=-1)
 
     def create_plate(self, plate_size: int, plates: [storch.Plate]) -> AncestralPlate:
         plate = super().create_plate(plate_size, plates)
@@ -230,3 +241,50 @@ def cond_gumbel_sample(all_joint_log_probs, perturbed_log_probs) -> torch.Tensor
     vi = T - G_yv + log1mexp(G_yv - Z.unsqueeze(-1))
     # plates (x k) x |D_yv|
     return T - vi.relu() - torch.nn.Softplus()(-vi.abs())
+
+
+class SumAndSample(SampleWithoutReplacement):
+    """
+    Sums over S probable samples according to beam search and K sampled values that are not in the probable samples,
+    then normalizes them accordingly.
+    """
+
+    def __init__(
+        self,
+        plate_name: str,
+        sum_size: int,
+        sample_size: int = 1,
+        without_replacement: bool = False,
+        eos=None,
+    ):
+        super().__init__(plate_name, sum_size + sample_size, eos=eos)
+        self.sum_size = sum_size
+        self.sample_size = sample_size
+        if sum_size < 1 or sample_size < 1:
+            raise ValueError("sum_size and sample_size should both be at least 1.")
+
+    def select_samples(
+        self, perturbed_log_probs: storch.Tensor, joint_log_probs: storch.Tensor,
+    ) -> (storch.Tensor, storch.Tensor):
+        # Select sum_size samples using joint log probs, and sample_size samples using perturbed joint log probs.
+
+        # We can sample at most the amount of what we previous sampled, combined with every option in the current domain
+        # That is: prev_amt_samples * |D_yv|.
+        amt_sum = min(self.sum_size, joint_log_probs.shape[-1])
+        # Take the top sum_size over the joint log probs. This is like beam search
+        # plates x amt_samples
+        _, sum_samples = torch.topk(joint_log_probs, amt_sum, dim=-1)
+        sum_perturbed_log_probs = perturbed_log_probs[sum_samples]
+        if amt_sum < self.sum_size:
+            return sum_perturbed_log_probs, sum_samples
+
+        # Not sure if this is the most efficient implementation
+        # Should be positive, by the previous conditional.
+        amt_sample = min(
+            self.sample_size, perturbed_log_probs.shape[-1] - self.sum_size
+        )
+        sample_perturbed_log_probs, samples = torch.topk(
+            joint_log_probs, amt_sample + perturbed_log_probs.shape[-1], dim=-1
+        )
+
+        # TODO: This isn't finished yet.
