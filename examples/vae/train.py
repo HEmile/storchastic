@@ -7,9 +7,10 @@ import torch.utils.data
 from torch import optim
 from torchvision.utils import save_image
 from examples.dataloader.data_loader import data_loaders
-from storch import backward, Expect
+from storch import backward
+from storch.method import Expect
 import storch
-from tensorboardX import SummaryWriter
+from torch.utils.tensorboard import SummaryWriter
 from examples.vae.vae import VAE
 
 # Reconstruction + KL divergence losses summed over all elements and batch
@@ -183,7 +184,9 @@ def main(vae: Type[VAE]):
         default=10,
         help="How many samples to use to compute the variance of the estimators.",
     )
+    parser.add_argument("--data_dir", type=str, default="../data/")
     parser.add_argument("--dataset", type=str, default="fixedMNIST")
+    parser.add_argument("--out_dir", type=str, default="/outputs/")
     parser.add_argument("--lr", type=float, default=1e-3)
     args = parser.parse_args()
     args.cuda = not args.no_cuda and torch.cuda.is_available()
@@ -195,7 +198,7 @@ def main(vae: Type[VAE]):
     train_loader, test_loader = data_loaders(args)
 
     model = vae(args).to(device)
-    writer = SummaryWriter(comment=model.name() + "_" + args.method)
+    writer = SummaryWriter(args.output_dir + model.name() + "_" + args.method)
     print(args)
     writer.add_text("hyperparameters", str(args), global_step=0)
 
@@ -217,7 +220,7 @@ def main(vae: Type[VAE]):
         #     im_sample = model.prior([args.latents]).sample((64,))
         #     im_sample = model.decode(im_sample).cpu()
         #     save_image(
-        #         im_sample.view(64, 1, 28, 28), "results/sample_" + str(epoch) + ".png",
+        #         im_sample.view(64, 1, 28, 28), args.output_dir + "results/sample_" + str(epoch) + ".png",
         #     )
     measures = {
         "hparams/best_train_loss": best_train_loss,
