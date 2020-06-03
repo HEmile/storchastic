@@ -257,7 +257,7 @@ def _prepare_outputs_det(
                 "Creation of stochastic storch Tensor within deterministic context"
             )
         # TODO: Does this require shape checking? Parent/Plate checking?
-        return o
+        return o, index + 1
     if isinstance(o, torch.Tensor):  # Explicitly _not_ a storch.Tensor
         if unflatten_plates:
             plate_dims = tuple([plate.n for plate in plates if plate.n > 1])

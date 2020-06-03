@@ -184,9 +184,9 @@ def main(vae: Type[VAE]):
         default=10,
         help="How many samples to use to compute the variance of the estimators.",
     )
-    parser.add_argument("--data_dir", type=str, default="../data/")
+    parser.add_argument("--data_dir", type=str, default="./data/")
     parser.add_argument("--dataset", type=str, default="fixedMNIST")
-    parser.add_argument("--out_dir", type=str, default="/outputs/")
+    parser.add_argument("--out_dir", type=str, default="./outputs/")
     parser.add_argument("--lr", type=float, default=1e-3)
     args = parser.parse_args()
     args.cuda = not args.no_cuda and torch.cuda.is_available()

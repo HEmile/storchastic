@@ -57,7 +57,6 @@ A very common method to approximate expectations is to use *Monte Carlo* methods
     :label: sample
 
 
-
 Gradient estimation
 ^^^^^^^^^^^^^^^^^^^
 We have shown a simple model with a stochastic node, and we have shown how to compute samples of the output. Next, assume
