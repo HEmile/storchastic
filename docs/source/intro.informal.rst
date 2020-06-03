@@ -39,7 +39,7 @@ We can also equivalently represent this using a *generative story*:
 
 #. Sample :math:`e\sim \mathcal{N}(c+b, 1)` [#f1]_
 
-#. Compute :math:`f=d\cdot e`.
+#. Compute :math:`f=d\cdot e`
 
 A generative story is a nice and easy to understand way to show how outputs are generated step-by-step. The goal of Storchastic is to be able
 to write code that looks just like a generative story. Because of this, we will present both stochastic computation
@@ -129,6 +129,8 @@ discrete distributions.
 
 Applications
 ^^^^^^^^^^^^
+Next, we show some common applications of gradient estimation to get an idea of what kind of problems Storchastic can be
+useful for.
 
 Reinforcement Learning
 """"""""""""""""""""""
@@ -141,7 +143,7 @@ the score function applied to the MDP model that is common in RL:
 Decreasing the variance of this estimator is a very active research area, as lower-variance estimators generally require
 fewer samples to train the agent. This is often done using so-called "actor-critic" algorithms, that reduce the variance
 of the policy gradient estimator using a critic which predicts how good an action is relative to other possible actions.
-Other recent algorithms make use of reparameterization to make use of the gradient of the critic :cite:`haarnoja2018soft,lillicrap2015continuous`.
+Other recent algorithms employ the pathwise derivative to make use of the gradient of the critic :cite:`haarnoja2018soft,lillicrap2015continuous`.
 There is active work on generalizing these ideas to stochastic computation graphs :cite:`weber2019credit`.
 
 ..
@@ -149,7 +151,25 @@ There is active work on generalizing these ideas to stochastic computation graph
 
 Variational Inference
 """""""""""""""""""""
+Variational inference is a general method for Bayesian inference. It introduces an approximation to the posterior
+distribution, then minimizes the distance between this approximation and the actual posterior. In the deep learning era,
+so-called 'amortized inference' is used, where the approximation is a neural network that predicts the parameters of the
+approximate distribution. To train the parameters of this neural network, samples are taken from the approximate posterior,
+and gradient estimation is used. For continuous posteriors, the pathwise derivative is usually employed :cite:`kingma2013auto`,
+but for discrete posteriors, the choice of gradient estimator is an active area of research :cite:`jang2016categorical`.
 
+Discrete Random Variables
+"""""""""""""""""""""""""
+Discrete random variables are challenging to deal with in practice, but have many promising applications. Deep learning
+usually acts in the continuous space and discrete random variables are a theoretically motivated way to do some
+computation in the discrete world. This allows deep learning methods to make clear cut decisions, instead of a
+continuous attention vector over all options which does not scale in practice.
+
+For example, a variational autoencoder (VAE) with a discrete latent space could be useful to discern properties on the data.
+Other applications include querying Wikipedia within a language model :cite:`lewis2020retrievalaugmented`, learning how
+to generate computer programs :cite:`bunel2018leveraging,liang2018memory` and hard attention layers :cite:`deng2018latent`.
+Additionally, sequence models such as neural machine translation can be trained directly on BLEU scores using
+gradient estimation.
 
 
 Footnotes
