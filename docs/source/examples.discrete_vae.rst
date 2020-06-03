@@ -1,5 +1,5 @@
 Discrete Variational Autoencoder
-=========================================
+================================
     .. code-block:: python
 
         import torch

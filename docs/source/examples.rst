@@ -7,4 +7,4 @@ Lists several examples of Storchastic to help you get started. Also check out ht
    :maxdepth: 3
    :caption: Examples:
 
-   discrete_vae
+   examples.discrete_vae

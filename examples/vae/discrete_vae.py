@@ -8,6 +8,11 @@ from torch.distributions import OneHotCategorical, Distribution
 from storch.method import (
     ScoreFunctionWOR,
     UnorderedSetEstimator,
+    RELAX,
+    REBAR,
+    ScoreFunction,
+    GumbelSoftmax,
+    Expect,
 )
 
 
@@ -21,23 +26,21 @@ class DiscreteVAE(VAE):
 
     def initialize_method(self, args) -> storch.method.Method:
         if args.method == "gumbel":
-            return storch.GumbelSoftmax("z", n_samples=args.samples)
+            return GumbelSoftmax("z", n_samples=args.samples)
         elif args.method == "gumbel_straight":
-            return storch.GumbelSoftmax(
-                "z", n_samples=args.samples, straight_through=True
-            )
+            return GumbelSoftmax("z", n_samples=args.samples, straight_through=True)
         elif args.method == "score":
-            return storch.ScoreFunction(
+            return ScoreFunction(
                 "z", n_samples=args.samples, baseline_factory=args.baseline
             )
         elif args.method == "expect":
-            return storch.Expect("z")
+            return Expect("z")
         elif args.method == "relax":
-            return storch.RELAX("z", n_samples=args.samples, in_dim=(args.latents, 10))
+            return RELAX("z", n_samples=args.samples, in_dim=(args.latents, 10))
         elif args.method == "rebar":
-            return storch.REBAR("z", n_samples=args.samples)
+            return REBAR("z", n_samples=args.samples)
         elif args.method == "relax_rebar":
-            return storch.RELAX(
+            return RELAX(
                 "z", n_samples=args.samples, in_dim=(args.latents, 10), rebar=True
             )
         elif args.method == "score_wor":
