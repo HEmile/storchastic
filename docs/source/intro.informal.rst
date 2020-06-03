@@ -130,6 +130,28 @@ discrete distributions.
 Applications
 ^^^^^^^^^^^^
 
+Reinforcement Learning
+""""""""""""""""""""""
+In Reinforcement Learning (RL), gradient estimation is a central research topic. The popular policy gradient algorithm is
+the score function applied to the MDP model that is common in RL:
+
+.. math::
+  \nabla_\theta J(\theta) \propto \mathbb{E}_{s\sim p_\theta(s), a\sim p_\theta(a|s)}[Q_\pi(s, a)\nabla_\theta \log p_\theta(a|s)]
+
+Decreasing the variance of this estimator is a very active research area, as lower-variance estimators generally require
+fewer samples to train the agent. This is often done using so-called "actor-critic" algorithms, that reduce the variance
+of the policy gradient estimator using a critic which predicts how good an action is relative to other possible actions.
+Other recent algorithms make use of reparameterization to make use of the gradient of the critic :cite:`haarnoja2018soft,lillicrap2015continuous`.
+There is active work on generalizing these ideas to stochastic computation graphs :cite:`weber2019credit`.
+
+..
+   TODO: add link to
+
+Variational Inference
+"""""""""""""""""""""
+
+
+
 Footnotes
 """""""""
 .. [#f1] :math:`\mathcal{N}(\mu, \sigma)` is a normal distribution with mean :math:`\mu` and standard deviation :math:`\sigma`.

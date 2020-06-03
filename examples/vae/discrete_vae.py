@@ -6,7 +6,6 @@ import torch
 import storch
 from torch.distributions import OneHotCategorical, Distribution
 from storch.method import (
-    SampleWithoutReplacementMethod,
     ScoreFunctionWOR,
     UnorderedSetEstimator,
 )
@@ -41,8 +40,6 @@ class DiscreteVAE(VAE):
             return storch.RELAX(
                 "z", n_samples=args.samples, in_dim=(args.latents, 10), rebar=True
             )
-        elif args.method == "without_replacement":
-            return SampleWithoutReplacementMethod("z", k=args.samples)
         elif args.method == "score_wor":
             return ScoreFunctionWOR("z", k=args.samples)
         elif args.method == "unordered":
