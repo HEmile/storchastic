@@ -198,7 +198,7 @@ def main(vae: Type[VAE]):
     train_loader, test_loader = data_loaders(args)
 
     model = vae(args).to(device)
-    writer = SummaryWriter(args.output_dir + model.name() + "_" + args.method)
+    writer = SummaryWriter(args.out_dir + model.name() + "_" + args.method)
     print(args)
     writer.add_text("hyperparameters", str(args), global_step=0)
 
@@ -220,7 +220,7 @@ def main(vae: Type[VAE]):
         #     im_sample = model.prior([args.latents]).sample((64,))
         #     im_sample = model.decode(im_sample).cpu()
         #     save_image(
-        #         im_sample.view(64, 1, 28, 28), args.output_dir + "results/sample_" + str(epoch) + ".png",
+        #         im_sample.view(64, 1, 28, 28), args.out_dir + "results/sample_" + str(epoch) + ".png",
         #     )
     measures = {
         "hparams/best_train_loss": best_train_loss,

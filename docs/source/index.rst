@@ -1,6 +1,8 @@
 
-Storchastic documentation
-=========================
+.. image:: images/logo.png
+  :width: 600
+  :alt: Storchastic logo.
+
 **Storchastic** is a PyTorch library for stochastic gradient estimation in Deep Learning. Stochastic deep learning models
 are becoming increasingly relevant. For example, they are commonly used in the fields of Variational
 Inference and Reinforcement Learning. We can formalize stochastic models using so-called **stochastic computation graphs**.
