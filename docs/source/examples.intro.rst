@@ -1,6 +1,7 @@
 Introduction Example
 ====================
     .. code-block:: python
+
       import torch
       from torch.distributions import Normal
       from storch.method import Reparameterization
@@ -20,3 +21,4 @@ Introduction Example
 
       storch.add_cost(f, "f")
       storch.backward()
+

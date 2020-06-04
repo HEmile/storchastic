@@ -17,7 +17,12 @@ We return to the generative story from :ref:`Stochastic computation graphs`:
 
 Let us first define the deterministic computations:
 
-.. code-block:: python
+.. testsetup:: example
+
+  import torch
+  torch.manual_seed(0)
+
+.. testcode:: example
 
   import torch
   a = torch.tensor(5.0, requires_grad=True)
@@ -28,14 +33,14 @@ Let us first define the deterministic computations:
 Next, we want to sample from a normal distribution. We can define the normal distribution using PyTorch's distribution
 code:
 
-.. code-block:: python
+.. testcode:: example
 
   from torch.distributions import Normal
   normal_distribution = Normal(b + c, 1)
 
 We will use Storchastic to sample from this distribution. We will use reparameterization for now:
 
-.. code-block:: python
+.. testcode:: example
 
   from storch.method import Reparameterization
   method = Reparameterization("e")
@@ -53,7 +58,7 @@ directly on the distribution to sample from. All methods are implemented so that
 
 We compute the output :math:`f` simply using:
 
-.. code-block:: python
+.. testcode:: example
 
   f = d + e
 
@@ -61,11 +66,17 @@ Good. Now how to get the derivative? Storchastic requires you to register *cost 
 leave nodes that will be minimized. When all cost nodes are registered, :func:`storch.backward()` is used to estimate
 the gradients:
 
-.. code-block:: python
+.. testcode:: example
 
   import storch
   storch.add_cost(f, "f")
   storch.backward()
+  print("haha yolo")
+
+.. testoutput:: example
+  :options: -ELLIPSIS, +NORMALIZE_WHITESPACE
+
+  hahadfg yolo xd
 
 The second line register the cost node with the name "f", and the third computes the gradients, where PyTorch's automatic
 differentiation is used for deterministic nodes, and Storchastic's gradient estimation methods for stochastic nodes.

@@ -229,5 +229,5 @@ def main(vae: Type[VAE]):
         "train/loss": train_loss,
         "test_loss": test_loss,
     }
-    writer.add_hparams(vars(args), measures, global_step=100 * epoch)
+    writer.add_hparams(vars(args), measures)
     writer.close()
