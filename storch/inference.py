@@ -1,4 +1,4 @@
-from typing import Optional, List
+from typing import Optional, List, Union
 
 from storch.tensor import Tensor, StochasticTensor, CostTensor, IndependentTensor
 import torch
@@ -48,7 +48,7 @@ def denote_independent(
 
 
 def gather_samples(
-    samples: List[storch.Tensor],
+    samples: Union[List[storch.Tensor], List[torch.Tensor]],
     plate_name: str,
     weight: Optional[storch.Tensor] = None,
 ) -> IndependentTensor:
@@ -61,16 +61,25 @@ def gather_samples(
         )
     collect_tensors = []
     for sample in samples:
-        sample = sample._tensor
-        if not sample.shape[0] == 1:
-            sample = sample.unsqueeze(0)
+        if isinstance(sample, storch.Tensor):
+            sample = sample._tensor
+        sample = sample.unsqueeze(0)
         collect_tensors.append(sample)
     cat_tensors = torch.cat(collect_tensors, 0)
-    tensor_name = (
-        samples[0].name + "_indep_" + plate_name if samples[0].name else plate_name
-    )
+    if isinstance(samples[0], storch.Tensor):
+        tensor_name = (
+            samples[0].name + "_indep_" + plate_name if samples[0].name else plate_name
+        )
+        return IndependentTensor(
+            cat_tensors,
+            samples,
+            samples[0].plates.copy(),
+            tensor_name,
+            plate_name,
+            weight,
+        )
     return IndependentTensor(
-        cat_tensors, samples, samples[0].plates.copy(), tensor_name, plate_name, weight
+        cat_tensors, [], [], "_indep_" + plate_name, plate_name, weight
     )
 
 

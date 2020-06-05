@@ -3,7 +3,7 @@ from typing import List, Union, Optional, Tuple
 import storch
 import torch
 
-from storch.typing import AnyTensor, _indices
+from storch.typing import AnyTensor, _indices, _plates
 
 
 def _convert_indices(tensor: storch.Tensor, dims: _indices) -> (List[int], List[str]):
@@ -51,32 +51,38 @@ def expand_as(tensor: AnyTensor, expand_as: AnyTensor) -> AnyTensor:
 
 
 def _handle_inputs(
-    tensor: AnyTensor,
-    plates: Optional[List[storch.Plate]],
-    plate_names: Optional[List[str]],
+    tensor: AnyTensor, plates: Optional[_plates],
 ) -> (storch.Tensor, List[storch.Plate]):
-    if plates and plate_names:
-        raise ValueError("Provide only one of plates and plate_names.")
+    if isinstance(plates, storch.Plate):
+        plates = [plates]
     if not isinstance(tensor, storch.Tensor):
-        if not plates or plate_names:
+        if not plates:
             raise ValueError("Make sure to pass plates when passing a torch.Tensor.")
         index_tensor = 0
+
         for plate in plates:
+            if not isinstance(plate, storch.Plate):
+                raise ValueError(
+                    "Cannot handle plate names when passing a torch.Tensor"
+                )
             if plate.n > 1:
                 if tensor.shape[index_tensor] != plate.n:
                     raise ValueError(
                         "Received a tensor that does not align with the given plates."
                     )
                 index_tensor += 1
-        tensor = storch.Tensor(tensor, [], plates)
-    else:
-        if plate_names:
-            plates = []
-            for plate in tensor.plates:
-                if plate.name in plate_names:
-                    plates.append(plate)
-        elif not plates:
-            plates = tensor.plates
+        return storch.Tensor(tensor, [], plates), plates
+
+    if not plates:
+        return tensor, tensor.plates
+    if isinstance(plates, str):
+        return tensor, [tensor.get_plate(plates)]
+    r_plates = []
+    for plate in plates:
+        if isinstance(plate, storch.Plate):
+            r_plates.append(plate)
+        else:
+            r_plates.append(tensor.get_plate(plate))
     return tensor, plates
 
 
@@ -88,22 +94,23 @@ def gather(input: storch.Tensor, dim: str, index: storch.Tensor):
 
 
 def reduce_plates(
-    tensor: AnyTensor,
-    *,
-    plates: Optional[List[storch.Plate]] = None,
-    plate_names: Optional[List[str]] = None,
-    detach_weights=True,
+    tensor: AnyTensor, plates: Optional[_plates] = None, detach_weights=True,
 ) -> storch.Tensor:
     """
     Reduce the tensor along the given plates. This takes into account how different samples are weighted, and should
     nearly always be used instead of reducing plate dimensions using the mean or the sum.
-    :param tensor: Tensor to reduce
-    :param plates: Plates to reduce. Cannot be used together with plate_names
-    :param plate_names: Names of plates to reduce. Cannot be used togeter with plates
-    :param detach_weights: Whether to detach the weighting of the samples from the graph
-    :return: The reduced tensor
+    By default, this reduces all plates.
+
+    Args:
+        tensor: Tensor to reduce
+        plates: Plates to reduce. If None, this reduces all plates (default). Can be a string, Plate, or list of string
+        and Plates.
+        detach_weights: Whether to detach the weighting of the samples from the graph
+
+    Returns:
+        The reduced tensor
     """
-    tensor, plates = _handle_inputs(tensor, plates, plate_names)
+    tensor, plates = _handle_inputs(tensor, plates)
     for plate in order_plates(plates, reverse=True):
         if plate.n > 1:
             tensor = plate.reduce(tensor, detach_weights=detach_weights)
@@ -126,7 +133,6 @@ def order_plates(plates: [storch.Plate], reverse=False):
     """
     Topologically order the given plates.
     Uses Kahn's algorithm.
-    :param plates:
     """
     sorted = []
     roots = []
@@ -161,22 +167,22 @@ def order_plates(plates: [storch.Plate], reverse=False):
 
 
 def variance(
-    tensor: torch.Tensor,
+    tensor: AnyTensor,
     variance_plate: Union[storch.Plate, str],
-    *,
-    plates: Optional[List[storch.Plate]] = None,
-    plate_names: Optional[List[str]] = None,
+    plates: Optional[_plates] = None,
     detach_weights=True,
 ) -> storch.Tensor:
     """
     Compute the variance of the tensor along the plate dimensions. This takes into account how different samples are weighted.
-    :param tensor: Tensor to compute variance over
-    :param plates: Plates to reduce. Cannot be used together with plate_names
-    :param plate_names: Names of plates to reduce. Cannot be used togeter with plates
-    :param detach_weights: Whether to detach the weighting of the samples from the graph
-    :return: The reduced tensor
+
+    Args:
+        tensor: Tensor to compute variance over
+        plates: Plates to reduce.
+        detach_weights: Whether to detach the weighting of the samples from the graph
+    Returns:
+        The variance of the tensor.
     """
-    tensor, plates = _handle_inputs(tensor, plates, plate_names)
+    tensor, plates = _handle_inputs(tensor, plates)
     found_plate = False
     for plate in plates:
         if plate == variance_plate:

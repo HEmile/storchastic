@@ -20,3 +20,5 @@ DiscreteDistribution = Union[Bernoulli, Categorical, OneHotCategorical]
 
 _index = Union[str, int, storch.Plate]
 _indices = Union[List[_index], _index]
+
+_plates = Union[List[Union[storch.Plate, str]], storch.Plate, str]
