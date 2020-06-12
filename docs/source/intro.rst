@@ -9,3 +9,4 @@ The following pages introduce the essential concepts and API calls to get starte
 
    intro.informal
    intro.storch
+   intro.discrete_vae

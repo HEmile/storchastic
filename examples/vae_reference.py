@@ -1,142 +1,125 @@
-'''
-Edited from https://github.com/pytorch/examples/blob/master/vae/main.py
-'''
-
-from __future__ import print_function
-import argparse
 import torch
-import torch.utils.data
-from torch import nn, optim
-from torch.nn import functional as F
-from torchvision import datasets, transforms
-from torchvision.utils import save_image
-from storch import sample, deterministic, cost, backward
+import torch.nn as nn
 import storch
-from torch.distributions import Normal
+from torch.distributions import OneHotCategorical
 
 torch.manual_seed(0)
 
-parser = argparse.ArgumentParser(description='VAE MNIST Example')
-parser.add_argument('--batch-size', type=int, default=128, metavar='N',
-                    help='input batch size for training (default: 128)')
-parser.add_argument('--epochs', type=int, default=10, metavar='N',
-                    help='number of epochs to train (default: 10)')
-parser.add_argument('--no-cuda', action='store_true', default=False,
-                    help='enables CUDA training')
-parser.add_argument('--seed', type=int, default=1, metavar='S',
-                    help='random seed (default: 1)')
-parser.add_argument('--log-interval', type=int, default=10, metavar='N',
-                    help='how many batches to wait before logging training status')
-args = parser.parse_args()
-args.cuda = not args.no_cuda and torch.cuda.is_available()
 
-torch.manual_seed(args.seed)
-
-device = torch.device("cuda" if args.cuda else "cpu")
-
-kwargs = {'num_workers': 1, 'pin_memory': True} if args.cuda else {}
-train_loader = torch.utils.data.DataLoader(
-    datasets.MNIST('../data', train=True, download=True,
-                   transform=transforms.ToTensor()),
-    batch_size=args.batch_size, shuffle=True, **kwargs)
-test_loader = torch.utils.data.DataLoader(
-    datasets.MNIST('../data', train=False, transform=transforms.ToTensor()),
-    batch_size=args.batch_size, shuffle=True, **kwargs)
-
-
-class VAE(nn.Module):
+class DiscreteVAE(nn.Module):
     def __init__(self):
-        super(VAE, self).__init__()
-
-        self.fc1 = nn.Linear(784, 400)
-        self.fc21 = nn.Linear(400, 20)
-        self.fc22 = nn.Linear(400, 20)
-        self.fc3 = nn.Linear(20, 400)
-        self.fc4 = nn.Linear(400, 784)
+        super().__init__()
+        self.fc1 = nn.Linear(784, 512)
+        self.fc2 = nn.Linear(512, 256)
+        self.fc3 = nn.Linear(256, 2 * 10)
+        self.fc4 = nn.Linear(2 * 10, 256)
+        self.fc5 = nn.Linear(256, 512)
+        self.fc6 = nn.Linear(512, 784)
 
     def encode(self, x):
-        h1 = F.relu(self.fc1(x))
-        return self.fc21(h1), self.fc22(h1)
+        h1 = self.fc1(x).relu()
+        h2 = self.fc2(h1).relu()
+        return self.fc3(h2)
 
-    @deterministic
     def decode(self, z):
-        h3 = storch.relu(self.fc3(z))
-        return self.fc4(h3).sigmoid()
-
-    def KLD(self, mu, logvar):
-        return -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-
-    def forward(self, x):
-        mu, logvar = self.encode(x.view(-1, 784))
-        # Here!
-        KLD = self.KLD(mu, logvar)
-        std = torch.exp(0.5 * logvar)
-        dist = Normal(mu, std)
-        # z = sample(dist, method=storch.method.ScoreFunction(), n=100)
-        z = dist.sample()
-        log_prob = dist.log_prob(z)
-        return self.decode(z), KLD, z, log_prob.sum()
+        h3 = self.fc4(z).relu()
+        h4 = self.fc5(h3).relu()
+        return self.fc6(h4).sigmoid()
 
 
-model = VAE().to(device)
-optimizer = optim.Adam(model.parameters(), lr=1e-5)
+def generative_story(
+    method: storch.method.Method, model: DiscreteVAE, data: torch.Tensor
+):
+    x = storch.denote_independent(data.view(-1, 784), 0, "data")
+
+    # Encode data. Shape: (data, 2 * 10)
+    q_logits = model.encode(x)
+    # Shape: (data, 2, 10)
+    q_logits = q_logits.reshape(-1, 2, 10)
+    q = OneHotCategorical(probs=q_logits.softmax(dim=-1))
+    # Sample from variational posterior
+    z = method(q)
+
+    prior = OneHotCategorical(probs=torch.ones_like(q.probs) / 10.0)
+    # Shape: (data)
+    KL_div = torch.distributions.kl_divergence(q, prior).sum(-1)
+    storch.add_cost(KL_div, "kl-div")
+
+    z_in = z.reshape(z.shape[:-2] + (2 * 10,))
+    reconstruction = model.decode(z_in)
+    bce = torch.nn.BCELoss(reduction="none")(reconstruction, x).sum(-1)
+    # bce = torch.nn.BCELoss(reduction="sum")(reconstruction, x)
+    storch.add_cost(bce, "reconstruction")
+    return z
 
 
-# Reconstruction + KL divergence losses summed over all elements and batch
-def loss_function(recon_x, x):
-    BCE = storch.nn.b_binary_cross_entropy(recon_x, x.view(-1, 784), reduction="sum")
-    print(BCE)
-    return BCE
+from torchvision import datasets, transforms
+
+train_loader = torch.utils.data.DataLoader(
+    datasets.MNIST(
+        "./data", train=True, download=True, transform=transforms.ToTensor(),
+    ),
+    shuffle=True,
+    batch_size=64,
+)
 
 
-def train(epoch):
-    model.train()
-    storch.reset()
-    train_loss = 0
-    for batch_idx, (data, _) in enumerate(train_loader):
-        data = data.to(device)
+def train(method: storch.method.Method, train_loader):
+    model = DiscreteVAE()
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    for epoch in range(5):
+        print("Epoch:" + str(epoch + 1))
+        for i, (data, _) in enumerate(train_loader):
+            # if i % 300 == 0:
+            # evaluate(method, model, data, optimizer)
+            optimizer.zero_grad()
+
+            generative_story(method, model, data)
+            elbo = storch.backward()
+            optimizer.step()
+            if i % 300 == 0:
+                print("Training ELBO " + str(elbo.item()))
+
+
+def evaluate(method: storch.method.Method, model: DiscreteVAE, data, optimizer):
+    # Compute expected gradient
+    optimizer.zero_grad()
+
+    z = generative_story(storch.method.Expect("z"), model, data)
+    storch.backward()
+    expected_gradient = z.param_grads["probs"]
+
+    # Collect gradient samples
+    gradients = []
+    for i in range(100):
         optimizer.zero_grad()
-        recon_batch, KLD, z, log_prob = model(data)
-        print(log_prob)
-        BCE = loss_function(recon_batch, data)
-        loss = BCE * log_prob + KLD
-        loss.backward()
-        train_loss += loss.item()
-        optimizer.step()
-        if batch_idx % args.log_interval == 0:
-            print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
-                epoch, batch_idx * len(data), len(train_loader.dataset),
-                100. * batch_idx / len(train_loader),
-                loss.item() / len(data)))
 
-    print('====> Epoch: {} Average loss: {:.4f}'.format(
-          epoch, train_loss / len(train_loader.dataset)))
+        z = generative_story(method, model, data)
+        elbo = storch.backward()
+        gradients.append(z.param_grads["probs"])
+
+    gradients = storch.gather_samples(gradients, "gradients")
+    mean_gradient = storch.reduce_plates(gradients, "gradients")
+    bias_gradient = (
+        storch.reduce_plates((mean_gradient - expected_gradient) ** 2)
+    ).sum()
+    print(
+        "Training ELBO "
+        + str(elbo.item())
+        + " Gradient variance "
+        + str(storch.variance(gradients, "gradients")._tensor.item())
+        + " Gradient bias "
+        + str(bias_gradient._tensor.item())
+    )
 
 
-def test(epoch):
-    model.eval()
-    test_loss = 0
-    with torch.no_grad():
-        for i, (data, _) in enumerate(test_loader):
-            data = data.to(device)
-            recon_batch, KLD, _ = model(data)
-            test_loss += (loss_function(recon_batch, data).detach_tensor() + KLD.detach_tensor()).mean()
-            if i == 0:
-                n = min(data.size(0), 8)
-                comparison = storch.cat([data[:n],
-                                      recon_batch.detach_tensor()[0].view(args.batch_size, 1, 28, 28)[:n]]) # Take the first sample (0)
-                deterministic(save_image)(comparison.cpu(),
-                         'results/reconstruction_' + str(epoch) + '.png', nrow=n)
+#
+# train(
+#     storch.method.ScoreFunction("z", n_samples=10, baseline_factory="batch_average"),
+#     train_loader,
+# )
 
-    test_loss /= len(test_loader.dataset)
-    print('====> Test set loss: {:.4f}'.format(test_loss))
 
-if __name__ == "__main__":
-    for epoch in range(1, args.epochs + 1):
-        train(epoch)
-        test(epoch)
-        with torch.no_grad():
-            im_sample = torch.randn(64, 20).to(device)
-            im_sample = model.decode(im_sample).cpu()
-            save_image(im_sample.view(64, 1, 28, 28),
-                       'results/sample_' + str(epoch) + '.png')
+train(
+    storch.method.Expect("z"), train_loader,
+)

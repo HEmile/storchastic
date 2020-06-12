@@ -197,7 +197,11 @@ def variance(
             "Should pass a variance_plate that is included in the passed plates."
         )
     mean = variance_plate.reduce(tensor, detach_weights=detach_weights)
-    variance = ((tensor - mean) ** 2).sum(tensor.event_dim_indices())
+    variance = (tensor - mean) ** 2
+
+    event_dims = tensor.event_dim_indices()
+    if len(event_dims) > 0:
+        variance = variance.sum(tensor.event_dim_indices())
     return reduce_plates(variance, detach_weights=detach_weights)
 
 
@@ -238,3 +242,14 @@ def grad(
         else:
             storch_grad.append(storch.Tensor(grad, outputs, [], "grad"))
     return tuple(storch_grad)
+
+
+@storch.deterministic
+def cat(*args, **kwargs):
+    """
+    Version of :func:`torch.cat` that is compatible with :class:`storch.Tensor`.
+    Required because :meth:`torch.Tensor.__torch_function__` is not properly implemented for :func:`torch.cat`:
+    https://github.com/pytorch/pytorch/issues/34294
+
+    """
+    return torch.cat(*args, **kwargs)

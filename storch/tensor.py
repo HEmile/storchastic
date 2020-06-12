@@ -12,6 +12,7 @@ from storch.excluded_init import (
     exception_methods,
     excluded_methods,
     unwrap_only_methods,
+    expand_methods,
 )
 
 # from storch.typing import BatchTensor
@@ -176,12 +177,12 @@ class Tensor:
                 continue
             if len(tensor.shape) <= batch_dims:
                 raise ValueError(
-                    "Got an input tensor with a shape too small for its surrounding batch. Violated at dimension "
-                    + str(batch_dims)
-                    + " and plate shape dimension "
+                    "Got an input tensor with too few dimensions. We expected "
                     + str(len(plates))
-                    + ". Instead, it was "
+                    + " plate dimensions. Instead, we found only "
                     + str(len(tensor.shape))
+                    + " dimensions. Violated at dimension "
+                    + str(batch_dims)
                 )
             elif not tensor.shape[batch_dims] == plate.n:
                 raise ValueError(
@@ -231,6 +232,13 @@ class Tensor:
             )
         if func_name in excluded_methods:
             return func(*args, **kwargs)
+
+        if func_name in expand_methods:
+            # Automatically expand empty plate dimensions. This is necessary for some loss functions, which
+            # assume both inputs have exactly the same elements.
+            return storch.wrappers._handle_deterministic(
+                func, args, kwargs, expand_plates=True
+            )
 
         return storch.wrappers._handle_deterministic(func, args, kwargs)
 
@@ -747,7 +755,7 @@ class StochasticTensor(Tensor):
         n: int,
         distribution: Distribution,
         requires_grad: bool,
-        method: Optional[storch.Method] = None,
+        method: Optional[storch.method.Method] = None,
     ):
         self.distribution = distribution
         super().__init__(tensor, parents, plates, name)
@@ -771,7 +779,7 @@ class StochasticTensor(Tensor):
     def grad(self):
         return self.param_grads
 
-    def _set_method(self, method: storch.Method):
+    def _set_method(self, method: storch.method.Method):
         self.method = method
 
 

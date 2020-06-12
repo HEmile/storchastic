@@ -66,6 +66,7 @@ def gather_samples(
         sample = sample.unsqueeze(0)
         collect_tensors.append(sample)
     cat_tensors = torch.cat(collect_tensors, 0)
+
     if isinstance(samples[0], storch.Tensor):
         tensor_name = (
             samples[0].name + "_indep_" + plate_name if samples[0].name else plate_name

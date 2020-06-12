@@ -162,6 +162,7 @@ def _prepare_args(
     - Add (singleton) plate dimensions for plates that are not present
     - Right-broadcast event dimensions for automatic broadcasting
     - Superclasses of Plate specific input handling
+
     :param fn_args: List of non-keyword arguments to the wrapped function
     :param fn_kwargs: Dictionary of keyword arguments to the wrapped function
     :param unwrap: Whether to unwrap the arguments to their torch.Tensor counterpart (default: True)

@@ -28,7 +28,7 @@ def data_loaders(args):
             **kwargs
         )
     elif args.dataset == "fixedMNIST":
-        loader_fn, root = fixedMNIST, args.data_dir + "fixedmnist"
+        loader_fn, root = fixedMNIST, args.data_dir + "/fixedmnist"
         kwargs = {"num_workers": 4, "pin_memory": True} if args.cuda else {}
         train_loader = torch.utils.data.DataLoader(
             loader_fn(root, train=True, download=True, transform=transforms.ToTensor()),

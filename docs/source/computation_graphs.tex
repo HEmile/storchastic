@@ -12,18 +12,26 @@
 \tikzstyle{tikzdet} = [rectangle, minimum width=1cm, minimum height=1cm,text centered, draw=black]
 \tikzstyle{tikzstoch} = [ellipse, align=center, minimum width=1cm, minimum height=1cm,text centered, draw=black]
 \tikzstyle{tikzparam} = [rectangle, align=center, minimum width=0cm, minimum height=0cm,text centered, draw=white]
+\tikzstyle{tikzcost} = [diamond, align=center, minimum width=1cm, minimum height=1cm,text centered, draw=black]
+
+
+\newcommand{\bq}{\mathbf{q}}
+\newcommand{\bz}{\mathbf{z}}
 
 % Document
 \begin{document}
 
+%%%%%%
+% Introducory example
+%%%%%%
 %\begin{tikzpicture}[node distance=1cm]
 %    \node (a)  [tikzparam] {$a$};
 %    \node (b)  [tikzparam, below of=a] {$b$};
 %    \node (c)  [tikzparam, below of=b] {$c$};
 %    \node (ab) [tikzdet, right=1cm of a] {$d=a+b$};
-%%    \node (bc) [tikzdet, right=1cm of c] {$e=c+b$};
-%    \node (bc) [tikzstoch, right=1cm of c] {$e\sim$ \\ $ \mathcal{N}(c+b, 1)$};
-%    \node (abc) [tikzdet, right=4cm of b] {$f=d * e$};
+%    \node (bc) [tikzdet, right=1cm of c] {$e=c+b$};
+%%    \node (bc) [tikzstoch, right=1cm of c] {$e\sim$ \\ $ \mathcal{N}(c+b, 1)$};
+%    \node (abc) [tikzdet, right=4cm of b] {$f=d * e^2$};
 %
 %    \draw [->] (a) -- (ab);
 %    \draw [->] (b) -- (ab);
@@ -33,22 +41,45 @@
 %    \draw [->] (bc) -- (abc);
 %\end{tikzpicture}
 
-\begin{tikzpicture}[node distance=1cm]
-    \node (a)  [tikzparam] {$a$};
-    \node (b)  [tikzparam, below of=a] {$b$};
-    \node (c)  [tikzparam, below of=b] {$c$};
-    \node (ab) [tikzdet, right=1cm of a] {$d=a+b$};
-    \node (bc) [tikzdet, right=1cm of c] {$e=c+b + \epsilon$};
-    \node (eps) [tikzstoch, below=0.5cm of bc] {$\epsilon\sim \mathcal{N}(0, 1)$};
-    \node (abc) [tikzdet, right=4cm of b] {$f=d * e$};
+%\begin{tikzpicture}[node distance=1cm]
+%    \node (a)  [tikzparam] {$a$};
+%    \node (b)  [tikzparam, below of=a] {$b$};
+%    \node (c)  [tikzparam, below of=b] {$c$};
+%    \node (ab) [tikzdet, right=1cm of a] {$d=a+b$};
+%    \node (bc) [tikzdet, right=1cm of c] {$e=c+b + \epsilon$};
+%    \node (eps) [tikzstoch, below=0.5cm of bc] {$\epsilon\sim \mathcal{N}(0, 1)$};
+%    \node (abc) [tikzdet, right=4cm of b] {$f=d * e^2$};
+%
+%    \draw [->] (a) -- (ab);
+%    \draw [->] (b) -- (ab);
+%    \draw [->] (c) -- (bc);
+%    \draw [->] (b) -- (bc);
+%    \draw [->] (ab) -- (abc);
+%    \draw [->] (bc) -- (abc);
+%    \draw [->] (eps) -- (bc);
+%\end{tikzpicture}
 
-    \draw [->] (a) -- (ab);
-    \draw [->] (b) -- (ab);
-    \draw [->] (c) -- (bc);
-    \draw [->] (b) -- (bc);
-    \draw [->] (ab) -- (abc);
-    \draw [->] (bc) -- (abc);
-    \draw [->] (eps) -- (bc);
+%%%%%%
+% VAE
+%%%%%%
+\begin{tikzpicture}[node distance=3cm, line width=0.2mm]
+
+    \node (x)  [tikzstoch] {$x$};
+    \node (E)  [tikzdet, right of=x] {$\bq=E_\phi(x)$};
+    \node (phi)  [tikzparam, above of=E] {$\phi$};
+    \node (z) [tikzstoch, right of=E] {$\bz\sim$ \\ $\operatorname{Cat}(\bq)$};
+    \node (kl) [tikzcost, above of=z] {$\ell_{KL}(\bq)$};
+    \node (D) [tikzdet, right of=z] {$\hat{x}=D_\theta(\bz)$};
+    \node (theta)  [tikzparam, above of=D] {$\theta$};
+    \node (rec) [tikzcost, right of=D] {$\ell_{rec}(x, \hat{x})$};
+
+    \draw [->] (x) -- (E);
+    \draw [->] (phi) -- (E);
+    \draw [->] (E) -- (z);
+    \draw [->] (E) -- (kl);
+    \draw [->] (z) -- (D);
+    \draw [->] (D) -- (rec);
+    \draw [->] (theta) -- (D);
+    \draw [->] (x) to [out=330,in=210] (rec);
 \end{tikzpicture}
-
 \end{document}

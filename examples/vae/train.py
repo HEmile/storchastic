@@ -73,9 +73,7 @@ def train(epoch, model, train_loader, device, optimizer, args, writer):
                         grad_samples, "variance"
                     )._tensor
                     if param_name == _consider_param and args.latents < 3:
-                        mean = storch.reduce_plates(
-                            grad_samples, plate_names=["variance"]
-                        )
+                        mean = storch.reduce_plates(grad_samples, "variance")
                         mse = storch.reduce_plates(
                             (grad_samples - expect_grad) ** 2
                         ).sum()

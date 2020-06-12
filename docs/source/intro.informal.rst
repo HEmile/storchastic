@@ -3,8 +3,8 @@ What is Storchastic?
 
 On this page we introduce the ideas behind Storchastic before diving into the code, and explain what kinds of problems
 it could be applied to.
-If you are already familiar with stochastic computation graphs :cite:`Schulman2015` and gradient estimation, you can
-safely skip this page and start at :ref:`Sampling and Inference`.
+If you are already familiar with stochastic computation graphs :cite:`a-Schulman2015` and gradient estimation, you can
+safely skip this page and start at :ref:`Sampling, Inference and Variance Reduction`.
 
 Stochastic computation graphs
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -12,7 +12,7 @@ PyTorch relies on `computation graphs <http://colah.github.io/posts/2015-08-Back
 algorithm. These graphs keeps track of all operations that happen while executing PyTorch code by recording the inputs
 and outputs to PyTorch functions. Each node represents the output of some function. Consider the differentiable function
 
-.. math:: f=(a + b) \cdot (b + c)
+.. math:: f=(a + b) \cdot (b + c)^2
 
 This function can be represented using a (deterministic) computation graph as
 
@@ -39,7 +39,7 @@ We can also equivalently represent this using a *generative story*:
 
 #. Sample :math:`e\sim \mathcal{N}(c+b, 1)` [#f1]_
 
-#. Compute :math:`f=d\cdot e`
+#. Compute :math:`f=d\cdot e^2`
 
 A generative story is a nice and easy to understand way to show how outputs are generated step-by-step. The goal of Storchastic is to be able
 to write code that looks just like a generative story. Because of this, we will present both stochastic computation
@@ -47,30 +47,30 @@ graphs and their associated generative stories in these tutorials.
 
 A very common question in stochastic computation graphs is: What is the *expected* value of :math:`f`? Mathematically, this is computed as:
 
-.. math:: \mathbb{E}_{e\sim \mathcal{N}(c+b, 1)}[(a+b)\cdot e]=\int p(e|b, c)\cdot (a+b)\cdot e\ de
+.. math:: \mathbb{E}_{e\sim \mathcal{N}(c+b, 1)}[(a+b)\cdot e^2]=\int p(e|b, c)\cdot (a+b)\cdot e^2\ de
 
 This expression requires computing the integral over all values of :math:`e`, which is generally intractable. [#f2]_
 A very common method to approximate expectations is to use *Monte Carlo* methods: Take some (say :math:`S`) samples of
 :math:`e` from the normal distribution and average out the resulting values of :math:`f`:
 
-..  math:: \mathbb{E}_{e\sim \mathcal{N}(c+b, 1)}[(a+b)\cdot e]\approx \frac{1}{S}\sum_{i=1}^S (a+b)\cdot e_i, \quad e_1, ..., e_S\sim \mathcal{N}(c+b, 1)
+..  math:: \mathbb{E}_{e\sim \mathcal{N}(c+b, 1)}[(a+b)\cdot e^2]\approx \frac{1}{S}\sum_{i=1}^S (a+b)\cdot e_i^2, \quad e_1, ..., e_S\sim \mathcal{N}(c+b, 1)
     :label: sample
 
 
 Gradient estimation
 ^^^^^^^^^^^^^^^^^^^
 We have shown a simple model with a stochastic node, and we have shown how to compute samples of the output. Next, assume
-we are interested in the derivative with respect to input :math:`c` :math:`\frac{\partial}{\partial c}\mathbb{E}_{e\sim \mathcal{N}(c+b, 1)}[(a+b)\cdot e]`. For the same reason as before, we will use Monte Carlo estimation and sample some values
+we are interested in the derivative with respect to input :math:`c` :math:`\frac{\partial}{\partial c}\mathbb{E}_{e\sim \mathcal{N}(c+b, 1)}[(a+b)\cdot e^2]`. For the same reason as before, we will use Monte Carlo estimation and sample some values
 from the distribution to estimate the derivatives.
 
 There is however a big issue here: Sampling is not a differentiable procedure! An easy way to see this is by looking at
 equation :eq:`sample`: :math:`c` does not appear in the Monte Carlo estimation. This means we cannot use reverse-mode
 differentiation to compute the derivatives with respect to the inputs :math:`b,c`. Luckily, we can use
-*gradient estimation methods* :cite:`mohamed2019monte`.
+*gradient estimation methods* :cite:`a-mohamed2019monte`.
 
 The pathwise derivative
 """""""""""""""""""""""
-A well known gradient estimation method is the *pathwise derivative* :cite:`glasserman1991gradient` which is commonly referred to in Machine Learning as *reparameterization* :cite:`kingma2013auto`. We explain this estimation method by transforming the previous stochastic computation graph to one that is equivalent:
+A well known gradient estimation method is the *pathwise derivative* :cite:`a-glasserman1991gradient` which is commonly referred to in Machine Learning as *reparameterization* :cite:`a-kingma2013auto`. We explain this estimation method by transforming the previous stochastic computation graph to one that is equivalent:
 
 .. image:: images/reparameterization.png
   :width: 400
@@ -84,7 +84,7 @@ Which has the following generative story:
 
 #. Compute :math:`f = c+b + \epsilon`
 
-#. Compute :math:`f=d*e`.
+#. Compute :math:`f=d*e^2`.
 
 The idea behind the pathwise derivative is to move the sampling procedure outside of the computation path, so that the
 derivatives with respect to :math:`b, c` can now readily be computed using automatic differentiation! It works because
@@ -101,7 +101,7 @@ The score function
 """"""""""""""""""
 The pathwise derivative is a great choice if it is applicable because it is unbiased and usually has low variance.
 When it is not applicable, we can turn to the *score function*, which is known in Reinforcement Learning as *REINFORCE*.
-Rewrite :math:`f` as a function of :math:`e` using :math:`f(e)=(a+b)\cdot e`. Then
+Rewrite :math:`f` as a function of :math:`e` using :math:`f(e)=(a+b)\cdot e^2`. Then
 
 .. math::
 
@@ -142,8 +142,8 @@ the score function applied to the MDP model that is common in RL:
 Decreasing the variance of this estimator is a very active research area, as lower-variance estimators generally require
 fewer samples to train the agent. This is often done using so-called "actor-critic" algorithms, that reduce the variance
 of the policy gradient estimator using a critic which predicts how good an action is relative to other possible actions.
-Other recent algorithms employ the pathwise derivative to make use of the gradient of the critic :cite:`haarnoja2018soft,lillicrap2015continuous`.
-There is active work on generalizing these ideas to stochastic computation graphs :cite:`weber2019credit`.
+Other recent algorithms employ the pathwise derivative to make use of the gradient of the critic :cite:`a-haarnoja2018soft,a-lillicrap2015continuous`.
+There is active work on generalizing these ideas to stochastic computation graphs :cite:`a-weber2019credit`.
 
 ..
    TODO: add link to
@@ -154,8 +154,8 @@ Variational inference is a general method for Bayesian inference. It introduces 
 distribution, then minimizes the distance between this approximation and the actual posterior. In the deep learning era,
 so-called 'amortized inference' is used, where the approximation is a neural network that predicts the parameters of the
 approximate distribution. To train the parameters of this neural network, samples are taken from the approximate posterior,
-and gradient estimation is used. For continuous posteriors, the pathwise derivative is usually employed :cite:`kingma2013auto`,
-but for discrete posteriors, the choice of gradient estimator is an active area of research :cite:`jang2016categorical`.
+and gradient estimation is used. For continuous posteriors, the pathwise derivative is usually employed :cite:`a-kingma2013auto`,
+but for discrete posteriors, the choice of gradient estimator is an active area of research :cite:`a-jang2016categorical`.
 
 Discrete Random Variables
 """""""""""""""""""""""""
@@ -165,8 +165,8 @@ computation in the discrete world. This allows deep learning methods to make cle
 continuous attention vector over all options which does not scale in practice.
 
 For example, a variational autoencoder (VAE) with a discrete latent space could be useful to discern properties on the data.
-Other applications include querying Wikipedia within a language model :cite:`lewis2020retrievalaugmented`, learning how
-to generate computer programs :cite:`bunel2018leveraging,liang2018memory` and hard attention layers :cite:`deng2018latent`.
+Other applications include querying Wikipedia within a language model :cite:`a-lewis2020retrievalaugmented`, learning how
+to generate computer programs :cite:`a-bunel2018leveraging,a-liang2018memory` and hard attention layers :cite:`a-deng2018latent`.
 Additionally, sequence models such as neural machine translation can be trained directly on BLEU scores using
 gradient estimation.
 
@@ -175,9 +175,11 @@ Footnotes
 """""""""
 .. [#f1] :math:`\mathcal{N}(\mu, \sigma)` is a normal distribution with mean :math:`\mu` and standard deviation :math:`\sigma`.
 .. [#f2] For a simple expression like this, a closed-form analytical form can pretty easily be found. However, usually our models are much more complex and non-linear.
-.. [#f3] There is a very popular *biased* and low-variance reparameterization called the Gumbel-softmax-trick :cite:`jang2016categorical`, though!
+.. [#f3] There is a very popular *biased* and low-variance reparameterization called the Gumbel-softmax-trick :cite:`a-jang2016categorical,a-maddison2016concrete`, though!
 
 References
 """"""""""
 .. bibliography:: references.bib
+   :labelprefix: A
+   :keyprefix: a-
    :style: plain

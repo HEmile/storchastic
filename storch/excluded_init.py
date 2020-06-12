@@ -59,7 +59,10 @@ _to_test_init = {
     "numel",
 }
 
+_expand_init = {"binary_cross_entropy"}
+
 _excluded_function = {"get_softmax_dim", "assert_int-or-pair"}
+
 
 _excluded_tensor = {
     "__getitem__",
@@ -122,10 +125,12 @@ _unwrap_only_tensor = {
     "new_full",
 }
 
+
 _to_test_tensor = {"_make_subclass"}
 
 exception_methods = _exception_init.union(_exception_tensor)
 excluded_methods = _excluded_tensor.union(_excluded_function).union(_excluded_init)
 unwrap_only_methods = _unwrap_only_tensor.union(_unwrap_only_init)
+expand_methods = _expand_init
 
 # print(_excluded_init)

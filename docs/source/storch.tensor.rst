@@ -21,8 +21,6 @@ for automatic broadcasting with other :class:`storch.Tensor` objects with differ
    :undoc-members:
    :show-inheritance:
 
-Note: IndependentTensor might be removed in the future.
-
 .. autoclass:: storch.tensor.IndependentTensor
    :members:
    :undoc-members:

@@ -368,12 +368,26 @@ BaselineFactory = Callable[[storch.StochasticTensor, storch.CostTensor], Baselin
 
 
 class ScoreFunction(Method):
+    """
+    The score function multiplies the loss function with a log p(z) term to estimate the gradients. It is always
+    applicable, but has high variance without variance reduction techniques.
+
+    Args:
+        plate_name (str): The name of the :class:`.Plate` that samples of this method will use.
+        sampling_method (storch.sampling.SamplingMethod): The method to sample tensors with given an input distribution.
+          if not given, this defaults to simple Monte Carlo sampling.
+        n_samples (int): How many samples to use. This parameter is only used when :arg:`sampling_method` is not passed.
+          Defaults to 1.
+        baseline_factory: The :class:`storch.method.baseline.Baseline` to use. This is passed as a string (options:
+          batch_average, moving_average) or as a BaselineFactory.
+    """
+
     def __init__(
         self,
         plate_name: str,
         sampling_method: Optional[SamplingMethod] = None,
         n_samples: int = 1,
-        baseline_factory: Optional[Union[BaselineFactory, str]] = "moving_average",
+        baseline_factory: Optional[Union[BaselineFactory, str]] = None,
         **kwargs,
     ):
         if not sampling_method:
@@ -385,7 +399,7 @@ class ScoreFunction(Method):
                 # Baseline per cost possible? So this lookup/buffer thing is not necessary
                 self.baseline_factory = lambda s, c: MovingAverageBaseline(**kwargs)
             elif baseline_factory == "batch_average":
-                if n_samples == 1:
+                if sampling_method.n_samples <= 1:
                     raise ValueError(
                         "Batch average can only be used for n_samples > 1. "
                     )
