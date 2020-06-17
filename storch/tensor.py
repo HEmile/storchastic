@@ -205,6 +205,7 @@ class Tensor:
         self._name = name
         self._tensor = tensor
         self._parents = []
+        self._cleaned = False
         for p in parents:
             # TODO: Should I re-add this?
             # if p.is_cost:
@@ -386,6 +387,20 @@ class Tensor:
             repeat_visited,
             walk_fn,
         )
+
+    def _clean(self):
+        """
+        Cleans up :attr:`_children` and :attr:`_parents` for all nodes in the subgraph of this node (depth first)
+        """
+        if self._cleaned:
+            return
+        self._cleaned = True
+        for (node, _) in self._children:
+            node._clean()
+        for (node, _) in self._parents:
+            node._clean()
+        self._children = []
+        self._parents = []
 
     def detach_tensor(self) -> storch.Tensor:
         """

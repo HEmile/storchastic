@@ -65,7 +65,7 @@ def gather_samples(
             sample = sample._tensor
         sample = sample.unsqueeze(0)
         collect_tensors.append(sample)
-    cat_tensors = torch.cat(collect_tensors, 0)
+    cat_tensors = storch.cat(collect_tensors, 0)
 
     if isinstance(samples[0], storch.Tensor):
         tensor_name = (
@@ -214,6 +214,7 @@ def backward(
             s_node.method._update_parameters()
 
     if not retain_graph:
+        accum_loss._clean()
         reset()
 
     # TODO: How much does accum_loss really say? Should we really keep it? We want to minimize total_cost, anyways.
@@ -221,6 +222,11 @@ def backward(
 
 
 def reset():
+    # Free the SC graph links. This often improves garbage collection for larger graphs.
+    # Unfortunately Python's GC seems to have imperfect cycle detection
+    for c in storch.inference._cost_tensors:
+        c._clean()
+
     storch.inference._cost_tensors = []
     for method in storch.inference._sampling_methods:
         method.reset()
