@@ -363,6 +363,12 @@ class GumbelSoftmax(Method):
             "code is differentiable."
         )
 
+    def update_parameters(
+        self, result_triples: [(StochasticTensor, CostTensor)]
+    ) -> None:
+        if self.temperature > self.min_temperature:
+            self.temperature = (1 - self.annealing_rate) * self.temperature
+
 
 BaselineFactory = Callable[[storch.StochasticTensor, storch.CostTensor], Baseline]
 

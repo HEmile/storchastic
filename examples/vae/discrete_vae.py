@@ -1,5 +1,3 @@
-from typing import Tuple, List
-
 from examples.vae import VAE, main
 import torch.nn as nn
 import torch
@@ -29,6 +27,8 @@ class DiscreteVAE(VAE):
             return GumbelSoftmax("z", n_samples=args.samples)
         elif args.method == "gumbel_straight":
             return GumbelSoftmax("z", n_samples=args.samples, straight_through=True)
+        elif args.method == "gumbel_wor":
+            return storch.method.UnorderedSetGumbelSoftmax("z", k=args.samples)
         elif args.method == "score":
             return ScoreFunction(
                 "z", n_samples=args.samples, baseline_factory=args.baseline

@@ -1,6 +1,7 @@
 from typing import List, Union, Optional, Tuple
 
 import storch
+from torch.distributions.utils import clamp_probs
 import torch
 
 from storch.typing import AnyTensor, _indices, _plates
@@ -253,3 +254,45 @@ def cat(*args, **kwargs):
 
     """
     return torch.cat(*args, **kwargs)
+
+
+@storch.deterministic
+def conditional_gumbel_rsample(
+    hard_sample: torch.Tensor,
+    probs: torch.Tensor,
+    distr: torch.distributions.Distribution,
+    temperature,
+) -> torch.Tensor:
+    """
+    Conditionally re-samples from the distribution given the hard sample.
+    This samples z \sim p(z|b), where b is the hard sample and p(z) is a gumbel distribution.
+    """
+    # Adapted from torch.distributions.relaxed_bernoulli and torch.distributions.relaxed_categorical
+    shape = hard_sample.shape
+
+    probs = clamp_probs(probs.expand_as(hard_sample))
+    v = clamp_probs(torch.rand(shape, dtype=probs.dtype, device=probs.device))
+    if isinstance(distr, torch.distributions.Bernoulli):
+        pos_probs = probs[hard_sample == 1]
+        v_prime = torch.zeros_like(hard_sample)
+        # See https://arxiv.org/abs/1711.00123
+        v_prime[hard_sample == 1] = v[hard_sample == 1] * pos_probs + (1 - pos_probs)
+        v_prime[hard_sample == 0] = v[hard_sample == 0] * (1 - probs[hard_sample == 0])
+        log_sample = (
+            probs.log() + probs.log1p() + v_prime.log() + v_prime.log1p()
+        ) / temperature
+        return log_sample.sigmoid()
+    # b=argmax(hard_sample)
+    b = hard_sample.max(-1).indices
+    # b = F.one_hot(b, hard_sample.shape[-1])
+
+    # See https://arxiv.org/abs/1711.00123
+    log_v = v.log()
+    # i != b (indexing could maybe be improved here, but i doubt it'd be more efficient)
+    log_v_b = torch.gather(log_v, -1, b.unsqueeze(-1))
+    cond_gumbels = -(-(log_v / probs) - log_v_b).log()
+    # i = b
+    index_sample = hard_sample.bool()
+    cond_gumbels[index_sample] = -(-log_v[index_sample]).log()
+    scores = cond_gumbels / temperature
+    return (scores - scores.logsumexp(dim=-1, keepdim=True)).exp()

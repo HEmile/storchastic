@@ -4,7 +4,7 @@ from typing import Optional, Callable
 
 import torch
 from torch.distributions import Distribution, Bernoulli
-from torch.distributions.utils import clamp_probs
+
 from torch.nn import Parameter
 
 import storch
@@ -144,49 +144,6 @@ def discretize(tensor: torch.Tensor, distr: Distribution) -> torch.Tensor:
     return hard_sample.scatter_(-1, argmax, 1)
 
 
-@deterministic
-def conditional_gumbel_rsample(
-    hard_sample: torch.Tensor, distr: Distribution, temperature,
-) -> torch.Tensor:
-    """
-    Conditionally re-samples from the distribution given the hard sample.
-    This samples z \sim p(z|b), where b is the hard sample and p(z) is a gumbel distribution.
-    """
-    # Adapted from torch.distributions.relaxed_bernoulli and torch.distributions.relaxed_categorical
-    shape = hard_sample.shape
-    probs = (
-        distr.probs
-        if not isinstance(hard_sample, storch.Tensor)
-        else distr.probs._tensor
-    )
-    probs = clamp_probs(probs.expand_as(hard_sample))
-    v = clamp_probs(torch.rand(shape, dtype=probs.dtype, device=probs.device))
-    if isinstance(distr, Bernoulli):
-        pos_probs = probs[hard_sample == 1]
-        v_prime = torch.zeros_like(hard_sample)
-        # See https://arxiv.org/abs/1711.00123
-        v_prime[hard_sample == 1] = v[hard_sample == 1] * pos_probs + (1 - pos_probs)
-        v_prime[hard_sample == 0] = v[hard_sample == 0] * (1 - probs[hard_sample == 0])
-        log_sample = (
-            probs.log() + probs.log1p() + v_prime.log() + v_prime.log1p()
-        ) / temperature
-        return log_sample.sigmoid()
-    # b=argmax(hard_sample)
-    b = hard_sample.max(-1).indices
-    # b = F.one_hot(b, hard_sample.shape[-1])
-
-    # See https://arxiv.org/abs/1711.00123
-    log_v = v.log()
-    # i != b (indexing could maybe be improved here, but i doubt it'd be more efficient)
-    log_v_b = torch.gather(log_v, -1, b.unsqueeze(-1))
-    cond_gumbels = -(-(log_v / probs) - log_v_b).log()
-    # i = b
-    index_sample = hard_sample.bool()
-    cond_gumbels[index_sample] = -(-log_v[index_sample]).log()
-    scores = cond_gumbels / temperature
-    return (scores - scores.logsumexp(dim=-1, keepdim=True)).exp()
-
-
 class RELAX(GumbelSoftmax):
     """
     Gradient estimator for Bernoulli and Categorical distributions on any function.
@@ -244,7 +201,7 @@ class RELAX(GumbelSoftmax):
         else:
             hard_sample = discretize(tensor, tensor.distribution)
             relaxed_sample = tensor
-            cond_sample = conditional_gumbel_rsample(
+            cond_sample = storch.conditional_gumbel_rsample(
                 hard_sample, tensor.distribution, self.temperature
             )
 

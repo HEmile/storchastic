@@ -1,7 +1,10 @@
 from typing import Optional
 
+from torch.distributions import Distribution
+
 from storch.sampling.swor import log1mexp, SampleWithoutReplacement
 import storch
+
 import torch
 
 
@@ -111,3 +114,43 @@ class UnorderedSet(SampleWithoutReplacement):
 
         # Return the unordered set estimator weighting
         return (log_leave_one_out + log_probs).exp().detach()
+
+
+class GumbelSoftmaxWOR(UnorderedSet):
+    def __init__(
+        self,
+        plate_name: str,
+        k: int,
+        initial_temperature=1.0,
+        min_temperature=1.0e-4,
+        annealing_rate=1.0e-5,
+        eos=None,
+    ):
+        super().__init__(plate_name, k, comp_leave_two_out=False, eos=eos)
+        self.temperature = initial_temperature
+
+    def sample(
+        self,
+        distr: Distribution,
+        parents: [storch.Tensor],
+        orig_distr_plates: [storch.Plate],
+        requires_grad: bool,
+    ) -> (torch.Tensor, storch.Plate):
+        hard_sample, plate = super().sample(
+            distr, parents, orig_distr_plates, requires_grad
+        )
+        from storch import conditional_gumbel_rsample
+
+        gumbel_wor = conditional_gumbel_rsample(
+            hard_sample, distr.probs, distr, self.temperature
+        )
+        gumbel_wor = storch.StochasticTensor(
+            gumbel_wor._tensor,
+            list(zip(*hard_sample._parents))[0],
+            hard_sample.plates,
+            hard_sample.name,
+            self.k,
+            distr,
+            requires_grad,
+        )
+        return gumbel_wor, plate
