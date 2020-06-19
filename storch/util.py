@@ -14,6 +14,7 @@ from torch.distributions import (
     OneHotCategorical,
     Bernoulli,
     RelaxedBernoulli,
+    Gumbel,
 )
 import torch
 
@@ -193,7 +194,12 @@ def reduce_mean(tensor: torch.Tensor, keep_dims: [int]):
     return tensor.mean(sum_out_dims)
 
 
-def rsample_gumbel(
+def rsample_gumbel(distr: Distribution, n: int,) -> torch.Tensor:
+    gumbel_distr = Gumbel(distr.logits, 1)
+    return gumbel_distr.rsample((n,))
+
+
+def rsample_gumbel_softmax(
     distr: Distribution,
     n: int,
     temperature: torch.Tensor,

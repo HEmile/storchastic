@@ -1,5 +1,7 @@
 from storch.method.method import (
     GumbelSoftmax,
+    GumbelSparseMax,
+    GumbelEntmax,
     ScoreFunction,
     Infer,
     Method,

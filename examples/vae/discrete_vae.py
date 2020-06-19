@@ -25,6 +25,12 @@ class DiscreteVAE(VAE):
     def initialize_method(self, args) -> storch.method.Method:
         if args.method == "gumbel":
             return GumbelSoftmax("z", n_samples=args.samples)
+        if args.method == "gumbel_sparse":
+            return storch.method.GumbelSparseMax("z", n_samples=args.samples)
+        if args.method == "gumbel_entmax":
+            return storch.method.GumbelEntmax(
+                "z", n_samples=args.samples, adaptive=True
+            )
         elif args.method == "gumbel_straight":
             return GumbelSoftmax("z", n_samples=args.samples, straight_through=True)
         elif args.method == "gumbel_wor":

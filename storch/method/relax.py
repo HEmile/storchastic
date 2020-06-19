@@ -15,7 +15,7 @@ from storch.method.method import Reparameterization, GumbelSoftmax
 
 import torch.nn.functional as F
 
-from storch.util import get_distr_parameters, rsample_gumbel, split
+from storch.util import get_distr_parameters, rsample_gumbel_softmax, split
 
 
 class Baseline(torch.nn.Module):
@@ -289,7 +289,7 @@ class REBARMC(MonteCarlo):
         plates: [Plate],
         amt_samples: int,
     ) -> torch.Tensor:
-        relaxed_sample = rsample_gumbel(
+        relaxed_sample = rsample_gumbel_softmax(
             distr, amt_samples, self.temperature, straight_through=False
         )
         # TODO: For rebar, what if sample from a sequence, and amt_samples is 1? Then three are sampled (for each one, also hard_sample and cond_sample.)
