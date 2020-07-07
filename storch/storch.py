@@ -84,7 +84,7 @@ def _handle_inputs(
             r_plates.append(plate)
         else:
             r_plates.append(tensor.get_plate(plate))
-    return tensor, plates
+    return tensor, r_plates
 
 
 def gather(input: storch.Tensor, dim: str, index: storch.Tensor):
@@ -258,10 +258,7 @@ def cat(*args, **kwargs):
 
 @storch.deterministic
 def conditional_gumbel_rsample(
-    hard_sample: torch.Tensor,
-    probs: torch.Tensor,
-    distr: torch.distributions.Distribution,
-    temperature,
+    hard_sample: torch.Tensor, distr: torch.distributions.Distribution, temperature,
 ) -> torch.Tensor:
     """
     Conditionally re-samples from the distribution given the hard sample.
@@ -270,7 +267,7 @@ def conditional_gumbel_rsample(
     # Adapted from torch.distributions.relaxed_bernoulli and torch.distributions.relaxed_categorical
     shape = hard_sample.shape
 
-    probs = clamp_probs(probs.expand_as(hard_sample))
+    probs = clamp_probs(distr.probs.expand_as(hard_sample))
     v = clamp_probs(torch.rand(shape, dtype=probs.dtype, device=probs.device))
     if isinstance(distr, torch.distributions.Bernoulli):
         pos_probs = probs[hard_sample == 1]

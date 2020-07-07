@@ -247,6 +247,8 @@ class Tensor:
             return storch.wrappers._handle_deterministic(
                 func, args, kwargs, expand_plates=True
             )
+        # if func_name in unwrap_only_methods:
+        #     return storch.wrappers._unpack_wrapper(func)(*args, *kwargs)
 
         return storch.wrappers._handle_deterministic(func, args, kwargs)
 
@@ -269,6 +271,8 @@ class Tensor:
                 )
             if func_name in excluded_methods:
                 return attr
+            # if func_name in unwrap_only_methods:
+            #     return storch.wrappers._unpack_wrapper(attr, self=self)
             return storch.wrappers._self_deterministic(attr, self)
 
     @property

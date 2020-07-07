@@ -141,9 +141,7 @@ class GumbelSoftmaxWOR(UnorderedSet):
         )
         from storch import conditional_gumbel_rsample
 
-        gumbel_wor = conditional_gumbel_rsample(
-            hard_sample, distr.probs, distr, self.temperature
-        )
+        gumbel_wor = conditional_gumbel_rsample(hard_sample, distr, self.temperature)
         gumbel_wor = storch.StochasticTensor(
             gumbel_wor._tensor,
             list(zip(*hard_sample._parents))[0],

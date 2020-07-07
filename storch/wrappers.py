@@ -470,8 +470,12 @@ def _exception_wrapper(fn):
     return wrapper
 
 
-def _unpack_wrapper(fn):
+def _unpack_wrapper(fn, self: Optional[storch.Tensor] = None):
+    @wraps(fn)
     def wrapper(*args, **kwargs):
+        if self:
+            args = list(args)
+            args.insert(0, self)
         new_args = []
         for a in args:
             if isinstance(a, storch.Tensor):

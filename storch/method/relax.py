@@ -8,7 +8,13 @@ from torch.distributions import Distribution, Bernoulli
 from torch.nn import Parameter
 
 import storch
-from storch import Plate, CostTensor, StochasticTensor, deterministic
+from storch import (
+    Plate,
+    CostTensor,
+    StochasticTensor,
+    deterministic,
+    conditional_gumbel_rsample,
+)
 from storch.sampling import MonteCarlo, SamplingMethod
 from storch.typing import Dims
 from storch.method.method import Reparameterization, GumbelSoftmax
@@ -164,7 +170,9 @@ class RELAX(GumbelSoftmax):
     ):
         if not sampling_method:
             sampling_method = MonteCarlo(plate_name, n_samples)
-        super().__init__(plate_name, sampling_method.set_mc_sample(self.mc_sample))
+        super().__init__(
+            plate_name, sampling_method.set_mc_plate_weighting(self.plate_weighting),
+        )
         if c_phi:
             self.c_phi = c_phi
         else:
@@ -172,10 +180,43 @@ class RELAX(GumbelSoftmax):
 
         self.temperature = Parameter(torch.tensor(1.0))
         self.rebar = rebar
-        if self.rebar:
-            self.sampling_method = REBARMC(plate_name, n_samples, self.temperature)
         # TODO: Automatically learn eta
         self.eta = 1.0
+
+    def sample_gumbel(
+        self,
+        distr: Distribution,
+        parents: [storch.Tensor],
+        plates: [Plate],
+        amt_samples: int,
+    ):
+        if self.rebar:
+            relaxed_sample = rsample_gumbel_softmax(
+                distr, amt_samples, self.temperature, straight_through=False
+            )
+            # TODO: For rebar, what if sample from a sequence, and amt_samples is 1? Then three are sampled (for each one, also hard_sample and cond_sample.)
+            #    That'd still blow up... But I guess it's required?
+            # In REBAR, the objective function is evaluated for the Gumbel sample, the conditional Gumbel sample \tilde{z} and the argmax of the Gumbel sample.
+            hard_sample = discretize(relaxed_sample, distr)
+            cond_sample = conditional_gumbel_rsample(
+                hard_sample, distr, self.temperature
+            )
+
+            # return (H(z), z, z|H(z)
+            return torch.cat([hard_sample, relaxed_sample, cond_sample], 0)
+        return super().sample_gumbel(distr, parents, plates, amt_samples)
+
+    def plate_weighting(
+        self, tensor: storch.StochasticTensor, plate: storch.Plate
+    ) -> Optional[storch.Tensor]:
+        if self.rebar:
+            # Only weight over the true samples, put the relaxed samples to weight 0. This also makes sure
+            # that they will not be backpropagated through in the cost backwards pass
+            n = int(tensor.n / 3)
+            weighting = tensor._tensor.new_zeros((tensor.n,))
+            weighting[:n] = tensor._tensor.new_tensor(1.0 / n)
+            return weighting
+        return None
 
     def post_sample(self, tensor: storch.StochasticTensor) -> Optional[storch.Tensor]:
         if self.rebar:
@@ -248,7 +289,7 @@ class RELAX(GumbelSoftmax):
         # Compute total derivative with respect to the parameter
         d_param = diff * d_log_prob + self.eta * (d_c_phi_relaxed - d_c_phi_cond)
         # Reduce the plate of this sample in case multiple samples are taken
-        d_param = storch.reduce_plates(d_param, plate_names=[tensor.name])
+        d_param = storch.reduce_plates(d_param, plates=[tensor.name])
         # Compute backwards from the parameters using its total derivative
         if isinstance(param, storch.Tensor):
             param._tensor.backward(d_param._tensor, retain_graph=True)
@@ -276,40 +317,10 @@ class RELAX(GumbelSoftmax):
     def adds_loss(self, tensor: StochasticTensor, cost_node: CostTensor) -> bool:
         return True
 
-
-class REBARMC(MonteCarlo):
-    def __init__(self, plate_name: str, n_samples: int, temperature):
-        super().__init__(plate_name, n_samples)
-        self.temperature = temperature
-
-    def mc_sample(
-        self,
-        distr: Distribution,
-        parents: [storch.Tensor],
-        plates: [Plate],
-        amt_samples: int,
-    ) -> torch.Tensor:
-        relaxed_sample = rsample_gumbel_softmax(
-            distr, amt_samples, self.temperature, straight_through=False
-        )
-        # TODO: For rebar, what if sample from a sequence, and amt_samples is 1? Then three are sampled (for each one, also hard_sample and cond_sample.)
-        #    That'd still blow up... But I guess it's required?
-        # In REBAR, the objective function is evaluated for the Gumbel sample, the conditional Gumbel sample \tilde{z} and the argmax of the Gumbel sample.
-        hard_sample = discretize(relaxed_sample, distr)
-        cond_sample = conditional_gumbel_rsample(hard_sample, distr, self.temperature)
-
-        # return (H(z), z, z|H(z)
-        return torch.cat([hard_sample, relaxed_sample, cond_sample], 0)
-
-    def plate_weighting(
-        self, tensor: storch.StochasticTensor, plate: storch.Plate
-    ) -> Optional[storch.Tensor]:
-        # if REBAR: only weight over the true samples, put the relaxed samples to weight 0. This also makes sure
-        # that they will not be backpropagated through in the cost backwards pass
-        n = int(tensor.n / 3)
-        weighting = tensor.new_zeros((tensor.n,))
-        weighting[:n] = tensor.new_tensor(1.0 / n)
-        return weighting
+    def update_parameters(
+        self, result_triples: [(StochasticTensor, CostTensor)]
+    ) -> None:
+        pass
 
 
 class REBAR(RELAX):

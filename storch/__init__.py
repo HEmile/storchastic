@@ -9,11 +9,12 @@ from .wrappers import (
 from .tensor import Tensor, CostTensor, StochasticTensor, Plate, is_tensor
 
 import storch.sampling
+from .storch import *
 import storch.method
 import storch.typing
 from .inference import backward, add_cost, reset, denote_independent, gather_samples
 from .util import print_graph
-from .storch import *
+
 from .unique import unique, undo_unique
 from .exceptions import IllegalStorchExposeError
 

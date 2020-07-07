@@ -17,7 +17,6 @@ from storch.sampling import (
     MonteCarlo,
     Enumerate,
 )
-from storch.nn.functional import Sparsemax
 import entmax
 
 
