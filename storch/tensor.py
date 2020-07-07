@@ -106,7 +106,14 @@ class Plate:
             bool: True if this plate should remain in the collected plates.
 
         """
+        for plate in plates:
+            if plate.name == self.name and plate != self:
+                if not plate.on_duplicate_plate(self):
+                    return False
         return True
+
+    def on_duplicate_plate(self, plate: Plate) -> bool:
+        raise ValueError("")
 
     def on_unwrap_tensor(self, tensor: storch.Tensor) -> storch.Tensor:
         """

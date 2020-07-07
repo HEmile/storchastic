@@ -186,7 +186,7 @@ def _prepare_args(
         _collect_parents_and_plates(fn_kwargs, parents, plates),
     )
 
-    # Allow plates to filter themselves from being collected. This is used in storch.method.sampling.AncestralPlate
+    # Allow plates to filter themselves from being collected.
     plates = list(filter(lambda p: p.on_collecting_args(plates), plates))
 
     # Get the list of plates with size larger than 1 for the unsqueezing of tensors
