@@ -232,6 +232,7 @@ class RELAX(GumbelSoftmax):
     def estimator(
         self, tensor: StochasticTensor, cost_node: CostTensor
     ) -> Optional[storch.Tensor]:
+        # TODO: This estimator likely doesn't reduce plate weightings properly
         plate = tensor.get_plate(tensor.name)
         if self.rebar:
             hard_sample, relaxed_sample, cond_sample = split(
