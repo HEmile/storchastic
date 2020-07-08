@@ -88,7 +88,7 @@ class LAX(Reparameterization):
         # Compute log probability. Make sure not to use the rsampled value: We want to compute the distribution
         # not through the sample but only through the distributional parameters.
         log_prob = tensor.distribution.log_prob(tensor.detach())
-        log_prob = log_prob.sum(dim=tensor.event_dim_indices())
+        log_prob = log_prob.sum(dim=tensor.event_dim_indices)
 
         # Compute the derivative with respect to the distributional parameters through the baseline.
         derivs = []
@@ -122,7 +122,7 @@ class LAX(Reparameterization):
                 param = param._tensor
             param.backward(d_param._tensor, retain_graph=True)
             # Compute the gradient variance
-            variance = (d_param ** 2).sum(d_param.event_dim_indices())
+            variance = (d_param ** 2).sum(d_param.event_dim_indices)
             var_loss += storch.reduce_plates(variance)
 
         c_phi_params = []
@@ -297,7 +297,7 @@ class RELAX(GumbelSoftmax):
         else:
             param.backward(d_param._tensor, retain_graph=True)
         # Compute the gradient variance
-        variance = (d_param ** 2).sum(d_param.event_dim_indices())
+        variance = (d_param ** 2).sum(d_param.event_dim_indices)
         var_loss = storch.reduce_plates(variance)
 
         # Minimize variance over the parameters of c_phi and the temperature (should it also minimize eta?)

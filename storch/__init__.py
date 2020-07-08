@@ -24,9 +24,11 @@ import storch.nn
 import torch as _torch
 
 _debug = False
-# Hard-coded monkey patches: These do not support __torch_function__
+# Hard-coded monkey patches: These do not support __torch_function__ (PyTorch version 1.5.0)
 _torch.is_tensor = storch.is_tensor
 _torch.Tensor.to = deterministic(_torch.Tensor.to)
+_torch.Tensor.le = deterministic(_torch.Tensor.le)
+_torch.Tensor.gt = deterministic(_torch.Tensor.gt)
 # Cat currently does not support __torch_function__ https://github.com/pytorch/pytorch/issues/34294.
 # However, monkey patching it makes storchastic incompatible with torchvision. Use storch.cat or storch.gather_samples instead
 # _torch.cat = deterministic(_torch.cat)

@@ -483,6 +483,7 @@ class Tensor:
     def register_hook(self, hook: Callable) -> Any:
         return self._tensor.register_hook(hook)
 
+    @property
     def event_dim_indices(self):
         return range(self.plate_dims, self._tensor.dim())
 

@@ -200,9 +200,9 @@ def variance(
     mean = variance_plate.reduce(tensor, detach_weights=detach_weights)
     variance = (tensor - mean) ** 2
 
-    event_dims = tensor.event_dim_indices()
+    event_dims = tensor.event_dim_indices
     if len(event_dims) > 0:
-        variance = variance.sum(tensor.event_dim_indices())
+        variance = variance.sum(tensor.event_dim_indices)
     return reduce_plates(variance, detach_weights=detach_weights)
 
 

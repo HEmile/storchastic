@@ -54,8 +54,8 @@ class BernoulliVAE(VAE):
             return ScoreFunctionWOR("z", k=args.samples)
         elif args.method == "unordered":
             return UnorderedSetEstimator("z", k=args.samples)
-        # elif args.method == "arm":
-        #     return
+        elif args.method == "arm":
+            return storch.method.ARM("z", n_samples=args.samples)
         else:
             raise ValueError("Invalid method passed to program arguments.")
 
@@ -69,6 +69,8 @@ class BernoulliVAE(VAE):
         return logits
 
     def shape_latent(self, z, latents):
+        if z.dtype == torch.bool:
+            return z.float()
         return z
 
     def name(self):
