@@ -82,3 +82,67 @@ class ARM(Method):
         log_prob = logistic.log_prob(z.detach())
         log_prob = log_prob.sum(dim=log_prob.event_dim_indices)
         return avg_cost.detach() * log_prob
+
+
+class DisARM(Method):
+    """
+    Introduces by Dong, Mnih and Tucker, 2020 https://arxiv.org/abs/2006.10680
+    """
+
+    def __init__(
+        self,
+        plate_name: str,
+        sampling_method: Optional[SamplingMethod] = None,
+        n_samples: int = 1,
+    ):
+        if not sampling_method:
+            sampling_method = MonteCarlo(plate_name, n_samples)
+        super().__init__(
+            plate_name, sampling_method.set_mc_sample(self.sample_disarm),
+        )
+
+    def sample_disarm(
+        self,
+        distr: Distribution,
+        parents: [storch.Tensor],
+        plates: [Plate],
+        amt_samples: int,
+    ):
+        if not isinstance(distr, Bernoulli):
+            raise ValueError("DisARM only works for the Bernoulli distribution.")
+        logits = distr.logits
+        eps = Logistic(0.0, 1.0).sample((amt_samples,) + logits.shape)
+        z = eps + logits
+        z_tilde = -eps + logits
+        # Sample (b, \tilde{b})
+        return torch.cat([z, z_tilde], dim=0) > 0.0
+
+    def plate_weighting(
+        self, tensor: storch.StochasticTensor, plate: Plate
+    ) -> Optional[storch.Tensor]:
+        # The antithetic sample is not according to the true distribution, so we cannot count it during the weighting
+        n = int(tensor.n / 2)
+        weighting = tensor._tensor.new_zeros((tensor.n,))
+        weighting[:n] = tensor._tensor.new_tensor(1.0 / n)
+        return weighting
+
+    def adds_loss(
+        self, tensor: storch.StochasticTensor, cost_node: storch.CostTensor
+    ) -> bool:
+        return True
+
+    def estimator(
+        self, tensor: storch.StochasticTensor, cost_node: storch.CostTensor
+    ) -> Optional[storch.Tensor]:
+        # TODO: No support for alternative plate weighting
+        plate = tensor.get_plate(tensor.name)
+        f_b, f_b_tilde = storch.util.split(cost_node, plate, amt_slices=2)
+        b, b_tilde = storch.util.split(tensor, plate, amt_slices=2)
+
+        avg_cost = 0.5 * (f_b - f_b_tilde)
+        logits = tensor.distribution.logits
+        # -b_tilde = (-1)^b_tilde if b_tilde in {0, 1}
+        weighting = -b_tilde.float() * ~b.eq(b_tilde) * logits.abs().sigmoid()
+        return ((weighting * avg_cost).detach() * logits).sum(
+            dim=logits.event_dim_indices
+        )

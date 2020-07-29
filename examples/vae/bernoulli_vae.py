@@ -56,6 +56,8 @@ class BernoulliVAE(VAE):
             return UnorderedSetEstimator("z", k=args.samples)
         elif args.method == "arm":
             return storch.method.ARM("z", n_samples=args.samples)
+        elif args.method == "disarm":
+            return storch.method.DisARM("z", n_samples=args.samples)
         else:
             raise ValueError("Invalid method passed to program arguments.")
 
