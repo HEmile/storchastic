@@ -31,11 +31,13 @@ def train(epoch, model, train_loader, device, optimizer, args, writer):
         data = storch.denote_independent(data.view(-1, 784), 0, "data")
         recon_batch, KLD, z = model(data)
         storch.add_cost(loss_function(recon_batch, data), "reconstruction")
-        cond_log = batch_idx % args.log_interval == 0
         cost = backward()
         train_loss += cost.item()
 
         optimizer.step()
+
+        cond_log = batch_idx % args.log_interval == 0
+
         if cond_log:
             step = 100.0 * batch_idx / len(train_loader)
             global_step = 100 * (epoch - 1) + step
@@ -51,18 +53,25 @@ def train(epoch, model, train_loader, device, optimizer, args, writer):
                     recon_batch, _, z = model(data)
                     storch.add_cost(loss_function(recon_batch, data), "reconstruction")
                     backward()
-                    expect_grad = z.grad[_consider_param]
+                    expect_grad = storch.reduce_plates(
+                        z.grad[_consider_param]
+                    ).detach_tensor()
 
                     optimizer.zero_grad()
                     model.sampling_method = old_method
                 grads = {n: [] for n in z.grad}
+
                 for i in range(args.variance_samples):
                     optimizer.zero_grad()
                     recon_batch, _, z = model(data)
                     storch.add_cost(loss_function(recon_batch, data), "reconstruction")
                     backward()
+
                     for param_name, grad in z.grad.items():
-                        grads[param_name].append(grad)
+                        # Make sure to reduce the data dimension and detach, for memory reasons.
+                        grads[param_name].append(
+                            storch.reduce_plates(grad).detach_tensor()
+                        )
 
                 variances = {}
                 for param_name, gradz in grads.items():

@@ -106,7 +106,14 @@ class Plate:
             bool: True if this plate should remain in the collected plates.
 
         """
+        for plate in plates:
+            if plate.name == self.name and plate != self:
+                if not plate.on_duplicate_plate(self):
+                    return False
         return True
+
+    def on_duplicate_plate(self, plate: Plate) -> bool:
+        raise ValueError("")
 
     def on_unwrap_tensor(self, tensor: storch.Tensor) -> storch.Tensor:
         """
@@ -205,6 +212,7 @@ class Tensor:
         self._name = name
         self._tensor = tensor
         self._parents = []
+        self._cleaned = False
         for p in parents:
             # TODO: Should I re-add this?
             # if p.is_cost:
@@ -239,6 +247,8 @@ class Tensor:
             return storch.wrappers._handle_deterministic(
                 func, args, kwargs, expand_plates=True
             )
+        # if func_name in unwrap_only_methods:
+        #     return storch.wrappers._unpack_wrapper(func)(*args, *kwargs)
 
         return storch.wrappers._handle_deterministic(func, args, kwargs)
 
@@ -261,6 +271,8 @@ class Tensor:
                 )
             if func_name in excluded_methods:
                 return attr
+            # if func_name in unwrap_only_methods:
+            #     return storch.wrappers._unpack_wrapper(attr, self=self)
             return storch.wrappers._self_deterministic(attr, self)
 
     @property
@@ -387,6 +399,20 @@ class Tensor:
             walk_fn,
         )
 
+    def _clean(self):
+        """
+        Cleans up :attr:`_children` and :attr:`_parents` for all nodes in the subgraph of this node (depth first)
+        """
+        if self._cleaned:
+            return
+        self._cleaned = True
+        for (node, _) in self._children:
+            node._clean()
+        for (node, _) in self._parents:
+            node._clean()
+        self._children = []
+        self._parents = []
+
     def detach_tensor(self) -> storch.Tensor:
         """
         Returns: A :class:`storch.Tensor` that is removed from PyTorch's differention graph.
@@ -457,6 +483,7 @@ class Tensor:
     def register_hook(self, hook: Callable) -> Any:
         return self._tensor.register_hook(hook)
 
+    @property
     def event_dim_indices(self):
         return range(self.plate_dims, self._tensor.dim())
 

@@ -1,5 +1,7 @@
 from storch.method.method import (
     GumbelSoftmax,
+    GumbelSparseMax,
+    GumbelEntmax,
     ScoreFunction,
     Infer,
     Method,
@@ -7,6 +9,7 @@ from storch.method.method import (
     Reparameterization,
 )
 from storch.method.relax import RELAX, REBAR, LAX
+from storch.method.arm import ARM, DisARM
 from storch.method.baseline import Baseline, MovingAverageBaseline
 from storch.method.multi_sample_reinforce import ScoreFunctionWOR
-from storch.method.unordered import UnorderedSetEstimator
+from storch.method.unordered import UnorderedSetEstimator, UnorderedSetGumbelSoftmax

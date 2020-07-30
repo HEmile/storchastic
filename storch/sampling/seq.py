@@ -58,18 +58,16 @@ class AncestralPlate(storch.Plate):
         """
         if self._in_recursion:
             self._override_equality = True
-        for plate in plates:
-            if plate.name == self.name:
-                if not isinstance(plate, AncestralPlate):
-                    raise ValueError(
-                        "Received a plate with name "
-                        + plate.name
-                        + " that is not also an AncestralPlate."
-                    )
-                if plate.variable_index > self.variable_index:
-                    # Only keep ancestral plates with the highest variable index
-                    return False
-        return True
+        return super().on_collecting_args(plates)
+
+    def on_duplicate_plate(self, plate: storch.Plate) -> bool:
+        if not isinstance(plate, AncestralPlate):
+            raise ValueError(
+                "Received a plate with name "
+                + plate.name
+                + " that is not also an AncestralPlate."
+            )
+        return plate.variable_index > self.variable_index
 
     def on_unwrap_tensor(self, tensor: storch.Tensor) -> storch.Tensor:
         """

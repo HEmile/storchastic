@@ -7,6 +7,7 @@ from typing import Optional, Type, Union, Dict, List, Callable, Tuple
 from storch.util import (
     has_differentiable_path,
     get_distr_parameters,
+    rsample_gumbel_softmax,
     rsample_gumbel,
 )
 import storch
@@ -16,6 +17,7 @@ from storch.sampling import (
     MonteCarlo,
     Enumerate,
 )
+import entmax
 
 
 class Method(ABC, torch.nn.Module):
@@ -363,7 +365,7 @@ class GumbelSoftmax(Method):
         plates: [Plate],
         amt_samples: int,
     ):
-        return rsample_gumbel(
+        return rsample_gumbel_softmax(
             distr, amt_samples, self.temperature, self.straight_through
         )
 
@@ -375,6 +377,115 @@ class GumbelSoftmax(Method):
             "There is no differentiable path between the cost tensor and the stochastic tensor. "
             "We cannot use reparameterization. Use a different gradient estimator, or make sure your"
             "code is differentiable."
+        )
+
+    def update_parameters(
+        self, result_triples: [(StochasticTensor, CostTensor)]
+    ) -> None:
+        if self.temperature > self.min_temperature:
+            self.temperature = (1 - self.annealing_rate) * self.temperature
+
+
+class GumbelEntmax(Method):
+    def __init__(
+        self,
+        plate_name: str,
+        sampling_method: Optional[storch.sampling.SamplingMethod] = None,
+        alpha: float = 1.5,
+        adaptive=False,
+        n_samples: int = 1,
+        straight_through=False,
+        initial_temperature=1.0,
+        min_temperature=1.0e-4,
+        annealing_rate=0.0,
+    ):
+        if not sampling_method:
+            sampling_method = storch.sampling.MonteCarlo(plate_name, n_samples)
+        super().__init__(
+            plate_name, sampling_method.set_mc_sample(self.sample_gumbel_entmax),
+        )
+        self.adaptive = adaptive
+        self.straight_through = straight_through
+        self.register_buffer("temperature", torch.tensor(initial_temperature))
+        self.register_buffer("annealing_rate", torch.tensor(annealing_rate))
+        self.register_buffer("min_temperature", torch.tensor(min_temperature))
+        self.alpha = alpha
+        if adaptive:
+            self.alpha = torch.nn.Parameter(
+                torch.tensor(self.alpha, requires_grad=True)
+            )
+        if not adaptive and alpha == 1.5:
+            self.entmax = entmax.entmax15
+        elif not adaptive and alpha == 2.0:
+            self.entmax = entmax.sparsemax
+        else:
+            if adaptive:
+                self.entmax = lambda x: entmax.entmax_bisect(
+                    x, torch.nn.functional.softplus(self.alpha - 1) + 1
+                )
+            else:
+                self.entmax = lambda x: entmax.entmax_bisect(x, self.alpha)
+
+    def sample_gumbel_entmax(
+        self,
+        distr: torch.distributions.Distribution,
+        parents: [storch.Tensor],
+        plates: [storch.Plate],
+        amt_samples: int,
+    ):
+        import random
+
+        # if random.randint(0, 10) == 0:
+        #     print(torch.nn.functional.softplus(self.alpha - 1) + 1)
+        gumbels = rsample_gumbel(distr, amt_samples)
+        res = self.entmax(gumbels / self.temperature)
+        return res
+
+    def adds_loss(
+        self, tensor: storch.StochasticTensor, cost_node: storch.CostTensor
+    ) -> bool:
+        if has_differentiable_path(cost_node, tensor):
+            # There is a differentiable path, so we will just use reparameterization here.
+            return False
+        raise ValueError(
+            "There is no differentiable path between the cost tensor and the stochastic tensor. "
+            "We cannot use reparameterization. Use a different gradient estimator, or make sure your"
+            "code is differentiable."
+        )
+
+    def update_parameters(
+        self, result_triples: [(storch.StochasticTensor, storch.CostTensor)]
+    ) -> None:
+        if self.temperature > self.min_temperature:
+            self.temperature = (1 - self.annealing_rate) * self.temperature
+
+
+class GumbelSparseMax(GumbelEntmax):
+    """
+    Method that implements the Gumbel Sparsemax relaxation with temperature annealing.
+    Can only be used to find the derivative when all paths to the cost nodes are differentiable.
+    Introduced in Appendix of Gradient Estimation with Stochastic Softmax Tricks https://arxiv.org/abs/2006.08063
+    """
+
+    def __init__(
+        self,
+        plate_name: str,
+        sampling_method: Optional[storch.sampling.SamplingMethod] = None,
+        n_samples: int = 1,
+        straight_through=False,
+        initial_temperature=1.0,
+        min_temperature=1.0e-4,
+        annealing_rate=0.0,
+    ):
+        super().__init__(
+            plate_name,
+            sampling_method,
+            2.0,
+            n_samples=n_samples,
+            straight_through=straight_through,
+            initial_temperature=initial_temperature,
+            min_temperature=min_temperature,
+            annealing_rate=annealing_rate,
         )
 
 

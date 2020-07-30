@@ -2,7 +2,7 @@ from typing import Optional
 
 import storch
 from storch.method.method import Method
-from storch.sampling import UnorderedSet
+from storch.sampling import UnorderedSet, GumbelSoftmaxWOR
 
 
 class UnorderedSetEstimator(Method):
@@ -95,3 +95,21 @@ class UnorderedSetEstimator(Method):
         )
         advantage = cost_node - baseline
         return plate.log_probs * advantage.detach()
+
+
+class UnorderedSetGumbelSoftmax(Method):
+    def __init__(
+        self,
+        plate_name: str,
+        k: int,
+        initial_temperature=1.0,
+        min_temperature=1.0e-4,
+        annealing_rate=1.0e-5,
+        eos=None,
+    ):
+        super().__init__(
+            plate_name,
+            GumbelSoftmaxWOR(
+                plate_name, k, initial_temperature, min_temperature, annealing_rate, eos
+            ),
+        )
