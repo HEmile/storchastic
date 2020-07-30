@@ -72,7 +72,7 @@ class UnorderedSetEstimator(Method):
                 )
         return False
 
-    def estimator(
+    def multiplicative_estimator(
         self, tensor: storch.StochasticTensor, cost_node: storch.CostTensor
     ) -> Optional[storch.Tensor]:
         # Note: We automatically multiply with leave-one-out ratio in the plate reduction

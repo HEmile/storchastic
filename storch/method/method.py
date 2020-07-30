@@ -3,7 +3,7 @@ from torch.distributions import Distribution, OneHotCategorical, Bernoulli, Cate
 
 from storch.tensor import CostTensor, StochasticTensor, Plate
 import torch
-from typing import Optional, Type, Union, Dict, List, Callable
+from typing import Optional, Type, Union, Dict, List, Callable, Tuple
 from storch.util import (
     has_differentiable_path,
     get_distr_parameters,
@@ -168,7 +168,9 @@ class Method(ABC, torch.nn.Module):
 
     def _estimator(
         self, tensor: StochasticTensor, cost_node: CostTensor
-    ) -> Optional[storch.Tensor]:
+    ) -> Tuple[
+        Optional[storch.Tensor], Optional[storch.Tensor], Optional[storch.Tensor]
+    ]:
         """
 
         :param tensor:
@@ -178,25 +180,34 @@ class Method(ABC, torch.nn.Module):
         self._estimation_pairs.append((tensor, cost_node))
         return self.estimator(tensor, cost_node)
 
-    def _update_parameters(self):
-        self.iterations += 1
-        self.update_parameters(self._estimation_pairs)
-        self._estimation_pairs = []
-
     def estimator(
         self, tensor: StochasticTensor, cost_node: CostTensor
-    ) -> Optional[storch.Tensor]:
+    ) -> Tuple[
+        Optional[storch.Tensor], Optional[storch.Tensor], Optional[storch.Tensor]
+    ]:
         """
-        Returns the surrogate loss of this estimator, if it adds one. A method such as :class:`storch.method.Reparameterization`
-        will not add a surrogate loss.
+        Returns three terms that will be used for inferring higher-order gradient estimates.
+        - The first return is the multiplicative estimator. It will be multiplied with the cost function.
+          To get correct, unbiased estimates, the cost_node should not be involved in the computation.
+          In REINFORCE-based methods, this is usually the score function.
+          Methods that do not use a multiplicative estimator can return None.
+        - The second return is the baseline. It will be multiplied with the multiplicative estimator.
+        - The third return is a function that will be differentiated to estimate the gradient.
+
+        It is also possible to directly do a backwards call in this method, but this will prevent correct computation of
+        higher-order derivatives.
 
         Note that this method is only called if :meth:`adds_loss` returns True.
 
         Args:
             tensor (storch.StochasticTensor): The sampled tensor to find the surrogate loss for.
-            cost_node (storch.CostTensor):
         """
-        return None
+        return None, None, None
+
+    def _update_parameters(self):
+        self.iterations += 1
+        self.update_parameters(self._estimation_pairs)
+        self._estimation_pairs = []
 
     def update_parameters(
         self, result_triples: [(StochasticTensor, CostTensor)]
@@ -219,6 +230,9 @@ class Method(ABC, torch.nn.Module):
         called. Can be used to reset this methods state to some initial state that has to happen every iteration. 
         """
         self.sampling_method.reset()
+
+    def should_create_higher_order_graph(self) -> bool:
+        return False
 
 
 class Infer(Method):
@@ -253,10 +267,10 @@ class Infer(Method):
         self._score_method = ScoreFunction(plate_name, sampling_method, n_samples)
         self._method = _method
 
-    def estimator(
+    def multiplicative_estimator(
         self, tensor: StochasticTensor, cost_node: CostTensor
     ) -> Optional[torch.Tensor]:
-        return self._score_method.estimator(tensor, cost_node)
+        return self._score_method.multiplicative_estimator(tensor, cost_node)
 
     def update_parameters(
         self, result_triples: [(StochasticTensor, CostTensor, torch.Tensor)]
@@ -409,7 +423,9 @@ class ScoreFunction(Method):
             else:
                 raise ValueError("Invalid baseline name", baseline_factory)
 
-    def estimator(self, tensor: StochasticTensor, cost: CostTensor) -> storch.Tensor:
+    def multiplicative_estimator(
+        self, tensor: StochasticTensor, cost: CostTensor
+    ) -> storch.Tensor:
         log_prob = tensor.distribution.log_prob(tensor)
         if len(log_prob.shape) > tensor.plate_dims:
             # Sum out over the event shape

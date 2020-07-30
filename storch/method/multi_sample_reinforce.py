@@ -39,7 +39,7 @@ class ScoreFunctionWOR(Method):
                 )
         return False
 
-    def estimator(
+    def multiplicative_estimator(
         self, tensor: storch.StochasticTensor, cost_node: storch.CostTensor
     ) -> Optional[storch.Tensor]:
         cost_plate = None

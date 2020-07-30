@@ -3,7 +3,7 @@ import torch
 import storch
 from torch.distributions import Distribution
 from collections import deque
-from typing import List, Iterable, Any, Callable, Iterator
+from typing import List, Iterable, Any, Callable, Iterator, Dict
 import builtins
 from itertools import product
 from typing import Optional
@@ -776,7 +776,7 @@ class StochasticTensor(Tensor):
         return self._requires_grad
 
     @property
-    def grad(self):
+    def grad(self) -> Dict[str, storch.Tensor]:
         return self.param_grads
 
     def _set_method(self, method: storch.method.Method):

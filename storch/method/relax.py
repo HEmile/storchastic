@@ -1,6 +1,6 @@
 from functools import reduce
 from operator import mul
-from typing import Optional, Callable
+from typing import Optional, Callable, Tuple
 
 import torch
 from torch.distributions import Distribution, Bernoulli
@@ -73,7 +73,7 @@ class LAX(Reparameterization):
         """
         return tensor.detach()
 
-    def estimator(
+    def multiplicative_estimator(
         self, tensor: StochasticTensor, cost_node: CostTensor
     ) -> Optional[storch.Tensor]:
         # Input rsampled value into c_phi
@@ -217,8 +217,14 @@ class RELAX(GumbelSoftmax):
         self.rebar = rebar
         if self.rebar:
             self.sampling_method = REBARMC(plate_name, n_samples, self.temperature)
-        # TODO: Automatically learn eta
-        self.eta = 1.0
+        self.eta = Parameter(torch.tensor(1.0))
+
+        # Minimize variance over the parameters of c_phi and the temperature (should it also minimize eta?)
+        self.control_params = [self.temperature, self.eta]
+        if isinstance(self.c_phi, torch.nn.Module):
+            for c_phi_param in self.c_phi.parameters(recurse=True):
+                if c_phi_param.requires_grad:
+                    self.control_params.append(c_phi_param)
 
     def post_sample(self, tensor: storch.StochasticTensor) -> Optional[storch.Tensor]:
         if self.rebar:
@@ -233,22 +239,21 @@ class RELAX(GumbelSoftmax):
 
     def estimator(
         self, tensor: StochasticTensor, cost_node: CostTensor
-    ) -> Optional[storch.Tensor]:
+    ) -> Tuple[
+        Optional[storch.Tensor], Optional[storch.Tensor], Optional[storch.Tensor]
+    ]:
         plate = tensor.get_plate(tensor.name)
         if self.rebar:
             hard_sample, relaxed_sample, cond_sample = split(
                 tensor, plate, amt_slices=3
             )
-            hard_cost, relaxed_cost, cond_cost = split(cost_node, plate, amt_slices=3)
-
+            _, relaxed_cost, cond_cost = split(cost_node, plate, amt_slices=3)
         else:
             hard_sample = discretize(tensor, tensor.distribution)
             relaxed_sample = tensor
             cond_sample = conditional_gumbel_rsample(
                 hard_sample, tensor.distribution, self.temperature
             )
-
-            hard_cost = cost_node
             relaxed_cost = 0.0
             cond_cost = 0.0
 
@@ -256,67 +261,47 @@ class RELAX(GumbelSoftmax):
         c_phi_relaxed = self.c_phi(relaxed_sample) + relaxed_cost
         c_phi_cond = self.c_phi(cond_sample) + cond_cost
 
-        # Compute log probability of hard sample
         log_prob = tensor.distribution.log_prob(hard_sample)
-        log_prob = log_prob.sum(
-            dim=list(range(hard_sample.plate_dims, len(log_prob.shape)))
-        )
 
         # Compute the derivative with respect to the distributional parameters through the baseline.
-        param = tensor.distribution._param
-        # TODO: It should either propagate over the logits or over the probs. Can we know which one is the parameter and
-        # which one is computed dynamically?
-        # param.register_hook(hook)
-        # TODO: Can these be collected in a single torch.autograd.grad call?
-        d_log_prob = storch.grad(
-            [log_prob],
-            [param],
-            create_graph=True,
-            grad_outputs=torch.ones_like(log_prob),
-        )[0]
-        d_c_phi_relaxed = storch.grad(
-            [c_phi_relaxed],
-            [param],
-            create_graph=True,
-            grad_outputs=torch.ones_like(c_phi_relaxed),
-        )[0]
-        d_c_phi_cond = storch.grad(
-            [c_phi_cond],
-            [param],
-            create_graph=True,
-            grad_outputs=torch.ones_like(c_phi_cond),
-        )[0]
+        # TODO: Ensure the weights of c_phi are frozen.
 
-        diff = hard_cost - self.eta * c_phi_cond
-        # Compute total derivative with respect to the parameter
-        d_param = diff * d_log_prob + self.eta * (d_c_phi_relaxed - d_c_phi_cond)
-        # Reduce the plate of this sample in case multiple samples are taken
-        d_param = storch.reduce_plates(d_param, plate_names=[tensor.name])
-        # Compute backwards from the parameters using its total derivative
-        if isinstance(param, storch.Tensor):
-            param._tensor.backward(d_param._tensor, retain_graph=True)
-        else:
-            param.backward(d_param._tensor, retain_graph=True)
-        # Compute the gradient variance
-        variance = (d_param ** 2).sum(d_param.event_dim_indices())
-        var_loss = storch.reduce_plates(variance)
-
-        # Minimize variance over the parameters of c_phi and the temperature (should it also minimize eta?)
-        c_phi_params = [self.temperature]
-        if isinstance(self.c_phi, torch.nn.Module):
-            for c_phi_param in self.c_phi.parameters(recurse=True):
-                if c_phi_param.requires_grad:
-                    c_phi_params.append(c_phi_param)
-
-        d_variance = torch.autograd.grad(
-            [var_loss._tensor], c_phi_params, create_graph=self.rebar
+        multiplicative_estimator = log_prob.sum(
+            dim=list(range(hard_sample.plate_dims, len(log_prob.shape)))
         )
-
-        for i in range(len(c_phi_params)):
-            c_phi_params[i].backward(d_variance[i])
-        return None
+        # TODO: Split into three for REBAR, so the returns should have the same dimensions as the weighting:
+        #   which is 1 for the first three I think?
+        return multiplicative_estimator, c_phi_cond, c_phi_relaxed - c_phi_cond
 
     def adds_loss(self, tensor: StochasticTensor, cost_node: CostTensor) -> bool:
+        return True
+
+    def update_parameters(
+        self, result_triples: [(StochasticTensor, CostTensor)]
+    ) -> None:
+        # During the normal backwards call, the parameters are accumulated gradients to the control variate parameters.
+        # We don't want to minimize wrt to that loss, but to the one we define here.
+        for param in self.control_params:
+            param.grad = None
+        # TODO: Find grad of the distribution, then compute variance.
+        tensors = []
+        for tensor, _ in result_triples:
+            if tensor not in tensors:
+                tensors.append(tensor)
+        # minimize the variance of the gradient with respect to the input parameters
+        for tensor in tensors:
+            d_param = next(tensor.grad.values())
+            variance = (d_param ** 2).sum(d_param.event_dim_indices())
+            var_loss = storch.reduce_plates(variance)
+
+            d_variance = torch.autograd.grad(
+                [var_loss._tensor], self.control_params, retain_graph=True
+            )
+
+            for i in range(len(self.control_params)):
+                self.control_params[i].backward(d_variance[i])
+
+    def should_create_higher_order_graph(self) -> bool:
         return True
 
 
