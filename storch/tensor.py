@@ -815,6 +815,13 @@ class StochasticTensor(Tensor):
     def _set_method(self, method: storch.method.Method):
         self.method = method
 
+    def _clean(self):
+        new_param_grads = {}
+        for name, grad in self.param_grads.items():
+            # In case higher-order derivatives are stored, remove these from the graph.
+            new_param_grads[name] = grad.detach()
+        super()._clean()
+
 
 is_tensor = lambda a: isinstance(a, torch.Tensor) or isinstance(a, Tensor)
 from storch.util import has_backwards_path

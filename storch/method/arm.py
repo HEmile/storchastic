@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Tuple
 
 from torch.distributions import (
     Distribution,
@@ -10,7 +10,7 @@ from torch.distributions import (
 )
 import torch
 import storch
-from storch import Plate
+from storch import Plate, StochasticTensor, CostTensor
 from storch.method import Method
 from storch.sampling import SamplingMethod, MonteCarlo
 
@@ -69,19 +69,36 @@ class ARM(Method):
     ) -> bool:
         return True
 
+    @storch.deterministic
+    def comp_estimator(
+        self, tensor: StochasticTensor, cost: CostTensor, logits, plate_index, n
+    ) -> Tuple[storch.Tensor, storch.Tensor]:
+        _index1 = (None,) * plate_index + (slice(n, 2 * n),)
+        _index2 = (None,) * plate_index + (slice(n),)
+        f_z_tilde = cost[_index1]
+        z = tensor[_index2]
+
+        baseline = torch.zeros_like(cost)
+        baseline[_index2] = f_z_tilde
+
+        logistic = Logistic(logits, 1.0)
+        log_prob = torch.zeros_like(tensor)
+        log_prob[_index2] = logistic.log_prob(z.detach())
+        return log_prob, baseline
+
     def estimator(
-        self, tensor: storch.StochasticTensor, cost_node: storch.CostTensor
-    ) -> Optional[storch.Tensor]:
+        self, tensor: StochasticTensor, cost: CostTensor
+    ) -> Tuple[
+        Optional[storch.Tensor], Optional[storch.Tensor], Optional[storch.Tensor]
+    ]:
         # TODO: No support for alternative plate weighting
         plate = tensor.get_plate(tensor.name)
-        f_z, f_z_tilde = storch.util.split(cost_node, plate, amt_slices=2)
-        z, _ = storch.util.split(tensor, plate, amt_slices=2)
+        index = tensor.get_plate_dim_index(plate.name)
+        log_prob, baseline = self.comp_estimator(
+            tensor, cost, tensor.distribution.logits, index, plate.n // 2
+        )
 
-        avg_cost = 0.5 * (f_z - f_z_tilde)
-        logistic = Logistic(tensor.distribution.logits, 1.0)
-        log_prob = logistic.log_prob(z.detach())
-        log_prob = log_prob.sum(dim=log_prob.event_dim_indices)
-        return avg_cost.detach() * log_prob
+        return 0.5 * log_prob.sum(log_prob.event_dim_indices), baseline, None
 
 
 class DisARM(Method):
@@ -131,18 +148,39 @@ class DisARM(Method):
     ) -> bool:
         return True
 
+    @storch.deterministic
+    def comp_estimator(
+        self, tensor: StochasticTensor, cost: CostTensor, logits, plate_index, n
+    ) -> Tuple[storch.Tensor, storch.Tensor]:
+        _index1 = (None,) * plate_index + (slice(n),)
+        _index2 = (None,) * plate_index + (slice(n, 2 * n),)
+        f_z_tilde = cost[_index2]
+        b = tensor[_index1]
+        b_tilde = tensor[_index2]
+
+        weighting = ((-1) ** b_tilde.float()) * ~b.eq(b_tilde) * logits.abs().sigmoid()
+        log_prob = torch.zeros_like(tensor, dtype=cost.dtype)
+        log_prob[_index1] = weighting.detach() * logits
+
+        baseline = torch.zeros_like(cost)
+        baseline[_index1] = f_z_tilde
+
+        return log_prob, baseline
+
     def estimator(
-        self, tensor: storch.StochasticTensor, cost_node: storch.CostTensor
-    ) -> Optional[storch.Tensor]:
+        self, tensor: StochasticTensor, cost: CostTensor
+    ) -> Tuple[
+        Optional[storch.Tensor], Optional[storch.Tensor], Optional[storch.Tensor]
+    ]:
         # TODO: No support for alternative plate weighting
         plate = tensor.get_plate(tensor.name)
-        f_b, f_b_tilde = storch.util.split(cost_node, plate, amt_slices=2)
-        b, b_tilde = storch.util.split(tensor, plate, amt_slices=2)
+        index = tensor.get_plate_dim_index(plate.name)
+        multiplicative, baseline = self.comp_estimator(
+            tensor, cost, tensor.distribution.logits, index, plate.n // 2
+        )
 
-        avg_cost = 0.5 * (f_b - f_b_tilde)
-        logits = tensor.distribution.logits
-        # -b_tilde = (-1)^b_tilde if b_tilde in {0, 1}
-        weighting = -b_tilde.float() * ~b.eq(b_tilde) * logits.abs().sigmoid()
-        return ((weighting * avg_cost).detach() * logits).sum(
-            dim=logits.event_dim_indices
+        return (
+            0.5 * multiplicative.sum(dim=multiplicative.event_dim_indices),
+            baseline,
+            None,
         )

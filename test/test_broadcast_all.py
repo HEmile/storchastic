@@ -7,7 +7,9 @@ class TensorLike:
 
 
 tensor = torch.tensor([1.2, 3.4, 5.6])
-tensor.expand_as(TensorLike())
+tensor_like = TensorLike()
+# tensor.expand_as(TensorLike())
 from torch.distributions import Normal
 
-Normal(loc=TensorLike(), scale=1)
+# Normal(loc=TensorLike(), scale=1)
+tensor_like + tensor

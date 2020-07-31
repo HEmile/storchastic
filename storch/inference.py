@@ -216,7 +216,7 @@ def backward(
                 additive_estimator,
             ) = parent.method._estimator(new_parent, reduced_cost)
 
-            _additive_loss = 0
+            _additive_loss = 0.0
             if multiplicative_estimator is not None:
                 tau_box += multiplicative_estimator
                 if baseline is not None:
@@ -227,15 +227,13 @@ def backward(
             if additive_estimator is not None:
                 _additive_loss += additive_estimator - additive_estimator.detach()
 
-            # The backwards call for reparameterization happens in the
-            # backwards call for the costs themselves.
-            # Now mean_cost has the same shape as parent.batch_shape
-            final_additive_loss = storch.reduce_plates(
-                _additive_loss, detach_weights=True
-            )
-            if final_additive_loss.ndim == 1:
-                final_additive_loss = final_additive_loss.squeeze(0)
-            cost_loss += final_additive_loss
+            if baseline is not None or additive_estimator is not None:
+                final_additive_loss = storch.reduce_plates(
+                    _additive_loss, detach_weights=True
+                )
+                if final_additive_loss.ndim == 1:
+                    final_additive_loss = final_additive_loss.squeeze(0)
+                cost_loss += final_additive_loss
         cost_loss += storch.reduce_plates(magic_box(tau_box) * c, detach_weights=False)
         total_cost += cost_loss
 
@@ -249,15 +247,15 @@ def backward(
 
     if not create_graph:
         total_cost._clean()
+        total_cost.grad_fn = None
         reset()
 
-    # TODO: How much does accum_loss really say? Should we really keep it? We want to minimize total_cost, anyways.
-    return total_cost._tensor  # , accum_loss._tensor
+    return total_cost._tensor
 
 
 def reset():
     # Free the SC graph links. This often improves garbage collection for larger graphs.
-    # Unfortunately Python's GC seems to have imperfect cycle detection
+    # Unfortunately Python's GC seems to have imperfect cycle detection?
     for c in storch.inference._cost_tensors:
         c._clean()
 

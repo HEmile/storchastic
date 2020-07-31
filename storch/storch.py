@@ -287,7 +287,7 @@ def conditional_gumbel_rsample(
     log_v = v.log()
     # i != b (indexing could maybe be improved here, but i doubt it'd be more efficient)
     log_v_b = torch.gather(log_v, -1, b.unsqueeze(-1))
-    cond_gumbels = -(-(log_v / probs) - log_v_b).log()
+    cond_gumbels = -(-torch.div(log_v, probs) - log_v_b).log()
     # i = b
     index_sample = hard_sample.bool()
     cond_gumbels[index_sample] = -(-log_v[index_sample]).log()

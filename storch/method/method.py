@@ -65,7 +65,6 @@ class Method(ABC, torch.nn.Module):
             if isinstance(grad, tuple):
                 grad = grad[0]
 
-            # print(grad)
             if name in accum_grads:
                 accum_grads[name] = storch.Tensor(
                     accum_grads[name]._tensor + grad, [], plates, name + "_grad"
@@ -173,12 +172,6 @@ class Method(ABC, torch.nn.Module):
     ) -> Tuple[
         Optional[storch.Tensor], Optional[storch.Tensor], Optional[storch.Tensor]
     ]:
-        """
-
-        :param tensor:
-        :param cost_node:
-        :return:
-        """
         self._estimation_pairs.append((tensor, cost_node))
         return self.estimator(tensor, cost_node)
 
@@ -269,10 +262,12 @@ class Infer(Method):
         self._score_method = ScoreFunction(plate_name, sampling_method, n_samples)
         self._method = _method
 
-    def multiplicative_estimator(
+    def estimator(
         self, tensor: StochasticTensor, cost_node: CostTensor
-    ) -> Optional[torch.Tensor]:
-        return self._score_method.multiplicative_estimator(tensor, cost_node)
+    ) -> Tuple[
+        Optional[storch.Tensor], Optional[storch.Tensor], Optional[storch.Tensor]
+    ]:
+        return self._score_method.estimator(tensor, cost_node)
 
     def update_parameters(
         self, result_triples: [(StochasticTensor, CostTensor, torch.Tensor)]
@@ -534,24 +529,25 @@ class ScoreFunction(Method):
             else:
                 raise ValueError("Invalid baseline name", baseline_factory)
 
-    def multiplicative_estimator(
+    def estimator(
         self, tensor: StochasticTensor, cost: CostTensor
-    ) -> storch.Tensor:
+    ) -> Tuple[
+        Optional[storch.Tensor], Optional[storch.Tensor], Optional[storch.Tensor]
+    ]:
         log_prob = tensor.distribution.log_prob(tensor)
         if len(log_prob.shape) > tensor.plate_dims:
             # Sum out over the event shape
             log_prob = log_prob.sum(
                 dim=list(range(tensor.plate_dims, len(log_prob.shape)))
             )
-
+        baseline = None
         if self.baseline_factory:
             baseline_name = "_b_" + tensor.name + "_" + cost.name
             if not hasattr(self, baseline_name):
                 setattr(self, baseline_name, self.baseline_factory(tensor, cost))
             baseline = getattr(self, baseline_name)
-            cost = cost - baseline.compute_baseline(tensor, cost)
-        # print(cost)
-        return log_prob * cost.detach()
+            baseline = baseline.compute_baseline(tensor, cost)
+        return log_prob, baseline, None
 
     def adds_loss(self, tensor: StochasticTensor, cost_node: CostTensor) -> bool:
         return True
