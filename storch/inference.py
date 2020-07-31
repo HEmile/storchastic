@@ -111,7 +111,10 @@ def magic_box(tau: storch.Tensor):
 
 
 def backward(
-    retain_graph: bool = False, debug: bool = False, print_costs: bool = False
+    retain_graph: bool = False,
+    debug: bool = False,
+    create_graph: bool = False,
+    update_estimator_params: bool = True,
 ) -> torch.Tensor:
     """
     Computes the gradients of the cost nodes with respect to the parameter nodes. It uses the storch
@@ -123,6 +126,7 @@ def backward(
         accum_grads: Saves gradient information in stochastic nodes. Note that this is an expensive option as it
         requires doing O(n) backward calls for each stochastic node sampled multiple times. Especially if this is a
         hierarchy of multiple samples.
+        create_graph (bool): Creates the backpropagation graph of the gradient estimation for higher-order derivatives
     Returns:
         torch.Tensor: The average total cost normalized by the sampling weights.
     """
@@ -150,7 +154,7 @@ def backward(
         # if reduced_cost.requires_grad:
         #     accum_loss += reduced_cost
 
-        tau_box = 0.0
+        tau_box = c._tensor.new_tensor(0.0)
         cost_loss = 0.0
         for parent in c.walk_parents(depth_first=False):
             # Instance check here instead of parent.stochastic, as backward methods are only used on these.
@@ -158,13 +162,13 @@ def backward(
                 stochastic_nodes.add(parent)
             else:
                 continue
-            if (
-                not parent.requires_grad
-                or not parent.method
-                or not parent.method.adds_loss(parent, c)
-            ):
+            if not parent.requires_grad or not parent.method:
                 continue
-
+            create_graph = (
+                parent.method.should_create_higher_order_graph() or create_graph
+            )
+            if not parent.method.adds_loss(parent, c):
+                continue
             # Transpose the parent stochastic tensor, so that its shape is the same as the cost but the event shape, and
             # possibly extra dimensions...?
             parent_tensor = parent._tensor
@@ -199,6 +203,7 @@ def backward(
                 parent._requires_grad,
                 parent.method,
             )
+            new_parent.param_grads = parent.param_grads
             # Fake the new parent to be the old parent within the graph by mimicking its place in the graph
             new_parent._parents = parent._parents
             for p, has_link in new_parent._parents:
@@ -221,7 +226,7 @@ def backward(
                     )
 
             if additive_estimator is not None:
-                _additive_loss += 1 - magic_box(-additive_estimator)
+                _additive_loss += additive_estimator - additive_estimator.detach()
 
             # The backwards call for reparameterization happens in the
             # backwards call for the costs themselves.
@@ -232,21 +237,19 @@ def backward(
             if final_additive_loss.ndim == 1:
                 final_additive_loss = final_additive_loss.squeeze(0)
             cost_loss += final_additive_loss
-        if not isinstance(tau_box, float):
-            cost_loss += storch.reduce_plates(
-                magic_box(tau_box) * costs, detach_weights=False
-            )
+        cost_loss += storch.reduce_plates(magic_box(tau_box) * c, detach_weights=False)
         total_cost += cost_loss
 
     if isinstance(total_cost, storch.Tensor) and total_cost._tensor.requires_grad:
-        total_cost._tensor.backward(retain_graph=retain_graph)
+        total_cost._tensor.backward(create_graph=create_graph)
 
-    for s_node in stochastic_nodes:
-        if s_node.method:
-            s_node.method._update_parameters()
+    if update_estimator_params:
+        for s_node in stochastic_nodes:
+            if s_node.method:
+                s_node.method._update_parameters()
 
     if not retain_graph:
-        accum_loss._clean()
+        total_cost._clean()
         reset()
 
     # TODO: How much does accum_loss really say? Should we really keep it? We want to minimize total_cost, anyways.
