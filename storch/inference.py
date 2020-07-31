@@ -111,7 +111,6 @@ def magic_box(tau: storch.Tensor):
 
 
 def backward(
-    retain_graph: bool = False,
     debug: bool = False,
     create_graph: bool = False,
     update_estimator_params: bool = True,
@@ -121,7 +120,6 @@ def backward(
     methods used to sample stochastic nodes to properly estimate their gradient.
 
     Args:
-        retain_graph (bool): If set to False, it will deregister the added cost nodes. Should usually be set to False.
         debug: Prints debug information on the backwards call.
         accum_grads: Saves gradient information in stochastic nodes. Note that this is an expensive option as it
         requires doing O(n) backward calls for each stochastic node sampled multiple times. Especially if this is a
@@ -141,6 +139,7 @@ def backward(
     total_cost = 0.0
 
     stochastic_nodes = set()
+    _create_graph = create_graph
     # Loop over different cost nodes
     for c in costs:
         # Do not detach the weights when reducing. This is used in for example expectations to weight the
@@ -164,8 +163,8 @@ def backward(
                 continue
             if not parent.requires_grad or not parent.method:
                 continue
-            create_graph = (
-                parent.method.should_create_higher_order_graph() or create_graph
+            _create_graph = (
+                parent.method.should_create_higher_order_graph() or _create_graph
             )
             if not parent.method.adds_loss(parent, c):
                 continue
@@ -241,14 +240,14 @@ def backward(
         total_cost += cost_loss
 
     if isinstance(total_cost, storch.Tensor) and total_cost._tensor.requires_grad:
-        total_cost._tensor.backward(create_graph=create_graph)
+        total_cost._tensor.backward(create_graph=_create_graph)
 
     if update_estimator_params:
         for s_node in stochastic_nodes:
             if s_node.method:
                 s_node.method._update_parameters()
 
-    if not retain_graph:
+    if not create_graph:
         total_cost._clean()
         reset()
 
