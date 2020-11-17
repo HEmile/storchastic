@@ -5,10 +5,11 @@ Discrete Variational Autoencoder
         import torch
         import torch.nn as nn
         import storch
+        from storch.method import ScoreFunction
 
         class DiscreteVAE(nn.Module):
             def __init__(self):
-                self.method = storch.ScoreFunction(baseline_factory="batch_average")
+                self.method = ScoreFunction("z", 8, baseline_factory="batch_average")
                 self.fc1 = nn.Linear(784, 512)
                 self.fc2 = nn.Linear(512, 256)
                 self.fc3 = nn.Linear(256, 20 * 10)
@@ -63,7 +64,7 @@ Discrete Variational Autoencoder
         import storch
         from vae import minibatches, encode, decode, KLD
 
-        method = storch.ScoreFunction("z", 8, baseline_factory="batch_average")
+        method = storch.method.ScoreFunction("z", 8, baseline_factory="batch_average")
         for data in minibatches():
             optimizer.zero_grad()
             # Denote the minibatch dimension as being independent

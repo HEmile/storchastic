@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Tuple
 
 import storch
 from storch.method.method import Method
@@ -72,9 +72,11 @@ class UnorderedSetEstimator(Method):
                 )
         return False
 
-    def multiplicative_estimator(
+    def estimator(
         self, tensor: storch.StochasticTensor, cost_node: storch.CostTensor
-    ) -> Optional[storch.Tensor]:
+    ) -> Tuple[
+        Optional[storch.Tensor], Optional[storch.Tensor], Optional[storch.Tensor]
+    ]:
         # Note: We automatically multiply with leave-one-out ratio in the plate reduction
         plate = None
         for _p in cost_node.plates:
@@ -93,8 +95,7 @@ class UnorderedSetEstimator(Method):
         baseline = storch.Tensor(
             baseline._tensor, [baseline], baseline.plates + [plate]
         )
-        advantage = cost_node - baseline
-        return plate.log_probs * advantage.detach()
+        return (plate.log_probs, baseline.detach(), None)
 
 
 class UnorderedSetGumbelSoftmax(Method):
