@@ -83,7 +83,7 @@ def _handle_inputs(
             r_plates.append(plate)
         else:
             r_plates.append(tensor.get_plate(plate))
-    return tensor, plates
+    return tensor, r_plates
 
 
 def gather(input: storch.Tensor, dim: str, index: storch.Tensor):
