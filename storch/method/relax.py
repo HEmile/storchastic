@@ -31,12 +31,12 @@ class Baseline(torch.nn.Module):
         if not isinstance(in_dim, int):
             self.reshape = True
             in_dim = reduce(mul, in_dim)
-
+        self.in_dim = in_dim
         self.fc1 = torch.nn.Linear(in_dim, 50)
         self.fc2 = torch.nn.Linear(50, 1)
 
     def forward(self, x: storch.Tensor):
-        if self.reshape or x.event_dims == 0:
+        if self.reshape or self.in_dim <= 1:
             x = x.reshape(x.shape[: x.plate_dims] + (-1,))
         return self.fc2(F.relu(self.fc1(x))).squeeze(-1)
 
@@ -256,7 +256,7 @@ class RELAX(Method):
             # Return H(z) for the function evaluation if using RELAX
             return discretize(tensor, tensor.distribution)
 
-    @storch.deterministic
+    # @storch.deterministic
     def compute_estimator(
         self, tensor: StochasticTensor, cost: CostTensor, plate_index, n, distribution
     ):
@@ -332,19 +332,20 @@ class RELAX(Method):
         # We don't want to minimize wrt to that loss, but to the one we define here.
         for param in self.control_params:
             param.grad = None
-        # # TODO: Find grad of the distribution, then compute variance.
+        # Find grad of the distribution, then compute variance.
         tensors = []
         for tensor, _ in result_triples:
             if tensor not in tensors:
                 tensors.append(tensor)
         # minimize the variance of the gradient with respect to the input parameters
         for tensor in tensors:
-            d_param = next(iter(tensor.grad.values()))
+            # TODO: We have to select the probs of the distribution here as that's what it flows to. Is this always correct?
+            d_param = tensor.grad['probs']
             variance = (d_param ** 2).sum(d_param.event_dim_indices)
             var_loss = storch.reduce_plates(variance)
 
             d_variance = torch.autograd.grad(
-                [var_loss._tensor], self.control_params, retain_graph=True,
+                [var_loss._tensor], self.control_params, retain_graph=True, allow_unused=True
             )
             for i in range(len(self.control_params)):
                 self.control_params[i].backward(d_variance[i])

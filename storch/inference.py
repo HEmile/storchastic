@@ -100,14 +100,14 @@ def add_cost(cost: Tensor, name: str):
     return cost
 
 
-def magic_box(tau: storch.Tensor):
+def magic_box(l: storch.Tensor):
     """
     Implements the MagicBox operator from
     DiCE: The Infinitely Differentiable Monte-Carlo Estimator https://arxiv.org/abs/1802.05098
-    It returns 1 in the forward pass, but returns magic_box(tau) \cdot r in the backwards pass.
+    It returns 1 in the forward pass, but returns magic_box(l) \cdot r in the backwards pass.
     This allows for any-order gradient estimation.
     """
-    return (tau - tau.detach()).exp()
+    return (l - l.detach()).exp()
 
 
 def backward(
@@ -153,7 +153,7 @@ def backward(
         # if reduced_cost.requires_grad:
         #     accum_loss += reduced_cost
 
-        tau_box = c._tensor.new_tensor(0.0)
+        L = c._tensor.new_tensor(0.0)
         cost_loss = 0.0
         for parent in c.walk_parents(depth_first=False):
             # Instance check here instead of parent.stochastic, as backward methods are only used on these.
@@ -211,30 +211,31 @@ def backward(
 
             # Compute the estimator triple
             (
-                multiplicative_estimator,
+                # TODO: baseline shouldn't be a separate thing
+                gradient_function,
                 baseline,
-                additive_estimator,
+                control_variate,
             ) = parent.method._estimator(new_parent, reduced_cost)
 
-            _additive_loss = 0.0
-            if multiplicative_estimator is not None:
-                tau_box += multiplicative_estimator
+            _A = 0.0
+            if gradient_function is not None:
+                L += gradient_function
                 if baseline is not None:
-                    _additive_loss = baseline.detach() * (
-                        1 - magic_box(multiplicative_estimator)
+                    _A = baseline.detach() * (
+                        1 - magic_box(gradient_function)
                     )
 
-            if additive_estimator is not None:
-                _additive_loss += additive_estimator - additive_estimator.detach()
+            if control_variate is not None:
+                _A += control_variate - control_variate.detach()
 
-            if baseline is not None or additive_estimator is not None:
-                final_additive_loss = storch.reduce_plates(
-                    _additive_loss, detach_weights=True
+            if baseline is not None or control_variate is not None:
+                final_A = storch.reduce_plates(
+                    _A, detach_weights=True
                 )
-                if final_additive_loss.ndim == 1:
-                    final_additive_loss = final_additive_loss.squeeze(0)
-                cost_loss += final_additive_loss
-        cost_loss += storch.reduce_plates(magic_box(tau_box) * c, detach_weights=False)
+                if final_A.ndim == 1:
+                    final_A = final_A.squeeze(0)
+                cost_loss += final_A
+        cost_loss += storch.reduce_plates(magic_box(L) * c, detach_weights=False)
         total_cost += cost_loss
 
     if isinstance(total_cost, storch.Tensor) and total_cost._tensor.requires_grad:

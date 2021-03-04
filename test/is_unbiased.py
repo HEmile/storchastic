@@ -1,8 +1,6 @@
 import storch
 import torch
 from torch.distributions import Bernoulli, OneHotCategorical
-from guppy import hpy
-import gc
 
 expect = storch.method.Expect("x")
 probs = torch.tensor([0.95, 0.01, 0.01, 0.01, 0.01, 0.01], requires_grad=True)
@@ -37,7 +35,7 @@ def eval(grads):
 #     "x", baseline_factory="batch_average", n_samples=10
 # )
 # method = storch.method.ScoreFunction("x", baseline_factory="moving_average")
-method = storch.method.REBAR("x")
+method = storch.method.RELAX("x", in_dim=6)
 # method = storch.method.RELAX("x", in_dim=6)
 optim = torch.optim.SGD(method.parameters(), lr=0.000001)
 tot_bias = 0
