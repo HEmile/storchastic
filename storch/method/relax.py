@@ -36,7 +36,7 @@ class Baseline(torch.nn.Module):
         self.fc2 = torch.nn.Linear(50, 1)
 
     def forward(self, x: storch.Tensor):
-        if self.reshape:
+        if self.reshape or x.event_dims == 0:
             x = x.reshape(x.shape[: x.plate_dims] + (-1,))
         return self.fc2(F.relu(self.fc1(x))).squeeze(-1)
 
@@ -192,7 +192,7 @@ class RELAX(Method):
         elif in_dim:
             self.c_phi = Baseline(in_dim)
         else:
-            raise ValueError("Provide one of c_phi and in_dim")
+            raise ValueError("Either pass an explicit control variate c_phi or an input dimension")
 
         self.temperature = Parameter(torch.tensor(1.0))
         self.rebar = rebar

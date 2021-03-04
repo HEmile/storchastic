@@ -22,6 +22,8 @@ import storch.nn
 
 
 import torch as _torch
+import pkgutil
+import sys
 
 _debug = False
 # Hard-coded monkey patches: These do not support __torch_function__ (PyTorch version 1.5.0)
@@ -32,3 +34,16 @@ _torch.Tensor.gt = deterministic(_torch.Tensor.gt)
 # Cat currently does not support __torch_function__ https://github.com/pytorch/pytorch/issues/34294.
 # However, monkey patching it makes storchastic incompatible with torchvision. Use storch.cat or storch.gather_samples instead
 # _torch.cat = deterministic(_torch.cat)
+
+# broadcast_all is not compatible with Tensor-likes... But a lot of Distributions code depends on it.
+# Monkey patch every occurence of broadcast_all in the PyTorch code.
+_torch.distributions.utils.broadcast_all = deterministic(
+    _torch.distributions.utils.broadcast_all
+)
+
+# Distributions import broadcast_all by name, meaning they refer to the non-monkey patched version.
+# Loop over every distribution to apply the monkey patch.
+for module_info in pkgutil.iter_modules(_torch.distributions.__path__):
+    module = sys.modules.get("torch.distributions." + module_info.name)
+    if "broadcast_all" in module.__dict__:
+        module.broadcast_all = _torch.distributions.utils.broadcast_all

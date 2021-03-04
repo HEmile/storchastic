@@ -31,6 +31,7 @@ sequence models.
 `pip install storchastic`
 
 **Requires** Pytorch 1.5 (older versions will not do!) and [Pyro](http://pyro.ai). The code is build on Python 3.7.
+The master branch works with PyTorch 1.7, but the version on pip is not compatible. Binaries will be updated soon.
 
 ## Algorithms
 Feel free to create an issue if an estimator is missing here.
