@@ -17,6 +17,7 @@ from .util import print_graph
 
 from .unique import unique, undo_unique
 from .exceptions import IllegalStorchExposeError
+from packaging import version
 
 import storch.nn
 
@@ -37,9 +38,11 @@ _torch.Tensor.gt = deterministic(_torch.Tensor.gt)
 
 # broadcast_all is not compatible with Tensor-likes... But a lot of Distributions code depends on it.
 # Monkey patch every occurence of broadcast_all in the PyTorch code.
-_torch.distributions.utils.broadcast_all = deterministic(
-    _torch.distributions.utils.broadcast_all
-)
+# This should not be necessesary from PyTorch 1.8.0. See https://github.com/pytorch/pytorch/pull/48169
+if version.parse(torch.__version__) < version.parse("1.8.0"):
+    _torch.distributions.utils.broadcast_all = deterministic(
+        _torch.distributions.utils.broadcast_all
+    )
 
 # Distributions import broadcast_all by name, meaning they refer to the non-monkey patched version.
 # Loop over every distribution to apply the monkey patch.
@@ -47,3 +50,7 @@ for module_info in pkgutil.iter_modules(_torch.distributions.__path__):
     module = sys.modules.get("torch.distributions." + module_info.name)
     if "broadcast_all" in module.__dict__:
         module.broadcast_all = _torch.distributions.utils.broadcast_all
+
+# Validating arguments is not compatible with Storchastic as it does instanceof torch.Tensor checks
+# Necessary for PyTorch versions above 1.8.0
+_torch.distributions.Distribution.set_default_validate_args(False)
