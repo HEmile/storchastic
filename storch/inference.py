@@ -219,7 +219,7 @@ def backward(
 
             _A = 0.0
             if gradient_function is not None:
-                L += gradient_function
+                L = L + gradient_function
                 if baseline is not None:
                     _A = baseline.detach() * (
                         1 - magic_box(gradient_function)
