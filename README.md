@@ -72,3 +72,14 @@ Feel free to create an issue if an estimator is missing here.
 - [14] [Measure-Valued Derivatives for Approximate Bayesian Inference](http://bayesiandeeplearning.org/2019/papers/76.pdf), Rosca et al, Workshop on Bayesian Deep Learning (NeurIPS 2019)
 - [15] [ARM: Augment-REINFORCE-Merge Gradient for Stochastic Binary Networks](https://arxiv.org/abs/1807.11143), Yin and Zhou, ICLR 2019
 - [16] [Credit Assignment Techniques in Stochastic Computation Graphs](https://arxiv.org/abs/1901.01761), Weber et al, AISTATS 2019
+
+## Cite
+To cite Storchastic, please cite this preprint:
+```
+@article{van2021storchastic,
+  title={Storchastic: A Framework for General Stochastic Automatic Differentiation},
+  author={van Krieken, Emile and Tomczak, Jakub M and Teije, Annette ten},
+  journal={arXiv preprint arXiv:2104.00428},
+  year={2021}
+}
+```
