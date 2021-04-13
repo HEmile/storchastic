@@ -3,10 +3,11 @@ from torch.distributions import Distribution, OneHotCategorical, Bernoulli, Cate
 
 from storch.tensor import CostTensor, StochasticTensor, Plate
 import torch
-from typing import Optional, Type, Union, Dict, List, Callable
+from typing import Optional, Type, Union, Dict, List, Callable, Tuple
 from storch.util import (
     has_differentiable_path,
     get_distr_parameters,
+    rsample_gumbel_softmax,
     rsample_gumbel,
 )
 import storch
@@ -16,6 +17,7 @@ from storch.sampling import (
     MonteCarlo,
     Enumerate,
 )
+import entmax
 
 
 class Method(ABC, torch.nn.Module):
@@ -63,7 +65,6 @@ class Method(ABC, torch.nn.Module):
             if isinstance(grad, tuple):
                 grad = grad[0]
 
-            # print(grad)
             if name in accum_grads:
                 accum_grads[name] = storch.Tensor(
                     accum_grads[name]._tensor + grad, [], plates, name + "_grad"
@@ -168,35 +169,40 @@ class Method(ABC, torch.nn.Module):
 
     def _estimator(
         self, tensor: StochasticTensor, cost_node: CostTensor
-    ) -> Optional[storch.Tensor]:
-        """
-
-        :param tensor:
-        :param cost_node:
-        :return:
-        """
+    ) -> Tuple[
+        Optional[storch.Tensor], Optional[storch.Tensor], Optional[storch.Tensor]
+    ]:
         self._estimation_pairs.append((tensor, cost_node))
         return self.estimator(tensor, cost_node)
 
-    def _update_parameters(self):
-        self.iterations += 1
-        self.update_parameters(self._estimation_pairs)
-        self._estimation_pairs = []
-
     def estimator(
         self, tensor: StochasticTensor, cost_node: CostTensor
-    ) -> Optional[storch.Tensor]:
+    ) -> Tuple[
+        Optional[storch.Tensor], Optional[storch.Tensor], Optional[storch.Tensor]
+    ]:
         """
-        Returns the surrogate loss of this estimator, if it adds one. A method such as :class:`storch.method.Reparameterization`
-        will not add a surrogate loss.
+        Returns three terms that will be used for inferring higher-order gradient estimates.
+        - The first return is the multiplicative estimator. It will be multiplied with the cost function.
+          To get correct, unbiased estimates, the cost_node should not be involved in the computation.
+          In REINFORCE-based methods, this is usually the score function.
+          Methods that do not use a multiplicative estimator can return None.
+        - The second return is the baseline. It will be multiplied with the multiplicative estimator.
+        - The third return is a function that will be differentiated to estimate the gradient.
+
+        It is also possible to directly do a backwards call in this method, but this will prevent correct computation of
+        higher-order derivatives.
 
         Note that this method is only called if :meth:`adds_loss` returns True.
 
         Args:
             tensor (storch.StochasticTensor): The sampled tensor to find the surrogate loss for.
-            cost_node (storch.CostTensor):
         """
-        return None
+        return None, None, None
+
+    def _update_parameters(self):
+        self.iterations += 1
+        self.update_parameters(self._estimation_pairs)
+        self._estimation_pairs = []
 
     def update_parameters(
         self, result_triples: [(StochasticTensor, CostTensor)]
@@ -219,6 +225,9 @@ class Method(ABC, torch.nn.Module):
         called. Can be used to reset this methods state to some initial state that has to happen every iteration. 
         """
         self.sampling_method.reset()
+
+    def should_create_higher_order_graph(self) -> bool:
+        return False
 
 
 class Infer(Method):
@@ -255,7 +264,9 @@ class Infer(Method):
 
     def estimator(
         self, tensor: StochasticTensor, cost_node: CostTensor
-    ) -> Optional[torch.Tensor]:
+    ) -> Tuple[
+        Optional[storch.Tensor], Optional[storch.Tensor], Optional[storch.Tensor]
+    ]:
         return self._score_method.estimator(tensor, cost_node)
 
     def update_parameters(
@@ -349,7 +360,7 @@ class GumbelSoftmax(Method):
         plates: [Plate],
         amt_samples: int,
     ):
-        return rsample_gumbel(
+        return rsample_gumbel_softmax(
             distr, amt_samples, self.temperature, self.straight_through
         )
 
@@ -361,6 +372,115 @@ class GumbelSoftmax(Method):
             "There is no differentiable path between the cost tensor and the stochastic tensor. "
             "We cannot use reparameterization. Use a different gradient estimator, or make sure your"
             "code is differentiable."
+        )
+
+    def update_parameters(
+        self, result_triples: [(StochasticTensor, CostTensor)]
+    ) -> None:
+        if self.temperature > self.min_temperature:
+            self.temperature = (1 - self.annealing_rate) * self.temperature
+
+
+class GumbelEntmax(Method):
+    def __init__(
+        self,
+        plate_name: str,
+        sampling_method: Optional[storch.sampling.SamplingMethod] = None,
+        alpha: float = 1.5,
+        adaptive=False,
+        n_samples: int = 1,
+        straight_through=False,
+        initial_temperature=1.0,
+        min_temperature=1.0e-4,
+        annealing_rate=0.0,
+    ):
+        if not sampling_method:
+            sampling_method = storch.sampling.MonteCarlo(plate_name, n_samples)
+        super().__init__(
+            plate_name, sampling_method.set_mc_sample(self.sample_gumbel_entmax),
+        )
+        self.adaptive = adaptive
+        self.straight_through = straight_through
+        self.register_buffer("temperature", torch.tensor(initial_temperature))
+        self.register_buffer("annealing_rate", torch.tensor(annealing_rate))
+        self.register_buffer("min_temperature", torch.tensor(min_temperature))
+        self.alpha = alpha
+        if adaptive:
+            self.alpha = torch.nn.Parameter(
+                torch.tensor(self.alpha, requires_grad=True)
+            )
+        if not adaptive and alpha == 1.5:
+            self.entmax = entmax.entmax15
+        elif not adaptive and alpha == 2.0:
+            self.entmax = entmax.sparsemax
+        else:
+            if adaptive:
+                self.entmax = lambda x: entmax.entmax_bisect(
+                    x, torch.nn.functional.softplus(self.alpha - 1) + 1
+                )
+            else:
+                self.entmax = lambda x: entmax.entmax_bisect(x, self.alpha)
+
+    def sample_gumbel_entmax(
+        self,
+        distr: torch.distributions.Distribution,
+        parents: [storch.Tensor],
+        plates: [storch.Plate],
+        amt_samples: int,
+    ):
+        import random
+
+        # if random.randint(0, 10) == 0:
+        #     print(torch.nn.functional.softplus(self.alpha - 1) + 1)
+        gumbels = rsample_gumbel(distr, amt_samples)
+        res = self.entmax(gumbels / self.temperature)
+        return res
+
+    def adds_loss(
+        self, tensor: storch.StochasticTensor, cost_node: storch.CostTensor
+    ) -> bool:
+        if has_differentiable_path(cost_node, tensor):
+            # There is a differentiable path, so we will just use reparameterization here.
+            return False
+        raise ValueError(
+            "There is no differentiable path between the cost tensor and the stochastic tensor. "
+            "We cannot use reparameterization. Use a different gradient estimator, or make sure your"
+            "code is differentiable."
+        )
+
+    def update_parameters(
+        self, result_triples: [(storch.StochasticTensor, storch.CostTensor)]
+    ) -> None:
+        if self.temperature > self.min_temperature:
+            self.temperature = (1 - self.annealing_rate) * self.temperature
+
+
+class GumbelSparseMax(GumbelEntmax):
+    """
+    Method that implements the Gumbel Sparsemax relaxation with temperature annealing.
+    Can only be used to find the derivative when all paths to the cost nodes are differentiable.
+    Introduced in Appendix of Gradient Estimation with Stochastic Softmax Tricks https://arxiv.org/abs/2006.08063
+    """
+
+    def __init__(
+        self,
+        plate_name: str,
+        sampling_method: Optional[storch.sampling.SamplingMethod] = None,
+        n_samples: int = 1,
+        straight_through=False,
+        initial_temperature=1.0,
+        min_temperature=1.0e-4,
+        annealing_rate=0.0,
+    ):
+        super().__init__(
+            plate_name,
+            sampling_method,
+            2.0,
+            n_samples=n_samples,
+            straight_through=straight_through,
+            initial_temperature=initial_temperature,
+            min_temperature=min_temperature,
+            annealing_rate=annealing_rate,
         )
 
 
@@ -409,22 +529,25 @@ class ScoreFunction(Method):
             else:
                 raise ValueError("Invalid baseline name", baseline_factory)
 
-    def estimator(self, tensor: StochasticTensor, cost: CostTensor) -> storch.Tensor:
+    def estimator(
+        self, tensor: StochasticTensor, cost: CostTensor
+    ) -> Tuple[
+        Optional[storch.Tensor], Optional[storch.Tensor], Optional[storch.Tensor]
+    ]:
         log_prob = tensor.distribution.log_prob(tensor)
         if len(log_prob.shape) > tensor.plate_dims:
             # Sum out over the event shape
             log_prob = log_prob.sum(
                 dim=list(range(tensor.plate_dims, len(log_prob.shape)))
             )
-
+        baseline = None
         if self.baseline_factory:
             baseline_name = "_b_" + tensor.name + "_" + cost.name
             if not hasattr(self, baseline_name):
                 setattr(self, baseline_name, self.baseline_factory(tensor, cost))
             baseline = getattr(self, baseline_name)
-            cost = cost - baseline.compute_baseline(tensor, cost)
-        # print(cost)
-        return log_prob * cost.detach()
+            baseline = baseline.compute_baseline(tensor, cost)
+        return log_prob, baseline, None
 
     def adds_loss(self, tensor: StochasticTensor, cost_node: CostTensor) -> bool:
         return True

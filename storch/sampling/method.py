@@ -44,6 +44,11 @@ class SamplingMethod(ABC, torch.nn.Module):
         of the different events, like importance sampling or computing the expectation.
         If None is returned, it is assumed the samples are iid monte carlo samples.
         """
+        return self.mc_plate_weighting(tensor, plate)
+
+    def mc_plate_weighting(
+        self, tensor: storch.StochasticTensor, plate: Plate
+    ) -> Optional[storch.Tensor]:
         return None
 
     def update_parameters(
@@ -74,6 +79,21 @@ class SamplingMethod(ABC, torch.nn.Module):
         This allows for compatibility of different `storch.Method`'s with different `storch.sampling.Method`'s.
         """
         self.mc_sample = new_sample_func
+        return self
+
+    def set_mc_plate_weighting(
+        self,
+        new_weighting_func: Callable[
+            [storch.StochasticTensor, Plate], Optional[storch.Tensor]
+        ],
+    ) -> SamplingMethod:
+        """
+        Override storch.Method specific weighting functions.
+        This is called when initializing a storch.Method that has slightly different MC weighting semantics
+        (for example, REBAR that weights some samples differently).
+        This allows for compatibility of different `storch.Method`'s with different `storch.sampling.Method`'s.
+        """
+        self.mc_plate_weighting = new_weighting_func
         return self
 
     def on_plate_already_present(self, plate: Plate):

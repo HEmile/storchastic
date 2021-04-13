@@ -6,8 +6,15 @@ from storch import deterministic
 from torch._C import _infer_size
 import torch.nn.functional as F
 
+
 @deterministic(unwrap=False)
-def b_binary_cross_entropy(input: storch.Tensor, target: storch.Tensor, dims: Union[str, List[str]] = None, weight=None, reduction: str = 'mean'):
+def b_binary_cross_entropy(
+    input: storch.Tensor,
+    target: storch.Tensor,
+    dims: Union[str, List[str]] = None,
+    weight=None,
+    reduction: str = "mean",
+):
     r"""Function that measures the Binary Cross Entropy in a batched way
     between the target and the output.
 
@@ -39,10 +46,12 @@ def b_binary_cross_entropy(input: storch.Tensor, target: storch.Tensor, dims: Un
         dims = [dims]
 
     target = target.expand_as(input)
-    unreduced = deterministic(F.binary_cross_entropy)(input, target, weight, reduction="none")
+    unreduced = deterministic(F.binary_cross_entropy)(
+        input, target, weight, reduction="none"
+    )
 
     # unreduced = _loss(input, target, weight)
-    indices = list(unreduced.event_dim_indices()) + dims
+    indices = list(unreduced.event_dim_indices) + dims
 
     if reduction == "mean":
         return storch.mean(unreduced, indices)

@@ -3,7 +3,7 @@ import torch
 import storch
 from torch.distributions import Distribution
 from collections import deque
-from typing import List, Iterable, Any, Callable, Iterator
+from typing import List, Iterable, Any, Callable, Iterator, Dict
 import builtins
 from itertools import product
 from typing import Optional
@@ -106,7 +106,14 @@ class Plate:
             bool: True if this plate should remain in the collected plates.
 
         """
+        for plate in plates:
+            if plate.name == self.name and plate != self:
+                if not plate.on_duplicate_plate(self):
+                    return False
         return True
+
+    def on_duplicate_plate(self, plate: Plate) -> bool:
+        raise ValueError("")
 
     def on_unwrap_tensor(self, tensor: storch.Tensor) -> storch.Tensor:
         """
@@ -240,6 +247,8 @@ class Tensor:
             return storch.wrappers._handle_deterministic(
                 func, args, kwargs, expand_plates=True
             )
+        # if func_name in unwrap_only_methods:
+        #     return storch.wrappers._unpack_wrapper(func)(*args, *kwargs)
 
         return storch.wrappers._handle_deterministic(func, args, kwargs)
 
@@ -262,6 +271,8 @@ class Tensor:
                 )
             if func_name in excluded_methods:
                 return attr
+            # if func_name in unwrap_only_methods:
+            #     return storch.wrappers._unpack_wrapper(attr, self=self)
             return storch.wrappers._self_deterministic(attr, self)
 
     @property
@@ -472,6 +483,7 @@ class Tensor:
     def register_hook(self, hook: Callable) -> Any:
         return self._tensor.register_hook(hook)
 
+    @property
     def event_dim_indices(self):
         return range(self.plate_dims, self._tensor.dim())
 
@@ -532,13 +544,6 @@ class Tensor:
             "Pickle is currently not implemented for storch tensors."
         )
 
-    def __and__(self, other):
-        if isinstance(other, bool):
-            raise IllegalStorchExposeError(
-                "Calling 'and' with a bool exposes the underlying tensor as a bool."
-            )
-        return storch.deterministic(self._tensor.__and__)(other)
-
     def __bool__(self):
         raise IllegalStorchExposeError(
             "It is not allowed to convert storch tensors to boolean. Make sure to unwrap "
@@ -598,109 +603,122 @@ class Tensor:
     def detach_(self) -> Tensor:
         raise NotImplementedError("In place detach is not allowed on storch tensors.")
 
-    @storch.deterministic
     def __add__(self, other):
-        return self.__add__(other)
+        return torch.add(self, other)
 
-    @storch.deterministic
     def __radd__(self, other):
-        return self.__radd__(other)
+        return torch.add(other, self)
 
-    @storch.deterministic
     def __sub__(self, other):
-        return self.__sub__(other)
+        return torch.sub(self, other)
 
-    @storch.deterministic
     def __rsub__(self, other):
-        return self.__rsub__(other)
+        return torch.sub(other, self)
 
-    @storch.deterministic
     def __mul__(self, other):
-        return self.__mul__(other)
+        return torch.mul(self, other)
 
-    @storch.deterministic
     def __rmul__(self, other):
-        return self.__rmul__(other)
+        return torch.mul(other, self)
 
-    @storch.deterministic
     def __matmul__(self, other):
-        return self.__matmul__(other)
+        return torch.matmul(self, other)
 
-    @storch.deterministic
+    def __rmatmul__(self, other):
+        return torch.matmul(other, self)
+
     def __pow__(self, other):
-        return self.__pow__(other)
+        return torch.pow(self, other)
 
-    @storch.deterministic
+    def __rpow__(self, other):
+        return torch.pow(other, self)
+
     def __div__(self, other):
-        return self.__div__(other)
+        return torch.div(self, other)
 
-    @storch.deterministic
+    def __rdiv__(self, other):
+        return torch.div(other, self)
+
     def __mod__(self, other):
-        return self.__mod__(other)
+        return torch.remainder(self, other)
 
-    @storch.deterministic
+    def __rmod__(self, other):
+        return torch.remainder(other, self)
+
     def __truediv__(self, other):
-        return self.__truediv__(other)
+        return torch.true_divide(self, other)
 
-    @storch.deterministic
+    def __rtruediv__(self, other):
+        return torch.true_divide(other, self)
+
     def __floordiv__(self, other):
-        return self.__floordiv__(other)
+        return torch.floor_divide(self, other)
 
-    @storch.deterministic
     def __rfloordiv__(self, other):
-        return self.__rfloordiv__(other)
+        return torch.floor_divide(other, self)
 
-    @storch.deterministic
     def __abs__(self):
-        return self.__abs__()
+        return torch.abs(self)
 
-    @storch.deterministic
     def __and__(self, other):
-        return self.__and__(other)
+        return torch.logical_and(self, other)
 
-    @storch.deterministic
+    def __rand__(self, other):
+        return torch.logical_and(other, self)
+
     def __ge__(self, other):
-        return self.__ge__(other)
+        return torch.ge(self, other)
 
-    @storch.deterministic
     def __gt__(self, other):
-        return self.__gt__(other)
+        return torch.gt(self, other)
 
     @storch.deterministic
     def __invert__(self):
         return self.__invert__()
 
-    @storch.deterministic
     def __le__(self, other):
-        return self.__le__(other)
+        return torch.le(self, other)
 
     @storch.deterministic
     def __lshift__(self, other):
         return self.__lshift__(other)
 
     @storch.deterministic
+    def __lshift__(self, other):
+        return other.__lshift__(self)
+
     def __lt__(self, other):
-        return self.__lt__(other)
+        return torch.lt(self, other)
 
-    @storch.deterministic
     def ne(self, other):
-        return self.ne(other)
+        return torch.ne(self, other)
 
-    @storch.deterministic
     def __neg__(self):
-        return self.__neg__()
+        return torch.neg(self)
 
-    @storch.deterministic
     def __or__(self, other):
-        return self.__or__(other)
+        return torch.logical_or(self, other)
+
+    def __ror__(self, other):
+        return torch.logical_or(other, self)
+
+    def __pos__(self):
+        # TODO: Is this correct?
+        return self
 
     @storch.deterministic
     def __rshift__(self, other):
         return self.__rshift__(other)
 
     @storch.deterministic
+    def __rrshift__(self, other):
+        return other.__rshift__(self)
+
     def __xor__(self, other):
-        return self.__xor__(other)
+        return torch.logical_xor(self, other)
+
+    def __rxor__(self, other):
+        return torch.logical_xor(other, self)
 
     # endregion
 
@@ -791,11 +809,18 @@ class StochasticTensor(Tensor):
         return self._requires_grad
 
     @property
-    def grad(self):
+    def grad(self) -> Dict[str, storch.Tensor]:
         return self.param_grads
 
     def _set_method(self, method: storch.method.Method):
         self.method = method
+
+    def _clean(self):
+        new_param_grads = {}
+        for name, grad in self.param_grads.items():
+            # In case higher-order derivatives are stored, remove these from the graph.
+            new_param_grads[name] = grad.detach()
+        super()._clean()
 
 
 is_tensor = lambda a: isinstance(a, torch.Tensor) or isinstance(a, Tensor)

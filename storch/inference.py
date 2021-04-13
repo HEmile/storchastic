@@ -100,19 +100,31 @@ def add_cost(cost: Tensor, name: str):
     return cost
 
 
+def magic_box(l: storch.Tensor):
+    """
+    Implements the MagicBox operator from
+    DiCE: The Infinitely Differentiable Monte-Carlo Estimator https://arxiv.org/abs/1802.05098
+    It returns 1 in the forward pass, but returns magic_box(l) \cdot r in the backwards pass.
+    This allows for any-order gradient estimation.
+    """
+    return (l - l.detach()).exp()
+
+
 def backward(
-    retain_graph: bool = False, debug: bool = False, print_costs: bool = False
+    debug: bool = False,
+    create_graph: bool = False,
+    update_estimator_params: bool = True,
 ) -> torch.Tensor:
     """
     Computes the gradients of the cost nodes with respect to the parameter nodes. It uses the storch
     methods used to sample stochastic nodes to properly estimate their gradient.
 
     Args:
-        retain_graph (bool): If set to False, it will deregister the added cost nodes. Should usually be set to False.
         debug: Prints debug information on the backwards call.
         accum_grads: Saves gradient information in stochastic nodes. Note that this is an expensive option as it
         requires doing O(n) backward calls for each stochastic node sampled multiple times. Especially if this is a
         hierarchy of multiple samples.
+        create_graph (bool): Creates the backpropagation graph of the gradient estimation for higher-order derivatives
     Returns:
         torch.Tensor: The average total cost normalized by the sampling weights.
     """
@@ -125,35 +137,37 @@ def backward(
 
     # Sum of averages of cost node tensors
     total_cost = 0.0
-    # Sum of losses that can be backpropagated through in keepgrads without difficult iterations
-    accum_loss = 0.0
 
     stochastic_nodes = set()
+    _create_graph = create_graph
     # Loop over different cost nodes
     for c in costs:
         # Do not detach the weights when reducing. This is used in for example expectations to weight the
         # different costs.
-        reduced_cost = storch.reduce_plates(c, detach_weights=False)
-
-        if print_costs:
-            print(c.name, ":", reduced_cost._tensor.item())
-        total_cost += reduced_cost
+        # reduced_cost = storch.reduce_plates(c, detach_weights=False)
+        #
+        # if print_costs:
+        #     print(c.name, ":", reduced_cost._tensor.item())
+        # total_cost += reduced_cost
         # Compute gradients for the cost nodes themselves, if they require one.
-        if reduced_cost.requires_grad:
-            accum_loss += reduced_cost
+        # if reduced_cost.requires_grad:
+        #     accum_loss += reduced_cost
+
+        L = c._tensor.new_tensor(0.0)
+        cost_loss = 0.0
         for parent in c.walk_parents(depth_first=False):
             # Instance check here instead of parent.stochastic, as backward methods are only used on these.
             if isinstance(parent, StochasticTensor):
                 stochastic_nodes.add(parent)
             else:
                 continue
-            if (
-                not parent.requires_grad
-                or not parent.method
-                or not parent.method.adds_loss(parent, c)
-            ):
+            if not parent.requires_grad or not parent.method:
                 continue
-
+            _create_graph = (
+                parent.method.should_create_higher_order_graph() or _create_graph
+            )
+            if not parent.method.adds_loss(parent, c):
+                continue
             # Transpose the parent stochastic tensor, so that its shape is the same as the cost but the event shape, and
             # possibly extra dimensions...?
             parent_tensor = parent._tensor
@@ -188,42 +202,61 @@ def backward(
                 parent._requires_grad,
                 parent.method,
             )
-            # Fake the new parent to be the old parent within the graph by mimicing its place in the graph
+            new_parent.param_grads = parent.param_grads
+            # Fake the new parent to be the old parent within the graph by mimicking its place in the graph
             new_parent._parents = parent._parents
             for p, has_link in new_parent._parents:
                 p._children.append((new_parent, has_link))
             new_parent._children = parent._children
-            cost_per_sample = parent.method._estimator(new_parent, reduced_cost)
 
-            if cost_per_sample is not None:
-                # The backwards call for reparameterization happens in the
-                # backwards call for the costs themselves.
-                # Now mean_cost has the same shape as parent.batch_shape
-                final_reduced_cost = storch.reduce_plates(
-                    cost_per_sample, detach_weights=True
+            # Compute the estimator triple
+            (
+                # TODO: baseline shouldn't be a separate thing
+                gradient_function,
+                baseline,
+                control_variate,
+            ) = parent.method._estimator(new_parent, reduced_cost)
+
+            _A = 0.0
+            if gradient_function is not None:
+                L = L + gradient_function
+                if baseline is not None:
+                    _A = baseline.detach() * (
+                        1 - magic_box(gradient_function)
+                    )
+
+            if control_variate is not None:
+                _A += control_variate - control_variate.detach()
+
+            if baseline is not None or control_variate is not None:
+                final_A = storch.reduce_plates(
+                    _A, detach_weights=True
                 )
-                if final_reduced_cost.ndim == 1:
-                    final_reduced_cost = final_reduced_cost.squeeze(0)
-                accum_loss += final_reduced_cost
+                if final_A.ndim == 1:
+                    final_A = final_A.squeeze(0)
+                cost_loss += final_A
+        cost_loss += storch.reduce_plates(magic_box(L) * c, detach_weights=False)
+        total_cost += cost_loss
 
-    if isinstance(accum_loss, storch.Tensor) and accum_loss._tensor.requires_grad:
-        accum_loss._tensor.backward(retain_graph=retain_graph)
+    if isinstance(total_cost, storch.Tensor) and total_cost._tensor.requires_grad:
+        total_cost._tensor.backward(create_graph=_create_graph)
 
-    for s_node in stochastic_nodes:
-        if s_node.method:
-            s_node.method._update_parameters()
+    if update_estimator_params:
+        for s_node in stochastic_nodes:
+            if s_node.method:
+                s_node.method._update_parameters()
 
-    if not retain_graph:
-        accum_loss._clean()
+    if not create_graph:
+        total_cost._clean()
+        total_cost.grad_fn = None
         reset()
 
-    # TODO: How much does accum_loss really say? Should we really keep it? We want to minimize total_cost, anyways.
-    return total_cost._tensor  # , accum_loss._tensor
+    return total_cost._tensor
 
 
 def reset():
     # Free the SC graph links. This often improves garbage collection for larger graphs.
-    # Unfortunately Python's GC seems to have imperfect cycle detection
+    # Unfortunately Python's GC seems to have imperfect cycle detection?
     for c in storch.inference._cost_tensors:
         c._clean()
 
