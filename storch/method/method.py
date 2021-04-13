@@ -44,7 +44,7 @@ class Method(ABC, torch.nn.Module):
                 "The plate name of the sampling method and the storch method should match."
             )
 
-    def forward(self, distr: Distribution) -> storch.tensor.StochasticTensor:
+    def forward(self, distr: Distribution) -> StochasticTensor:
         """
         Calls the sample method to sample from the given distribution
         :param torch.distribution.Distribution distr: The distribution to sample from.
