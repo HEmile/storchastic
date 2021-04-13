@@ -1,4 +1,4 @@
-bleach==3.2.1
+bleach==3.3.0
 certifi==2020.12.5
 chardet==3.0.4
 colorama==0.4.4
@@ -15,7 +15,7 @@ opt-einsum==3.3.0
 packaging==20.7
 Pillow @ file:///opt/concourse/worker/volumes/live/3fb18867-d509-48fe-7811-21829c4a0332/volume/pillow_1614711415908/work
 pkginfo==1.6.1
-Pygments==2.7.3
+Pygments==2.7.4
 pyparsing==2.4.7
 pyro-api==0.1.2
 pyro-ppl==1.5.2
@@ -30,5 +30,5 @@ torchvision==0.8.2
 tqdm==4.58.0
 twine==3.2.0
 typing-extensions @ file:///home/ktietz/src/ci_mi/typing_extensions_1612808209620/work
-urllib3==1.26.2
+urllib3==1.26.4
 webencodings==0.5.1
