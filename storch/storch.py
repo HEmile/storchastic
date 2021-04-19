@@ -245,7 +245,7 @@ def grad(
     return tuple(storch_grad)
 
 
-@storch.deterministic
+@storch.deterministic(expand_plates=True)
 def cat(*args, **kwargs):
     """
     Version of :func:`torch.cat` that is compatible with :class:`storch.Tensor`.
