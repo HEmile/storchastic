@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="storchastic",  # Replace with your own username
-    version="0.2.1",
+    version="0.3.0",
     author="Emile van Krieken",
     author_email="e.van.krieken@vu.nl",
     description="Stochastic Deep Learning for PyTorch",
