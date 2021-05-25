@@ -18,6 +18,14 @@ from torch.distributions import (
 )
 import torch
 
+def magic_box(l: Tensor):
+    """
+    Implements the MagicBox operator from
+    DiCE: The Infinitely Differentiable Monte-Carlo Estimator https://arxiv.org/abs/1802.05098
+    It returns 1 in the forward pass, but returns magic_box(l) \cdot r in the backwards pass.
+    This allows for any-order gradient estimation.
+    """
+    return (l - l.detach()).exp()
 
 def print_graph(costs: [CostTensor]):
     nodes = topological_sort(costs)

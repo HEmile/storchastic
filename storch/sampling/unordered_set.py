@@ -25,7 +25,7 @@ class UnorderedSet(SampleWithoutReplacement):
         self.num_int_points = num_int_points
         self.a = a
 
-    def plate_weighting(
+    def weighting_function(
         self, tensor: storch.StochasticTensor, plate: storch.Plate
     ) -> Optional[storch.Tensor]:
         # plates_w_k is a sequence of plates of which one is the input ancestral plate
@@ -141,7 +141,8 @@ class GumbelSoftmaxWOR(UnorderedSet):
         )
         from storch import conditional_gumbel_rsample
 
-        gumbel_wor = conditional_gumbel_rsample(hard_sample, distr, self.temperature)
+        gumbel_wor = conditional_gumbel_rsample(hard_sample, distr.probs,
+                                                isinstance(distr, torch.distributions.Bernoulli), self.temperature)
         gumbel_wor = storch.StochasticTensor(
             gumbel_wor._tensor,
             list(zip(*hard_sample._parents))[0],

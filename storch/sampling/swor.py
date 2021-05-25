@@ -177,7 +177,7 @@ class SampleWithoutReplacement(IterDecoding):
         )
         return plate
 
-    def plate_weighting(
+    def weighting_function(
         self, tensor: storch.StochasticTensor, plate: storch.Plate
     ) -> Optional[storch.Tensor]:
         return self.compute_iw(plate, self.biased_iw).detach()

@@ -1,3 +1,4 @@
+from __future__ import annotations
 from abc import ABC, abstractmethod
 import torch
 import storch
@@ -5,9 +6,6 @@ from storch.tensor import StochasticTensor, CostTensor
 
 
 class Baseline(ABC, torch.nn.Module):
-    def __init__(self):
-        super().__init__()
-
     @abstractmethod
     def compute_baseline(
         self, tensor: StochasticTensor, cost_node: CostTensor
@@ -20,7 +18,7 @@ class MovingAverageBaseline(Baseline):
     Takes the (unconditional) average over the different costs.
     """
 
-    def __init__(self, exponential_decay=0.95):
+    def __init__(self: MovingAverageBaseline, exponential_decay=0.95):
         super().__init__()
         self.register_buffer("exponential_decay", torch.tensor(exponential_decay))
         self.register_buffer("moving_average", torch.tensor(0.0))

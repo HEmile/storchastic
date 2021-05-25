@@ -3,7 +3,6 @@ from typing import Union, List
 import storch
 import torch
 from storch import deterministic
-from torch._C import _infer_size
 import torch.nn.functional as F
 
 

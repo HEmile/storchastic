@@ -3,6 +3,7 @@ from typing import Optional, Tuple
 import storch
 from storch.method.method import Method
 from storch.sampling import UnorderedSet, GumbelSoftmaxWOR
+from storch.util import magic_box
 
 
 class UnorderedSetEstimator(Method):
@@ -53,7 +54,7 @@ class UnorderedSetEstimator(Method):
         )
         self.use_baseline = use_baseline
 
-    def adds_loss(
+    def is_pathwise(
         self, tensor: storch.StochasticTensor, cost_node: storch.CostTensor
     ) -> bool:
         # We only want to add a loss on the stochastic tensor with the same plate as the cost node.
@@ -65,17 +66,17 @@ class UnorderedSetEstimator(Method):
                 for cost_plate in cost_node.plates:
                     if cost_plate.name == self.plate_name:
                         if cost_plate is distr_plate:
-                            return True
-                        return False
+                            return False
+                        return True
                 raise ValueError(
                     "The given tensor contains an ancestral plate that the cost node doesn't have."
                 )
-        return False
+        return True
 
     def estimator(
         self, tensor: storch.StochasticTensor, cost_node: storch.CostTensor
     ) -> Tuple[
-        Optional[storch.Tensor], Optional[storch.Tensor], Optional[storch.Tensor]
+        Optional[storch.Tensor], Optional[storch.Tensor]
     ]:
         # Note: We automatically multiply with leave-one-out ratio in the plate reduction
         plate = None
@@ -95,7 +96,7 @@ class UnorderedSetEstimator(Method):
         baseline = storch.Tensor(
             baseline._tensor, [baseline], baseline.plates + [plate]
         )
-        return (plate.log_probs, baseline.detach(), None)
+        return plate.log_probs, (1 - magic_box(plate.log_probs)) * baseline.detach()
 
 
 class UnorderedSetGumbelSoftmax(Method):
