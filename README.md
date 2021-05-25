@@ -28,10 +28,10 @@ sequence models.
 [Example: Discrete Variational Auto-Encoder](TODO)
 
 ## Installation
+In your virtual Python environment, run
 `pip install storchastic`
 
-**Requires** Pytorch 1.5 (older versions will not do!) and [Pyro](http://pyro.ai). The code is build on Python 3.7.
-The master branch works with PyTorch 1.7, but the version on pip is not compatible. Binaries will be updated soon.
+**Requires** Pytorch 1.**8** and [Pyro](http://pyro.ai). The code is build using Python 3.8.
 
 ## Algorithms
 Feel free to create an issue if an estimator is missing here.
@@ -44,6 +44,7 @@ Feel free to create an issue if an estimator is missing here.
 - REBAR [10]
 - REINFORCE Without Replacement [6]
 - Unordered Set Estimator [13]
+- ARM [15]
 
 ### In development
 - Memory Augmented Policy Optimization [11]
@@ -51,7 +52,6 @@ Feel free to create an issue if an estimator is missing here.
 
 ### Planned
 - Measure valued derivatives [1, 14]
-- ARM [15]
 - Automatic Credit Assignment [16]
 - ...
 
