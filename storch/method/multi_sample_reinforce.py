@@ -20,24 +20,26 @@ class ScoreFunctionWOR(Method):
         self.biased = biased
         self.use_baseline = use_baseline
 
-    def adds_loss(
+    def is_pathwise(
         self, tensor: storch.StochasticTensor, cost_node: storch.CostTensor
     ) -> bool:
         # We only want to add a loss on the stochastic tensor with the same plate as the cost node.
         # This is because the estimator computes the gradient with the respect to the JOINT log probability.
         # If we would have added the gradient for all stochastic tensors, these would just be duplicates of the same
         # loss being added (ie that gradient would be oversampled)
+        # TODO: This should be rewritten using stochastic node partitions
         for distr_plate in tensor.plates:
             if distr_plate.name == self.plate_name:
                 for cost_plate in cost_node.plates:
                     if cost_plate.name == self.plate_name:
                         if cost_plate is distr_plate:
-                            return True
-                        return False
+                            return False
+                        # TODO: What exactly does this mean?
+                        return True
                 raise ValueError(
                     "The given tensor contains an ancestral plate that the cost node doesn't have."
                 )
-        return False
+        return True
 
     def multiplicative_estimator(
         self, tensor: storch.StochasticTensor, cost_node: storch.CostTensor

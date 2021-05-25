@@ -75,7 +75,7 @@ class Enumerate(SamplingMethod):
         )
         return s_tensor, plate
 
-    def plate_weighting(
+    def weighting_function(
         self, tensor: storch.StochasticTensor, plate: Plate
     ) -> Optional[storch.Tensor]:
         # Weight by the probability of each possible event

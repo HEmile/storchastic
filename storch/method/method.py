@@ -1,3 +1,4 @@
+from __future__ import annotations
 from abc import ABC
 from torch.distributions import Distribution, OneHotCategorical, Bernoulli, Categorical
 
@@ -58,7 +59,7 @@ class Method(ABC, torch.nn.Module):
         accum_grads = sample.param_grads
         del sample  # Remove from hook closure for GC reasons
 
-        def hook(*args):
+        def hook(*args: Tuple[any]):
             # For some reason, this args unpacking is required for compatbility with registring on a .grad_fn...?
             # TODO: I'm sure there could be something wrong here
             grad = args[-1]
@@ -108,11 +109,12 @@ class Method(ABC, torch.nn.Module):
                 self.sampling_method.on_plate_already_present(plate)
 
         s_tensor: StochasticTensor
+        # Sample from the proposal distribution
         s_tensor, plate = self.sampling_method(distr, parents, plates, requires_grad)
 
         s_tensor._set_method(self)
 
-        batch_weighting = self.sampling_method.plate_weighting(s_tensor, plate)
+        batch_weighting = self.sampling_method.weighting_function(s_tensor, plate)
         if batch_weighting is not None:
             plate.weight = batch_weighting
             # TODO: I don't think this code should be here.
@@ -145,11 +147,12 @@ class Method(ABC, torch.nn.Module):
                 to_hook.register_hook(self._create_hook(s_tensor, name, hook_plates))
 
         # Possibly change something in the tensor now that it is wrapped and registered in the graph.
-        # Used for example to rsample in LAX, and in post_sample detaching the tensor so that it won't record gradients
+        # Used for example to rsample in LAX to detach the tensor so that it won't record gradients
         # in the normal forward pass.
+        # TODO: That should really be easier...
         edited_sample = self.post_sample(s_tensor)
 
-        # Register this sampling method as being used in this iteration so that we can reset this method after the iteration
+        # Register this sampling method as being used in this iteration so that we can reset this method after the backward pass
         if self not in storch.inference._sampling_methods:
             storch.inference._sampling_methods.append(self)
 
@@ -170,7 +173,7 @@ class Method(ABC, torch.nn.Module):
     def _estimator(
         self, tensor: StochasticTensor, cost_node: CostTensor
     ) -> Tuple[
-        Optional[storch.Tensor], Optional[storch.Tensor], Optional[storch.Tensor]
+        Optional[storch.Tensor], Optional[storch.Tensor]
     ]:
         self._estimation_pairs.append((tensor, cost_node))
         return self.estimator(tensor, cost_node)
@@ -178,16 +181,15 @@ class Method(ABC, torch.nn.Module):
     def estimator(
         self, tensor: StochasticTensor, cost_node: CostTensor
     ) -> Tuple[
-        Optional[storch.Tensor], Optional[storch.Tensor], Optional[storch.Tensor]
+        Optional[storch.Tensor], Optional[storch.Tensor]
     ]:
         """
-        Returns three terms that will be used for inferring higher-order gradient estimates.
-        - The first return is the multiplicative estimator. It will be multiplied with the cost function.
+        Returns two terms that will be used for inferring higher-order gradient estimates.
+        - The first return is the gradient function. It will be multiplied with the cost function.
           To get correct, unbiased estimates, the cost_node should not be involved in the computation.
           In REINFORCE-based methods, this is usually the score function.
           Methods that do not use a multiplicative estimator can return None.
-        - The second return is the baseline. It will be multiplied with the multiplicative estimator.
-        - The third return is a function that will be differentiated to estimate the gradient.
+        - The second return is the control variate, for instance a baseline in score-function based methods.
 
         It is also possible to directly do a backwards call in this method, but this will prevent correct computation of
         higher-order derivatives.
@@ -197,9 +199,9 @@ class Method(ABC, torch.nn.Module):
         Args:
             tensor (storch.StochasticTensor): The sampled tensor to find the surrogate loss for.
         """
-        return None, None, None
+        return None, None
 
-    def _update_parameters(self):
+    def _update_parameters(self: Method):
         self.iterations += 1
         self.update_parameters(self._estimation_pairs)
         self._estimation_pairs = []
@@ -207,19 +209,23 @@ class Method(ABC, torch.nn.Module):
     def update_parameters(
         self, result_triples: [(StochasticTensor, CostTensor)]
     ) -> None:
+        """
+        Update the (hyper)parameters of the estimation method. Note that this is not the parameters
+        to be optimized!
+        """
         pass
 
-    def adds_loss(self, tensor: StochasticTensor, cost_node: CostTensor) -> bool:
+    def is_pathwise(self, tensor: StochasticTensor, cost_node: CostTensor) -> bool:
         """
-        Returns true if the estimator will add an additional loss function for the derivative of the parameters
-        of the stochastic tensor with respect to the cost node.
+        Returns true if the gradient estimator is pathwise, that is, no external loss functions need to be created
+        to compute the correct gradient. This includes the pathwise derivative (Reparameterization) and the expectation.
         """
         return False
 
     def post_sample(self, tensor: storch.StochasticTensor) -> Optional[storch.Tensor]:
         return None
 
-    def reset(self):
+    def reset(self) -> None:
         """
         This function gets called whenever storchastic is reset. This is after storch.backward() or storch.reset() is
         called. Can be used to reset this methods state to some initial state that has to happen every iteration. 
@@ -265,7 +271,7 @@ class Infer(Method):
     def estimator(
         self, tensor: StochasticTensor, cost_node: CostTensor
     ) -> Tuple[
-        Optional[storch.Tensor], Optional[storch.Tensor], Optional[storch.Tensor]
+        Optional[storch.Tensor],  Optional[storch.Tensor]
     ]:
         return self._score_method.estimator(tensor, cost_node)
 
@@ -275,13 +281,13 @@ class Infer(Method):
         self._method.update_parameters(result_triples)
         self._score_method.update_parameters(result_triples)
 
-    def adds_loss(self, tensor: StochasticTensor, cost_node: CostTensor) -> bool:
+    def is_pathwise(self, tensor: StochasticTensor, cost_node: CostTensor) -> bool:
         if has_differentiable_path(cost_node, tensor):
             # There is a differentiable path, so we will just use reparameterization here.
-            return False
+            return True
         else:
             # No automatic baselines. Use the score function.
-            return True
+            return False
 
 
 class Reparameterization(Method):
@@ -300,10 +306,10 @@ class Reparameterization(Method):
             sampling_method = MonteCarlo(plate_name, n_samples)
         super().__init__(plate_name, sampling_method.set_mc_sample(self.reparam_sample))
 
-    def adds_loss(self, tensor: StochasticTensor, cost_node: CostTensor) -> bool:
+    def is_pathwise(self, tensor: StochasticTensor, cost_node: CostTensor) -> bool:
         if has_differentiable_path(cost_node, tensor):
             # There is a differentiable path, so we will just use reparameterization here.
-            return False
+            return True
         raise ValueError(
             "There is no differentiable path between the cost tensor and the stochastic tensor. "
             "We cannot use reparameterization. Use a different gradient estimator, or make sure your"
@@ -364,10 +370,10 @@ class GumbelSoftmax(Method):
             distr, amt_samples, self.temperature, self.straight_through
         )
 
-    def adds_loss(self, tensor: StochasticTensor, cost_node: CostTensor) -> bool:
+    def is_pathwise(self, tensor: StochasticTensor, cost_node: CostTensor) -> bool:
         if has_differentiable_path(cost_node, tensor):
             # There is a differentiable path, so we will just use reparameterization here.
-            return False
+            return True
         raise ValueError(
             "There is no differentiable path between the cost tensor and the stochastic tensor. "
             "We cannot use reparameterization. Use a different gradient estimator, or make sure your"
@@ -436,12 +442,12 @@ class GumbelEntmax(Method):
         res = self.entmax(gumbels / self.temperature)
         return res
 
-    def adds_loss(
+    def is_pathwise(
         self, tensor: storch.StochasticTensor, cost_node: storch.CostTensor
     ) -> bool:
         if has_differentiable_path(cost_node, tensor):
             # There is a differentiable path, so we will just use reparameterization here.
-            return False
+            return True
         raise ValueError(
             "There is no differentiable path between the cost tensor and the stochastic tensor. "
             "We cannot use reparameterization. Use a different gradient estimator, or make sure your"
@@ -532,7 +538,7 @@ class ScoreFunction(Method):
     def estimator(
         self, tensor: StochasticTensor, cost: CostTensor
     ) -> Tuple[
-        Optional[storch.Tensor], Optional[storch.Tensor], Optional[storch.Tensor]
+        Optional[storch.Tensor], Optional[storch.Tensor]
     ]:
         log_prob = tensor.distribution.log_prob(tensor)
         if len(log_prob.shape) > tensor.plate_dims:
@@ -540,17 +546,14 @@ class ScoreFunction(Method):
             log_prob = log_prob.sum(
                 dim=list(range(tensor.plate_dims, len(log_prob.shape)))
             )
-        baseline = None
         if self.baseline_factory:
             baseline_name = "_b_" + tensor.name + "_" + cost.name
             if not hasattr(self, baseline_name):
                 setattr(self, baseline_name, self.baseline_factory(tensor, cost))
             baseline = getattr(self, baseline_name)
             baseline = baseline.compute_baseline(tensor, cost)
-        return log_prob, baseline, None
-
-    def adds_loss(self, tensor: StochasticTensor, cost_node: CostTensor) -> bool:
-        return True
+            return log_prob, (1.0 - log_prob) * baseline
+        return log_prob, None
 
 
 class Expect(Method):

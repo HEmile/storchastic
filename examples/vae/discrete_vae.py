@@ -33,6 +33,7 @@ class DiscreteVAE(VAE):
             )
         elif args.method == "gumbel_straight":
             return GumbelSoftmax("z", n_samples=args.samples, straight_through=True)
+        # TODO: Seems to be broken!
         elif args.method == "gumbel_wor":
             return storch.method.UnorderedSetGumbelSoftmax("z", k=args.samples)
         elif args.method == "score":
@@ -63,13 +64,13 @@ class DiscreteVAE(VAE):
         return OneHotCategorical(probs=logits.softmax(dim=-1))
         # return OneHotCategorical(logits=logits)
 
-    def logits_to_params(self, logits, latents):
+    def logits_to_params(self, logits: torch.Tensor, latents: int) -> torch.Tensor:
         return logits.reshape(logits.shape[:-1] + (latents, 10))
 
-    def shape_latent(self, z, latents):
+    def shape_latent(self, z: torch.Tensor, latents: int) -> torch.Tensor:
         return z.reshape(z.shape[:-2] + (latents * 10,))
 
-    def name(self):
+    def name(self) -> str:
         return "discrete_vae"
 
 

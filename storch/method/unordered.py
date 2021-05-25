@@ -53,7 +53,7 @@ class UnorderedSetEstimator(Method):
         )
         self.use_baseline = use_baseline
 
-    def adds_loss(
+    def is_pathwise(
         self, tensor: storch.StochasticTensor, cost_node: storch.CostTensor
     ) -> bool:
         # We only want to add a loss on the stochastic tensor with the same plate as the cost node.
@@ -65,12 +65,12 @@ class UnorderedSetEstimator(Method):
                 for cost_plate in cost_node.plates:
                     if cost_plate.name == self.plate_name:
                         if cost_plate is distr_plate:
-                            return True
-                        return False
+                            return False
+                        return True
                 raise ValueError(
                     "The given tensor contains an ancestral plate that the cost node doesn't have."
                 )
-        return False
+        return True
 
     def estimator(
         self, tensor: storch.StochasticTensor, cost_node: storch.CostTensor

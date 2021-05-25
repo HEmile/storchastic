@@ -39,7 +39,7 @@ class VAE(nn.Module):
         pass
 
     @deterministic
-    def encode(self, x):
+    def encode(self, x: storch.Tensor):
         """
         Define the encoding step. As it is a purely deterministic operation, we can tag it using @determinstic to slightly
         improve the performance.
@@ -51,7 +51,7 @@ class VAE(nn.Module):
         return self.fc3(h2)
 
     @deterministic
-    def decode(self, z):
+    def decode(self, z: storch.Tensor):
         """
         Define the decoding step. As it is a purely deterministic operation, we can tag it using @determinstic to slightly
         improve the performance.
@@ -107,5 +107,5 @@ class VAE(nn.Module):
         """
         return torch.distributions.kl_divergence(var_posterior, prior).sum(-1)
 
-    def name(self):
+    def name(self) -> str:
         return "vae"

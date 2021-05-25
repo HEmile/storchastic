@@ -2,7 +2,7 @@ from typing import Optional, List, Union
 
 from storch.tensor import Tensor, StochasticTensor, CostTensor, IndependentTensor
 import torch
-from storch.util import print_graph
+from storch.util import print_graph, magic_box
 import storch
 
 
@@ -100,14 +100,7 @@ def add_cost(cost: Tensor, name: str):
     return cost
 
 
-def magic_box(l: storch.Tensor):
-    """
-    Implements the MagicBox operator from
-    DiCE: The Infinitely Differentiable Monte-Carlo Estimator https://arxiv.org/abs/1802.05098
-    It returns 1 in the forward pass, but returns magic_box(l) \cdot r in the backwards pass.
-    This allows for any-order gradient estimation.
-    """
-    return (l - l.detach()).exp()
+
 
 
 def backward(
@@ -155,7 +148,9 @@ def backward(
 
         L = c._tensor.new_tensor(0.0)
         cost_loss = 0.0
-        for parent in c.walk_parents(depth_first=False):
+        # Walk topologically through the graph
+        # This is a parallelized implementation of Algorithm 1 in the paper
+        for parent in c.walk_parents(depth_first=False, reverse=True):
             # Instance check here instead of parent.stochastic, as backward methods are only used on these.
             if isinstance(parent, StochasticTensor):
                 stochastic_nodes.add(parent)
@@ -166,7 +161,7 @@ def backward(
             _create_graph = (
                 parent.method.should_create_higher_order_graph() or _create_graph
             )
-            if not parent.method.adds_loss(parent, c):
+            if parent.method.is_pathwise(parent, c):
                 continue
             # Transpose the parent stochastic tensor, so that its shape is the same as the cost but the event shape, and
             # possibly extra dimensions...?
@@ -178,6 +173,7 @@ def backward(
                 if plate not in parent_plates:
                     reduced_cost = plate.reduce(reduced_cost, detach_weights=True)
             # Align the parent tensor so that the plate dimensions are in the same order as the cost tensor
+            # TODO: This can probably be implemented with torch.movedim
             for index_c, plate in enumerate(reduced_cost.multi_dim_plates()):
                 index_p = parent_plates.index(plate)
                 if index_c != index_p:
@@ -209,33 +205,26 @@ def backward(
                 p._children.append((new_parent, has_link))
             new_parent._children = parent._children
 
-            # Compute the estimator triple
+            # Compute the estimator
             (
-                # TODO: baseline shouldn't be a separate thing
                 gradient_function,
-                baseline,
                 control_variate,
             ) = parent.method._estimator(new_parent, reduced_cost)
 
-            _A = 0.0
             if gradient_function is not None:
                 L = L + gradient_function
-                if baseline is not None:
-                    _A = baseline.detach() * (
-                        1 - magic_box(gradient_function)
-                    )
-
+            # Compute control variate
             if control_variate is not None:
-                _A += control_variate - control_variate.detach()
-
-            if baseline is not None or control_variate is not None:
+                final_A = magic_box(L) * control_variate
                 final_A = storch.reduce_plates(
-                    _A, detach_weights=True
+                   final_A, detach_weights=False, # TODO: Should this boolean be false or true?
                 )
                 if final_A.ndim == 1:
                     final_A = final_A.squeeze(0)
                 cost_loss += final_A
+        # Use magic box to distribute the cost
         cost_loss += storch.reduce_plates(magic_box(L) * c, detach_weights=False)
+        # Sum over different costs
         total_cost += cost_loss
 
     if isinstance(total_cost, storch.Tensor) and total_cost._tensor.requires_grad:
@@ -254,7 +243,7 @@ def backward(
     return total_cost._tensor
 
 
-def reset():
+def reset() -> None:
     # Free the SC graph links. This often improves garbage collection for larger graphs.
     # Unfortunately Python's GC seems to have imperfect cycle detection?
     for c in storch.inference._cost_tensors:

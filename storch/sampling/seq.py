@@ -251,14 +251,14 @@ class SequenceDecoding(SamplingMethod):
         self.variable_index += 1
         return s_tensor, self.new_plate
 
-    def plate_weighting(
+    def weighting_function(
         self, tensor: storch.StochasticTensor, plate: storch.Plate
     ) -> Optional[storch.Tensor]:
         if self.eos:
             active = 1 - self.finished_samples
             amt_active: storch.Tensor = storch.sum(active, plate)
             return active / amt_active
-        return super().plate_weighting(tensor, plate)
+        return super().weighting_function(tensor, plate)
 
     @abstractmethod
     def decode(

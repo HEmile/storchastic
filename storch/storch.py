@@ -258,7 +258,7 @@ def cat(*args, **kwargs):
 
 @storch.deterministic
 def conditional_gumbel_rsample(
-    hard_sample: torch.Tensor, distr: torch.distributions.Distribution, temperature,
+    hard_sample: torch.Tensor, probs: torch.Tensor, bernoulli: bool, temperature,
 ) -> torch.Tensor:
     """
     Conditionally re-samples from the distribution given the hard sample.
@@ -267,9 +267,9 @@ def conditional_gumbel_rsample(
     # Adapted from torch.distributions.relaxed_bernoulli and torch.distributions.relaxed_categorical
     shape = hard_sample.shape
 
-    probs = clamp_probs(distr.probs.expand_as(hard_sample))
+    probs = clamp_probs(probs.expand_as(hard_sample))
     v = clamp_probs(torch.rand(shape, dtype=probs.dtype, device=probs.device))
-    if isinstance(distr, torch.distributions.Bernoulli):
+    if bernoulli:
         pos_probs = probs[hard_sample == 1]
         v_prime = torch.zeros_like(hard_sample)
         # See https://arxiv.org/abs/1711.00123

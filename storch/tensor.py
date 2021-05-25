@@ -176,7 +176,8 @@ class Tensor:
                 raise ValueError(
                     "Plates contain two instances of same plate "
                     + plate.name
-                    + ". This can be caused by different samples with the same name using a different amount of samples n or different weighting of the samples. Make sure that these samples use the same number of samples."
+                    + ". This can be caused by different samples with the same name using a different amount of "
+                    + "samples n or different weighting of the samples. Make sure that these samples use the same number of samples."
                 )
             plate_names.add(plate.name)
             # plate length is 1. Ignore this dimension, as singleton dimensions should not exist.
@@ -312,15 +313,17 @@ class Tensor:
     def __setitem__(self, index, value):
         return self.__setitem__(index, value)
 
-    def _walk(
+    def _walk_backwards(
         self,
         expand_fn,
         depth_first=True,
+        reverse=False, # Only supported for breadth-first
         only_differentiable=False,
         repeat_visited=False,
         walk_fn=lambda x: x,
     ) -> Iterator:
         visited = set()
+        visited_ordered = []
         if depth_first:
             S = [self]
             while S:
@@ -337,17 +340,23 @@ class Tensor:
             queue.append(self)
             while queue:
                 v = queue.popleft()
-                yield walk_fn(v)
+                if reverse:
+                    visited_ordered.append(v)
+                else:
+                    yield walk_fn(v)
                 for w, d in expand_fn(v):
                     if (repeat_visited or w not in visited) and (
                         d or not only_differentiable
                     ):
                         visited.add(w)
                         queue.append(w)
+            if reverse:
+                return reversed(visited_ordered)
 
     def walk_parents(
         self,
         depth_first=True,
+        reverse=False,
         only_differentiable=False,
         repeat_visited=False,
         walk_fn=lambda x: x,
@@ -357,6 +366,9 @@ class Tensor:
 
         Args:
             depth_first: True to use depth first, otherwise breadth first.
+            reverse: Reverse the order: If true, instead of first returning the immediate parents, return
+                the parents furthest up, working towards the immediate parents.
+                Currently only supported for breadth-first search.
             only_differentiable: True to only walk over edges that are differentiable
             repeat_visited:
             walk_fn: Optional function on :class:`storch.Tensor` that manipulates the nodes found.
@@ -364,7 +376,7 @@ class Tensor:
         Returns:
             Iterator of type that is equal to the output type of ``walk_fn``.
         """
-        return self._walk(
+        return self._walk_backwards(
             lambda p: p._parents,
             depth_first,
             only_differentiable,
@@ -391,7 +403,7 @@ class Tensor:
         Returns:
             Iterator of type that is equal to the output type of ``walk_fn``.
         """
-        return self._walk(
+        return self._walk_backwards(
             lambda p: p._children,
             depth_first,
             only_differentiable,
