@@ -3,6 +3,7 @@ from typing import Optional, Tuple
 import storch
 from storch.method.method import Method
 from storch.sampling import UnorderedSet, GumbelSoftmaxWOR
+from storch.util import magic_box
 
 
 class UnorderedSetEstimator(Method):
@@ -75,7 +76,7 @@ class UnorderedSetEstimator(Method):
     def estimator(
         self, tensor: storch.StochasticTensor, cost_node: storch.CostTensor
     ) -> Tuple[
-        Optional[storch.Tensor], Optional[storch.Tensor], Optional[storch.Tensor]
+        Optional[storch.Tensor], Optional[storch.Tensor]
     ]:
         # Note: We automatically multiply with leave-one-out ratio in the plate reduction
         plate = None
@@ -95,7 +96,7 @@ class UnorderedSetEstimator(Method):
         baseline = storch.Tensor(
             baseline._tensor, [baseline], baseline.plates + [plate]
         )
-        return (plate.log_probs, baseline.detach(), None)
+        return plate.log_probs, (1 - magic_box(plate.log_probs)) * baseline.detach()
 
 
 class UnorderedSetGumbelSoftmax(Method):
