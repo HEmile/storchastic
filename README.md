@@ -1,12 +1,14 @@
 ![](logo.png)
 
-Stochastic Deep Learning for Pytorch
 
 
-##
+
+## General Stochastic Automatic Differentiation for Pytorch
 [![Documentation Status](https://readthedocs.org/projects/storchastic/badge/?version=latest)](https://storchastic.readthedocs.io/en/latest/?badge=latest)
 
-[Documentation on Read the Docs.](https://storchastic.readthedocs.io/en/latest/)
+- [Documentation](https://storchastic.readthedocs.io/en/latest/)
+- [Read the paper](https://arxiv.org/abs/2104.00428)
+
 **Storchastic** is a PyTorch library for stochastic gradient estimation in Deep Learning [1]. Many state of the art deep learning
 models use gradient estimation, in particular within the fields of Variational Inference and Reinforcement Learning.
 While PyTorch computes gradients of deterministic computation graphs automatically, it will not estimate
