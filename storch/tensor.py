@@ -33,7 +33,7 @@ class Plate:
         self.n = n
         self.parents = parents
 
-    def __eq__(self, other):
+    def __eq__(self, other) -> bool:
         if not isinstance(other, Plate):
             return False
         if self.name != other.name:
@@ -277,17 +277,17 @@ class Tensor:
             return storch.wrappers._self_deterministic(attr, self)
 
     @property
-    def name(self):
+    def name(self) -> str:
         return self._name
 
     @property
-    def is_sparse(self):
+    def is_sparse(self) -> bool:
         """
         Returns: True if the underlying tensor is sparse.
         """
         return self._tensor.is_sparse
 
-    def __str__(self):
+    def __str__(self) -> str:
         t = (
             (self.name + ": " if self.name else "") + "Stochastic"
             if self.stochastic
@@ -536,14 +536,14 @@ class Tensor:
 
     # region OperatorOverloads
 
-    def __len__(self):
+    def __len__(self) -> int:
         return self._tensor.__len__()
 
-    def __index__(self):
+    def __index__(self) -> int:
         raise IllegalStorchExposeError("Cannot use storch tensors as index.")
 
     @storch.deterministic
-    def eq(self, other):
+    def eq(self, other) -> bool:
         return self.eq(other)
 
     def __getstate__(self):
@@ -809,15 +809,16 @@ class StochasticTensor(Tensor):
         self.method = method
         self.param_grads = {}
         self._grad = None
+        self._clean_hooks = []
 
     @property
-    def stochastic(self):
+    def stochastic(self) -> bool:
         return True
 
     @property
     # TODO: Should not manually override it like this. The stochastic "requires_grad" should be a different method, so
     # that the meaning of requires_grad is consistent everywhere
-    def requires_grad(self):
+    def requires_grad(self) -> bool:
         return self._requires_grad
 
     @property
@@ -827,11 +828,14 @@ class StochasticTensor(Tensor):
     def _set_method(self, method: storch.method.Method):
         self.method = method
 
-    def _clean(self):
+    def _clean(self) -> None:
         new_param_grads = {}
         for name, grad in self.param_grads.items():
             # In case higher-order derivatives are stored, remove these from the graph.
             new_param_grads[name] = grad.detach()
+        for clean_hook in self._clean_hooks:
+            clean_hook()
+        self._clean_hooks = []
         super()._clean()
 
 

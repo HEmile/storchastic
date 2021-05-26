@@ -158,8 +158,9 @@ def backward(
                 continue
             if not parent.requires_grad or not parent.method:
                 continue
+            create_higher_order_graph = parent.method.should_create_higher_order_graph()
             _create_graph = (
-                parent.method.should_create_higher_order_graph() or _create_graph
+                 create_higher_order_graph or _create_graph
             )
             if parent.method.is_pathwise(parent, c):
                 continue
