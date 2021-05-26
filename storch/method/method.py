@@ -73,7 +73,18 @@ class Method(ABC, torch.nn.Module):
             else:
                 accum_grads[name] = storch.Tensor(grad, [], plates, name + "_grad")
 
-        return hook
+        # Extremely complex way to ensure the GC cleans up the backward graph
+        # What this does is delete the accum_grads field after inference. This is needed to ensure the
+        # hook is no longer in scope even after relevant tensors are out of scope.
+        # clean_graph() is called from StochasticTensor._clean
+        # See also https://github.com/pytorch/pytorch/issues/12863
+        def clean_graph() -> None:
+            try:
+                nonlocal accum_grads
+                del accum_grads
+            except (UnboundLocalError, NameError):
+                pass
+        return hook, clean_graph
 
     def sample(self, distr: Distribution) -> storch.tensor.StochasticTensor:
         """
@@ -121,6 +132,7 @@ class Method(ABC, torch.nn.Module):
             # if isinstance(batch_weighting, storch.Tensor):
             #     batch_weighting.plates[0] = plate
 
+        clean_hooks = []
         for name, param in params.items():
             # TODO: Possibly could find the wrong gradients here if multiple distributions use the same parameter?
             # This maybe requires copying the tensor hm...
@@ -144,7 +156,9 @@ class Method(ABC, torch.nn.Module):
                     to_hook = param._tensor
                 else:
                     to_hook = param
-                to_hook.register_hook(self._create_hook(s_tensor, name, hook_plates))
+                hook, clean_hook = Method._create_hook(s_tensor, name, hook_plates)
+                s_tensor._clean_hooks.append(clean_hook)
+                to_hook.register_hook(hook)
 
         # Possibly change something in the tensor now that it is wrapped and registered in the graph.
         # Used for example to rsample in LAX to detach the tensor so that it won't record gradients

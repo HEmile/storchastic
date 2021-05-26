@@ -25,7 +25,7 @@ requests-toolbelt==0.9.1
 rfc3986==1.4.0
 six @ file:///opt/concourse/worker/volumes/live/5b31cb27-1e37-4ca5-6e9f-86246eb206d2/volume/six_1605205320872/work
 storchastic==0.1.0
-torch==1.7.1
+torch==1.8.1
 torchvision==0.8.2
 tqdm==4.58.0
 twine==3.2.0

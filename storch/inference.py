@@ -1,4 +1,4 @@
-from typing import Optional, List, Union
+from typing import Optional, List, Union, Tuple
 
 from storch.tensor import Tensor, StochasticTensor, CostTensor, IndependentTensor
 import torch
@@ -100,28 +100,7 @@ def add_cost(cost: Tensor, name: str):
     return cost
 
 
-
-
-
-def backward(
-    debug: bool = False,
-    create_graph: bool = False,
-    update_estimator_params: bool = True,
-) -> torch.Tensor:
-    """
-    Computes the gradients of the cost nodes with respect to the parameter nodes. It uses the storch
-    methods used to sample stochastic nodes to properly estimate their gradient.
-
-    Args:
-        debug: Prints debug information on the backwards call.
-        accum_grads: Saves gradient information in stochastic nodes. Note that this is an expensive option as it
-        requires doing O(n) backward calls for each stochastic node sampled multiple times. Especially if this is a
-        hierarchy of multiple samples.
-        create_graph (bool): Creates the backpropagation graph of the gradient estimation for higher-order derivatives
-    Returns:
-        torch.Tensor: The average total cost normalized by the sampling weights.
-    """
-
+def surrogate_loss(debug: bool=False) -> storch.Tensor:
     costs: [storch.Tensor] = storch.inference._cost_tensors
     if not costs:
         raise RuntimeError("No cost nodes registered for backward call.")
@@ -129,10 +108,8 @@ def backward(
         print_graph(costs)
 
     # Sum of averages of cost node tensors
-    total_cost = 0.0
+    surrogate_loss = 0.0
 
-    stochastic_nodes = set()
-    _create_graph = create_graph
     # Loop over different cost nodes
     for c in costs:
         # Do not detach the weights when reducing. This is used in for example expectations to weight the
@@ -152,15 +129,11 @@ def backward(
         # This is a parallelized implementation of Algorithm 1 in the paper
         for parent in c.walk_parents(depth_first=False, reverse=True):
             # Instance check here instead of parent.stochastic, as backward methods are only used on these.
-            if isinstance(parent, StochasticTensor):
-                stochastic_nodes.add(parent)
-            else:
+            if not isinstance(parent, StochasticTensor):
                 continue
             if not parent.requires_grad or not parent.method:
                 continue
-            _create_graph = (
-                parent.method.should_create_higher_order_graph() or _create_graph
-            )
+
             if parent.method.is_pathwise(parent, c):
                 continue
             # Transpose the parent stochastic tensor, so that its shape is the same as the cost but the event shape, and
@@ -217,7 +190,7 @@ def backward(
             if control_variate is not None:
                 final_A = magic_box(L) * control_variate
                 final_A = storch.reduce_plates(
-                   final_A, detach_weights=False, # TODO: Should this boolean be false or true?
+                    final_A, detach_weights=False,  # TODO: Should this boolean be false or true?
                 )
                 if final_A.ndim == 1:
                     final_A = final_A.squeeze(0)
@@ -225,10 +198,45 @@ def backward(
         # Use magic box to distribute the cost
         cost_loss += storch.reduce_plates(magic_box(L) * c, detach_weights=False)
         # Sum over different costs
-        total_cost += cost_loss
+        surrogate_loss += cost_loss
+    return surrogate_loss
 
-    if isinstance(total_cost, storch.Tensor) and total_cost._tensor.requires_grad:
-        total_cost._tensor.backward(create_graph=_create_graph)
+def backward(
+    debug: bool = False,
+    create_graph: bool = False,
+    update_estimator_params: bool = True,
+) -> torch.Tensor:
+    """
+    Computes the gradients of the cost nodes with respect to the parameter nodes. It uses the storch
+    methods used to sample stochastic nodes to properly estimate their gradient.
+
+    Args:
+        debug: Prints debug information on the backwards call.
+        accum_grads: Saves gradient information in stochastic nodes. Note that this is an expensive option as it
+        requires doing O(n) backward calls for each stochastic node sampled multiple times. Especially if this is a
+        hierarchy of multiple samples.
+        create_graph (bool): Creates the backpropagation graph of the gradient estimation for higher-order derivatives
+    Returns:
+        torch.Tensor: The average total cost normalized by the sampling weights.
+    """
+
+    SL = surrogate_loss(debug)
+    _create_graph = create_graph
+
+    stochastic_nodes = set()
+    costs: [storch.Tensor] = storch.inference._cost_tensors
+    for c in costs:
+        for parent in c.walk_parents():
+            # Instance check here instead of parent.stochastic, as backward methods are only used on these.
+            if isinstance(parent, StochasticTensor):
+                stochastic_nodes.add(parent)
+                if parent.requires_grad and parent.method:
+                    create_higher_order_graph = parent.method.should_create_higher_order_graph()
+                    _create_graph = (
+                            create_higher_order_graph or _create_graph
+                    )
+    if isinstance(SL, storch.Tensor) and SL._tensor.requires_grad:
+        SL._tensor.backward(create_graph=_create_graph)
 
     if update_estimator_params:
         for s_node in stochastic_nodes:
@@ -236,11 +244,11 @@ def backward(
                 s_node.method._update_parameters()
 
     if not create_graph:
-        total_cost._clean()
-        total_cost.grad_fn = None
+        SL._clean()
+        SL.grad_fn = None
         reset()
 
-    return total_cost._tensor
+    return SL._tensor
 
 
 def reset() -> None:

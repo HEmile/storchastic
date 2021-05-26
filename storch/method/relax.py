@@ -185,7 +185,7 @@ class RELAX(Method):
         super().__init__(
             plate_name,
             sampling_method.set_mc_sample(self.sample_gumbel).set_mc_weighting_function(
-                self.plate_weighting
+                 self.plate_weighting
             ),
         )
         if c_phi:

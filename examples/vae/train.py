@@ -111,7 +111,7 @@ def train(epoch, model, train_loader, device, optimizer, args, writer):
     return avg_train_loss
 
 
-def test(epoch, model, test_loader, device):
+def test(epoch: int, model: torch.nn.Module, test_loader, device):
     model.eval()
     test_loss = 0
     with torch.no_grad():
