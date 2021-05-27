@@ -21,6 +21,7 @@ from storch.sampling import (
 import entmax
 
 
+
 class Method(ABC, torch.nn.Module):
     """
     Base class of gradient estimation methods.
@@ -33,7 +34,6 @@ class Method(ABC, torch.nn.Module):
         plate_name (str): The name of the :class:`.Plate` that samples of this method will use.
         sampling_method (storch.sampling.SamplingMethod): The method to sample tensors with given an input distribution.
     """
-
     def __init__(self, plate_name: str, sampling_method: SamplingMethod):
         super().__init__()
         self._estimation_pairs = []
@@ -58,20 +58,21 @@ class Method(ABC, torch.nn.Module):
     def _create_hook(sample: StochasticTensor, name: str, plates: List[Plate]):
         accum_grads = sample.param_grads
         del sample  # Remove from hook closure for GC reasons
-
         def hook(*args: Tuple[any]):
             # For some reason, this args unpacking is required for compatbility with registring on a .grad_fn...?
             # TODO: I'm sure there could be something wrong here
             grad = args[-1]
             if isinstance(grad, tuple):
                 grad = grad[0]
-
-            if name in accum_grads:
-                accum_grads[name] = storch.Tensor(
-                    accum_grads[name]._tensor + grad, [], plates, name + "_grad"
-                )
-            else:
-                accum_grads[name] = storch.Tensor(grad, [], plates, name + "_grad")
+            try:
+                if name in accum_grads:
+                    accum_grads[name] = storch.Tensor(
+                        accum_grads[name]._tensor + grad, [], plates, name + "_grad"
+                    )
+                else:
+                    accum_grads[name] = storch.Tensor(grad, [], plates, name + "_grad")
+            except NameError:
+                pass
 
         # Extremely complex way to ensure the GC cleans up the backward graph
         # What this does is delete the accum_grads field after inference. This is needed to ensure the
@@ -158,7 +159,8 @@ class Method(ABC, torch.nn.Module):
                     to_hook = param
                 hook, clean_hook = Method._create_hook(s_tensor, name, hook_plates)
                 s_tensor._clean_hooks.append(clean_hook)
-                to_hook.register_hook(hook)
+                handle = to_hook.register_hook(hook)
+                s_tensor._remove_handles.append(handle)
 
         # Possibly change something in the tensor now that it is wrapped and registered in the graph.
         # Used for example to rsample in LAX to detach the tensor so that it won't record gradients

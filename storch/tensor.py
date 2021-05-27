@@ -810,6 +810,7 @@ class StochasticTensor(Tensor):
         self.param_grads = {}
         self._grad = None
         self._clean_hooks = []
+        self._remove_handles = []
 
     @property
     def stochastic(self) -> bool:
@@ -835,7 +836,10 @@ class StochasticTensor(Tensor):
             new_param_grads[name] = grad.detach()
         for clean_hook in self._clean_hooks:
             clean_hook()
+        for handle in self._remove_handles:
+            handle.remove()
         self._clean_hooks = []
+        self._remove_handles = []
         super()._clean()
 
 
