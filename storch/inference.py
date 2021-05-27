@@ -108,7 +108,7 @@ def surrogate_loss(debug: bool=False) -> storch.Tensor:
         print_graph(costs)
 
     # Sum of averages of cost node tensors
-    surrogate_loss = 0.0
+    surrogate_losses = []
 
     # Loop over different cost nodes
     for c in costs:
@@ -124,7 +124,7 @@ def surrogate_loss(debug: bool=False) -> storch.Tensor:
         #     accum_loss += reduced_cost
 
         L = c._tensor.new_tensor(0.0)
-        cost_loss = 0.0
+        surrogate_loss_c = 0.0
         # Walk topologically through the graph
         # This is a parallelized implementation of Algorithm 1 in the paper
         for parent in c.walk_parents(depth_first=False, reverse=True):
@@ -194,12 +194,13 @@ def surrogate_loss(debug: bool=False) -> storch.Tensor:
                 )
                 if final_A.ndim == 1:
                     final_A = final_A.squeeze(0)
-                cost_loss += final_A
-        # Use magic box to distribute the cost
-        cost_loss += storch.reduce_plates(magic_box(L) * c, detach_weights=False)
-        # Sum over different costs
-        surrogate_loss += cost_loss
-    return surrogate_loss
+                surrogate_loss_c += final_A
+        # Use magic box to distribute the cost to gradient function
+        surrogate_loss_c += storch.reduce_plates(magic_box(L) * c, detach_weights=False)
+        # Collect surrogate losses for all costs
+        surrogate_losses.append(surrogate_loss_c)
+    SL = torch.sum(torch.stack(surrogate_losses))
+    return SL
 
 def backward(
     debug: bool = False,
