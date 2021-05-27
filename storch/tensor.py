@@ -72,8 +72,10 @@ class Plate:
         plate_weighting = self.weight
         if detach_weights:
             plate_weighting = self.weight.detach()
+        if self.n == 1:
+            return storch.reduce(lambda x: x * plate_weighting, self.name)(tensor)
         # Case: The weight is a single number. First sum, then multiply with the weight (usually taking the mean)
-        if plate_weighting.ndim == 0:
+        elif plate_weighting.ndim == 0:
             return storch.sum(tensor, self) * plate_weighting
 
         # Case: There is a weight for each plate which is not dependent on the other batch dimensions
@@ -214,13 +216,13 @@ class Tensor:
         self._tensor = tensor
         self._parents = []
         self._cleaned = False
-        for p in parents:
+        differentiable_links = has_backwards_path(self, parents)
+        for i, p in enumerate(parents):
             # TODO: Should I re-add this?
             # if p.is_cost:
             #     raise ValueError("Cost nodes cannot have children.")
-            differentiable_link = has_backwards_path(self, p)
-            self._parents.append((p, differentiable_link))
-            p._children.append((self, differentiable_link))
+            self._parents.append((p, differentiable_links[i]))
+            p._children.append((self, differentiable_links[i]))
         self._children = []
         self.plate_dims = batch_dims
         self.event_shape = tensor.shape[batch_dims:]

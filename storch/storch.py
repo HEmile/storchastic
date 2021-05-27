@@ -113,8 +113,8 @@ def reduce_plates(
     """
     tensor, plates = _handle_inputs(tensor, plates)
     for plate in order_plates(plates, reverse=True):
-        if plate.n > 1:
-            tensor = plate.reduce(tensor, detach_weights=detach_weights)
+        tensor = plate.reduce(tensor, detach_weights=detach_weights)
+
     return tensor
 
 

@@ -1,7 +1,6 @@
 import storch
 from torch.distributions import Normal
 import torch
-from storch.util import has_backwards_path
 
 mu = torch.tensor([1., 0.2, 84.3], requires_grad=True)
 theta = torch.tensor([-5., 4.2, 4.3])

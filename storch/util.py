@@ -1,4 +1,4 @@
-from typing import Dict, Optional, List, Tuple, Union
+from typing import Dict, Optional, List, Tuple, Union, Iterable
 from collections import deque
 
 from pyro.distributions import (
@@ -84,6 +84,7 @@ def get_distr_parameters(
                         "was not added because we could not get the attribute from the object.",
                     )
                 pass
+        # Needed to be compatible with torch.Independent
         if hasattr(d, 'base_dist'):
             d = d.base_dist
         else:
@@ -91,29 +92,25 @@ def get_distr_parameters(
     return params
 
 
-def _walk_backward_graph(grad, depth_first=True):
-    if not grad:
-        return
+def _walk_backward_graph(grad: torch.Tensor) -> Iterable[torch.Tensor]:
     visited = set()
     to_visit = deque()
     to_visit.append(grad)
-    pop_func = to_visit.pop if depth_first else to_visit.popleft
     while to_visit:
-        n = pop_func()
-        yield n
-        visited.add(n)
-        for t, _ in n.next_functions:
-            if t and t not in visited:
-                to_visit.append(t)
+        n = to_visit.popleft()
+        if n and n not in visited:
+            yield n
+            visited.add(n)
+            to_visit.extend([f for f, _ in n.next_functions])
 
 
-def walk_backward_graph(tensor: torch.Tensor, depth_first=True):
+def walk_backward_graph(tensor: torch.Tensor) -> Iterable[torch.Tensor]:
     if not tensor.grad_fn:
         raise ValueError("Can only walk backward over graphs with a gradient function.")
-    return _walk_backward_graph(tensor.grad_fn, depth_first)
+    return _walk_backward_graph(tensor.grad_fn)
 
 
-def has_backwards_path(output: Tensor, input: Tensor, depth_first=False):
+def has_backwards_path(output: Tensor, inputs: [Tensor]):
     """
     Returns true if the gradient functions of the torch.Tensor underlying output is connected to the input tensor.
     This is only run once to compute the possibility of links between two storch.Tensor's. The result is saved into the
@@ -123,28 +120,41 @@ def has_backwards_path(output: Tensor, input: Tensor, depth_first=False):
     :param depth_first: Initialized to False as we are usually doing this only for small distances between tensors.
     :return:
     """
-
-    if isinstance(output, StochasticTensor):
-        for param in get_distr_parameters(output.distribution).values():
-            if has_backwards_path(param, input, depth_first):
-                return True
-        return False
-    input = input._tensor
-    if not input.requires_grad:
-        return False
+    output_t = output
     if isinstance(output, Tensor):
-        output = output._tensor
-    if output is input:
-        # This can happen if the input is a parameter of the output distribution
-        return True
-    if not output.grad_fn:
-        return False
-    for p in walk_backward_graph(output, depth_first):
-        if hasattr(p, "variable") and p.variable is input:
-            return True
-        elif input.grad_fn and p is input.grad_fn:
-            return True
-    return False
+        output_t = output._tensor
+    has_paths = [False for _ in inputs]
+    if not output_t.grad_fn:
+        return has_paths
+    if isinstance(output, StochasticTensor):
+        params = get_distr_parameters(output.distribution).values()
+        for param in params:
+            has_paths =[a or b for (a, b) in zip(has_paths, has_backwards_path(param, inputs))]
+        return has_paths
+    to_search = []
+    for i, input in enumerate(inputs):
+        if isinstance(input, Tensor):
+            input = input._tensor
+        if output_t is input:
+            # This can happen if the input is a parameter of the output distribution
+            has_paths[i] = True
+        else:
+            to_search.append((i, input))
+    for p in walk_backward_graph(output_t):
+        found_i = None
+        for j, (i, input) in enumerate(to_search):
+            if hasattr(p, "variable") and p.variable is input:
+                found_i = i
+                break
+            elif input.grad_fn and p is input.grad_fn:
+                found_i = i
+                break
+        if found_i:
+            del to_search[j]
+            has_paths[i] = True
+            if all(has_paths):
+                return has_paths
+    return has_paths
 
 
 def has_differentiable_path(output: Tensor, input: Tensor):
