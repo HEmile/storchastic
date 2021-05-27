@@ -68,21 +68,26 @@ def get_distr_parameters(
     d: Distribution, filter_requires_grad=True
 ) -> Dict[str, torch.Tensor]:
     params = {}
-    for k in d.arg_constraints:
-        try:
-            p = getattr(d, k)
-            if is_tensor(p) and (not filter_requires_grad or p.requires_grad):
-                params[k] = p
-        except AttributeError:
-            from storch import _debug
+    while d:
+        for k in d.arg_constraints:
+            try:
+                p = getattr(d, k)
+                if is_tensor(p) and (not filter_requires_grad or p.requires_grad):
+                    params[k] = p
+            except AttributeError:
+                from storch import _debug
 
-            if _debug:
-                print(
-                    "Attribute",
-                    k,
-                    "was not added because we could not get the attribute from the object.",
-                )
-            pass
+                if _debug:
+                    print(
+                        "Attribute",
+                        k,
+                        "was not added because we could not get the attribute from the object.",
+                    )
+                pass
+        if hasattr(d, 'base_dist'):
+            d = d.base_dist
+        else:
+            d = None
     return params
 
 
