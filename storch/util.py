@@ -110,9 +110,9 @@ def walk_backward_graph(tensor: torch.Tensor) -> Iterable[torch.Tensor]:
     return _walk_backward_graph(tensor.grad_fn)
 
 
-def has_backwards_path(output: Tensor, inputs: [Tensor]):
+def has_backwards_path(output: Tensor, inputs: [Tensor]) -> [bool]:
     """
-    Returns true if the gradient functions of the torch.Tensor underlying output is connected to the input tensor.
+    Returns true for each individual input if the gradient functions of the torch.Tensor underlying output is connected to the input tensor.
     This is only run once to compute the possibility of links between two storch.Tensor's. The result is saved into the
     parent links on storch.Tensor's.
     :param output:
@@ -129,7 +129,8 @@ def has_backwards_path(output: Tensor, inputs: [Tensor]):
     if isinstance(output, StochasticTensor):
         params = get_distr_parameters(output.distribution).values()
         for param in params:
-            has_paths =[a or b for (a, b) in zip(has_paths, has_backwards_path(param, inputs))]
+            # Run this function for each parameter and collect with or
+            has_paths = [a or b for (a, b) in zip(has_paths, has_backwards_path(param, inputs))]
         return has_paths
     to_search = []
     for i, input in enumerate(inputs):
@@ -151,8 +152,9 @@ def has_backwards_path(output: Tensor, inputs: [Tensor]):
                 break
         if found_i:
             del to_search[j]
-            has_paths[i] = True
+            has_paths[found_i] = True
             if all(has_paths):
+                # If we know all inputs are linked, we don't need to explore the rest of the computation graph
                 return has_paths
     return has_paths
 
