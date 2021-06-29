@@ -82,7 +82,7 @@ Which has the following generative story:
 
 #. Sample :math:`\epsilon \sim \mathcal{N}(0, 1)`
 
-#. Compute :math:`f = c+b + \epsilon`
+#. Compute :math:`e = c+b + \epsilon`
 
 #. Compute :math:`f=d*e^2`.
 
