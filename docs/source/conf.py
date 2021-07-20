@@ -19,11 +19,11 @@ sys.path.insert(0, os.path.abspath("../.."))
 # -- Project information -----------------------------------------------------
 
 project = "Storchastic"
-copyright = "2020, Emile van Krieken"
+copyright = "2021, Emile van Krieken"
 author = "Emile van Krieken"
 
 # The full version, including alpha/beta/rc tags
-release = "0.1.0"
+release = "0.3.5"
 
 
 # -- General configuration ---------------------------------------------------
