@@ -1,5 +1,6 @@
 from .wrappers import (
     deterministic,
+    make_left_broadcastable,
     stochastic,
     reduce,
     _exception_wrapper,

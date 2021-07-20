@@ -30,6 +30,7 @@ Mail e.van.krieken@vu.nl for any help or questions.
    installation
    intro
    license
+   faq
    help
    examples
 

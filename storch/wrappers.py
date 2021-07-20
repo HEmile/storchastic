@@ -353,6 +353,19 @@ def deterministic(fn: Optional[Callable] = None, **kwargs):
         fn: Optional function to wrap. If None, this returns another wrapper that accepts a function that will be instantiated
         by the given kwargs.
         unwrap: Set to False to prevent unwrapping :class:`~storch.Tensor` objects.
+        fn_args: List of non-keyword arguments to the wrapped function
+        fn_kwargs: Dictionary of keyword arguments to the wrapped function
+        unwrap: Whether to unwrap the arguments to their torch.Tensor counterpart (default: True)
+        align_tensors: Whether to automatically align the input arguments (default: True)
+        l_broadcast: Whether to automatically left-broadcast (default: True)
+        expand_plates: Instead of adding singleton dimensions on non-existent plates, this will
+        add the plate size itself (default: False) flatten_plates sets this to True automatically.
+        flatten_plates: Flattens the plate dimensions into a single batch dimension if set to true.
+        This can be useful for functions that are written to only work for tensors with a single batch dimension.
+        Note that outputs are unflattened automatically. (default: False)
+        dim: Replaces the dim input in fn_kwargs by the plate dimension corresponding to the given string (optional)
+        dims: Replaces the dims input in fn_kwargs by the plate dimensions corresponding to the given strings (optional)
+        self_wrapper: storch.Tensor that wraps a
     Returns:
         Callable: The wrapped function `fn`.
     """
@@ -360,6 +373,13 @@ def deterministic(fn: Optional[Callable] = None, **kwargs):
         return _deterministic(fn, **kwargs)
     return lambda _f: _deterministic(_f, **kwargs)
 
+def make_left_broadcastable(fn: Optional[Callable]):
+    """
+    Deterministic wrapper that is compatible with functions that are not by themselves left-broadcastable, such as :func:`torch.nn.Conv2d`.
+    This function is on (N, C, H, W) and cannot deal with additional 'independent' dimensions on the left.
+    To fix this, use `make_left_broadcastable(Conv2d(16, 33, 3))`
+    """
+    return deterministic(fn, flatten_plates=True)
 
 def reduce(fn, plates: Union[str, List[str]]):
     """
