@@ -100,7 +100,7 @@ def add_cost(cost: Tensor, name: str):
     return cost
 
 
-def surrogate_loss(debug: bool=False) -> storch.Tensor:
+def surrogate_loss(debug: bool = False) -> storch.Tensor:
     costs: [storch.Tensor] = storch.inference._cost_tensors
     if not costs:
         raise RuntimeError("No cost nodes registered for backward call.")
@@ -179,10 +179,9 @@ def surrogate_loss(debug: bool=False) -> storch.Tensor:
             new_parent._children = parent._children
 
             # Compute the estimator
-            (
-                gradient_function,
-                control_variate,
-            ) = parent.method._estimator(new_parent, reduced_cost)
+            (gradient_function, control_variate,) = parent.method._estimator(
+                new_parent, reduced_cost
+            )
 
             if gradient_function is not None:
                 L = L + gradient_function
@@ -190,7 +189,8 @@ def surrogate_loss(debug: bool=False) -> storch.Tensor:
             if control_variate is not None:
                 final_A = magic_box(L) * control_variate
                 final_A = storch.reduce_plates(
-                    final_A, detach_weights=False,  # TODO: Should this boolean be false or true?
+                    final_A,
+                    detach_weights=False,  # TODO: Should this boolean be false or true?
                 )
                 if final_A.ndim == 1:
                     final_A = final_A.squeeze(0)
@@ -201,6 +201,7 @@ def surrogate_loss(debug: bool=False) -> storch.Tensor:
         surrogate_losses.append(surrogate_loss_c)
     SL = torch.sum(torch.stack(surrogate_losses))
     return SL
+
 
 def backward(
     debug: bool = False,
@@ -232,10 +233,10 @@ def backward(
             if isinstance(parent, StochasticTensor):
                 stochastic_nodes.add(parent)
                 if parent.requires_grad and parent.method:
-                    create_higher_order_graph = parent.method.should_create_higher_order_graph()
-                    _create_graph = (
-                            create_higher_order_graph or _create_graph
+                    create_higher_order_graph = (
+                        parent.method.should_create_higher_order_graph()
                     )
+                    _create_graph = create_higher_order_graph or _create_graph
     if isinstance(SL, storch.Tensor) and SL._tensor.requires_grad:
         SL._tensor.backward(create_graph=_create_graph)
 

@@ -10,6 +10,7 @@ from storch.util import (
     get_distr_parameters,
     rsample_gumbel_softmax,
     rsample_gumbel,
+    magic_box,
 )
 import storch
 from storch.method.baseline import MovingAverageBaseline, BatchAverageBaseline, Baseline
@@ -19,7 +20,6 @@ from storch.sampling import (
     Enumerate,
 )
 import entmax
-
 
 
 class Method(ABC, torch.nn.Module):
@@ -34,6 +34,7 @@ class Method(ABC, torch.nn.Module):
         plate_name (str): The name of the :class:`.Plate` that samples of this method will use.
         sampling_method (storch.sampling.SamplingMethod): The method to sample tensors with given an input distribution.
     """
+
     def __init__(self, plate_name: str, sampling_method: SamplingMethod):
         super().__init__()
         self._estimation_pairs = []
@@ -58,6 +59,7 @@ class Method(ABC, torch.nn.Module):
     def _create_hook(sample: StochasticTensor, name: str, plates: List[Plate]):
         accum_grads = sample.param_grads
         del sample  # Remove from hook closure for GC reasons
+
         def hook(*args: Tuple[any]):
             # For some reason, this args unpacking is required for compatbility with registring on a .grad_fn...?
             # TODO: I'm sure there could be something wrong here
@@ -85,6 +87,7 @@ class Method(ABC, torch.nn.Module):
                 del accum_grads
             except (UnboundLocalError, NameError):
                 pass
+
         return hook, clean_graph
 
     def sample(self, distr: Distribution) -> storch.tensor.StochasticTensor:
@@ -188,17 +191,13 @@ class Method(ABC, torch.nn.Module):
 
     def _estimator(
         self, tensor: StochasticTensor, cost_node: CostTensor
-    ) -> Tuple[
-        Optional[storch.Tensor], Optional[storch.Tensor]
-    ]:
+    ) -> Tuple[Optional[storch.Tensor], Optional[storch.Tensor]]:
         self._estimation_pairs.append((tensor, cost_node))
         return self.estimator(tensor, cost_node)
 
     def estimator(
         self, tensor: StochasticTensor, cost_node: CostTensor
-    ) -> Tuple[
-        Optional[storch.Tensor], Optional[storch.Tensor]
-    ]:
+    ) -> Tuple[Optional[storch.Tensor], Optional[storch.Tensor]]:
         """
         Returns two terms that will be used for inferring higher-order gradient estimates.
         - The first return is the gradient function. It will be multiplied with the cost function.
@@ -286,9 +285,7 @@ class Infer(Method):
 
     def estimator(
         self, tensor: StochasticTensor, cost_node: CostTensor
-    ) -> Tuple[
-        Optional[storch.Tensor],  Optional[storch.Tensor]
-    ]:
+    ) -> Tuple[Optional[storch.Tensor], Optional[storch.Tensor]]:
         return self._score_method.estimator(tensor, cost_node)
 
     def update_parameters(
@@ -553,9 +550,7 @@ class ScoreFunction(Method):
 
     def estimator(
         self, tensor: StochasticTensor, cost: CostTensor
-    ) -> Tuple[
-        Optional[storch.Tensor], Optional[storch.Tensor]
-    ]:
+    ) -> Tuple[Optional[storch.Tensor], Optional[storch.Tensor]]:
         log_prob = tensor.distribution.log_prob(tensor)
         if len(log_prob.shape) > tensor.plate_dims:
             # Sum out over the event shape
@@ -568,7 +563,7 @@ class ScoreFunction(Method):
                 setattr(self, baseline_name, self.baseline_factory(tensor, cost))
             baseline = getattr(self, baseline_name)
             baseline = baseline.compute_baseline(tensor, cost)
-            return log_prob, (1.0 - log_prob) * baseline
+            return log_prob, (1.0 - magic_box(log_prob)) * baseline
         return log_prob, None
 
 

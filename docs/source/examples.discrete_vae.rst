@@ -82,3 +82,42 @@ Discrete Variational Autoencoder
             # Go backward through both deterministic and stochastic nodes, and optimize
             average_ELBO, _ = storch.backward()
             optimizer.step()
+
+    .. code-block:: python
+
+        import torch
+        import storch
+        from vae import minibatches, encode, decode, KLD
+
+        method = ScoreFunctionLOO("z", 8, baseline="batch_average")
+        for data in minibatches():
+            optimizer.zero_grad()
+            # Denote the minibatch dimension as being independent
+            data = storch.denote_independent(data.view(-1, 784), 0, "data")
+
+            # Define variational distribution given data, and sample latent variables
+            q = torch.distributions.OneHotCategorical(logits=encode(data))
+            z = method(q)
+
+            # Compute and register the KL divergence and reconstruction losses to form the ELBO
+            reconstruction = decode(z)
+            storch.add_cost(KLD(q))
+            storch.add_cost(storch.nn.b_binary_cross_entropy(reconstruction, data))
+
+            # Backward pass through deterministic and stochastic nodes, and optimize
+            ELBO = storch.backward()
+            optimizer.step()
+
+    .. code-block:: python
+    class ScoreFunctionLOO(Method):
+        def proposal_dist(self, distr: Distribution, amt_samples: int,
+        ) -> torch.Tensor:
+            return distr.sample((amt_samples,))
+
+        def estimator(self, tensor: StochasticTensor, cost: CostTensor
+        ) -> Tuple[Optional[storch.Tensor], Optional[storch.Tensor]]:
+            # Compute the gradient function (
+            log_prob = tensor.distribution.log_prob(tensor)
+            sum_costs = storch.sum(costs.detach(), tensor.name)
+            baseline = (sum_costs - costs) / (tensor.n - 1)
+            return log_prob, (1.0 - log_prob) * baseline
