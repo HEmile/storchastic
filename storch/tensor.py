@@ -804,7 +804,7 @@ class StochasticTensor(Tensor):
         requires_grad: bool,
         method: Optional[storch.method.Method] = None,
     ):
-        self.distribution = distribution
+        self.distribution: Distribution = distribution
         super().__init__(tensor, parents, plates, name)
         self._requires_grad = requires_grad
         self.n = n

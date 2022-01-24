@@ -89,7 +89,7 @@ Discrete Variational Autoencoder
         import storch
         from vae import minibatches, encode, decode, KLD
 
-        method = ScoreFunctionLOO("z", 8, baseline="batch_average")
+        method = ScoreFunctionLOO("z", 8)
         for data in minibatches():
             optimizer.zero_grad()
             # Denote the minibatch dimension as being independent
@@ -114,10 +114,15 @@ Discrete Variational Autoencoder
         ) -> torch.Tensor:
             return distr.sample((amt_samples,))
 
+        def weighting_function(self, distr: Distribution, amt_samples: int,
+        ) -> torch.Tensor:
+            return torch.full(amt_samples, 1/amt_samples)
+
         def estimator(self, tensor: StochasticTensor, cost: CostTensor
         ) -> Tuple[Optional[storch.Tensor], Optional[storch.Tensor]]:
-            # Compute the gradient function (
+            # Compute gradient function (log-probability)
             log_prob = tensor.distribution.log_prob(tensor)
             sum_costs = storch.sum(costs.detach(), tensor.name)
+            # Compute control variate
             baseline = (sum_costs - costs) / (tensor.n - 1)
-            return log_prob, (1.0 - log_prob) * baseline
+            return log_prob, (1.0 - magic_box(log_prob)) * baseline

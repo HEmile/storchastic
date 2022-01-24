@@ -65,7 +65,7 @@ class SamplingMethod(ABC, torch.nn.Module):
         amt_samples: int,
     ) -> torch.Tensor:
         # TODO: Why does this ignore amt_samples?
-        return distr.sample((self.n_samples,))
+        return distr.sample((amt_samples,))
 
     def set_mc_sample(
         self,

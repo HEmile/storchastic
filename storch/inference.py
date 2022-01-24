@@ -84,17 +84,20 @@ def gather_samples(
     )
 
 
-def add_cost(cost: Tensor, name: str):
-    if cost.event_shape != ():
-        if cost.event_shape == (1,):
-            cost = cost.squeeze(-1)
-        else:
-            raise ValueError("Can only register cost functions with empty event shapes")
-    if not name:
-        raise ValueError(
-            "No name provided to register cost node. Make sure to register an unique name with the cost."
-        )
-    cost = CostTensor(cost._tensor, [cost], cost.plates, name)
+def add_cost(cost: Union[Tensor, torch.Tensor], name: str):
+    if isinstance(cost, torch.Tensor):
+        cost = CostTensor(cost, [], [], name)
+    else:
+        if cost.event_shape != ():
+            if cost.event_shape == (1,):
+                cost = cost.squeeze(-1)
+            else:
+                raise ValueError("Can only register cost functions with empty event shapes")
+        if not name:
+            raise ValueError(
+                "No name provided to register cost node. Make sure to register an unique name with the cost."
+            )
+        cost = CostTensor(cost._tensor, [cost], cost.plates, name)
     if torch.is_grad_enabled():
         storch.inference._cost_tensors.append(cost)
     return cost

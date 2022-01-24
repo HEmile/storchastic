@@ -96,14 +96,16 @@ class Method(ABC, torch.nn.Module):
         :param distr:
         :return:
         """
-        # Unwrap the distributions parameters
-        params: Dict[str, storch.Tensor] = get_distr_parameters(
-            distr, filter_requires_grad=False
-        )
+
         parents: [torch.Tensor] = storch.wrappers._stochastic_parents.copy()
         # If we are in an @stochastic context, external plates might exist.
         plates: [Plate] = storch.wrappers._plate_links.copy()
         requires_grad = False
+
+        # Unwrap the distributions parameters
+        params: Dict[str, storch.Tensor] = get_distr_parameters(
+            distr, filter_requires_grad=False
+        )
         for name, p in params.items():
             requires_grad = requires_grad or p.requires_grad
             if isinstance(p, storch.Tensor):
@@ -551,7 +553,9 @@ class ScoreFunction(Method):
     def estimator(
         self, tensor: StochasticTensor, cost: CostTensor
     ) -> Tuple[Optional[storch.Tensor], Optional[storch.Tensor]]:
-        log_prob = tensor.distribution.log_prob(tensor)
+        log_prob: torch.Tensor = tensor.distribution.log_prob(tensor)
+        # print(cost)
+        # log_prob.register_hook(lambda g: print(g))
         if len(log_prob.shape) > tensor.plate_dims:
             # Sum out over the event shape
             log_prob = log_prob.sum(
