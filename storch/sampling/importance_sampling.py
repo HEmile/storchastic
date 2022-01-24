@@ -37,7 +37,7 @@ class ImportanceSampling(SamplingMethod):
 
     def sample(self, distr: Distribution, parents: [storch.Tensor], plates: [Plate], requires_grad: bool) -> (
         storch.StochasticTensor, Plate):
-        storch_tensor, plate = self._method.sample(distr, parents, plates, requires_grad)
+        storch_tensor, new_plate = self._method.sample(distr, parents, plates, requires_grad)
         # Ensure proposal plates are applied to sample
         params: Dict[str, storch.Tensor] = get_distr_parameters(
             self.proposal, filter_requires_grad=False
@@ -49,7 +49,7 @@ class ImportanceSampling(SamplingMethod):
                     if plate not in storch_tensor.plates:
                         # Insert plate after newly created plate
                         storch_tensor.plates.insert(1, plate)
-        return storch_tensor, plate
+        return storch_tensor, new_plate
 
         # return self._method.sample(distr, parents, plates, requires_grad)
 
