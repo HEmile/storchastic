@@ -115,15 +115,15 @@ class ImportanceSampleDecoder(MCDecoder):
     ) -> Optional[storch.Tensor]:
         # Compute importance weights
         assert isinstance(plate, AncestralPlate)
-        with storch.ignore_wrapping():
-            true_prob = log_prob(tensor, tensor.distribution).exp()
-            proposal_prob = log_prob(tensor, self.proposal_dists[plate.variable_index]).exp()
-            parent_weight = 1.0
-            if plate.parent_plate:
-                parent_weight = plate.parent_plate.weight
-            # TODO: Should I detach the weights?
-            iw_t = parent_weight * true_prob / (proposal_prob + self.epsilon)
-        iw = storch.Tensor(iw_t, [tensor], tensor.plates)
-        return iw
+        # with storch.ignore_wrapping():
+        true_prob = log_prob(tensor, tensor.distribution).exp()
+        proposal_prob = log_prob(tensor, self.proposal_dists[plate.variable_index]).exp()
+        parent_weight = 1.0
+        if plate.parent_plate:
+            parent_weight = plate.parent_plate.weight
+        # TODO: Should I detach the weights?
+        iw_t = parent_weight * true_prob / (proposal_prob + self.epsilon)
+        # iw = storch.Tensor(iw_t, [tensor], tensor.plates)
+        return iw_t
 
 

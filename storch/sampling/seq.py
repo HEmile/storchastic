@@ -37,12 +37,6 @@ class AncestralPlate(storch.Plate):
                 [log_probs],
                 log_probs.plates + [self]
             )
-        else:
-            self.log_probs = storch.Tensor(
-                log_probs,
-                [],
-                [self]
-            )
         self.variable_index = variable_index
         self._in_recursion = False
         self._override_equality = False
@@ -153,6 +147,7 @@ class SequenceDecoding(SamplingMethod):
         self.k = k
         self.eos = eos
         self.reset()
+        self.plate_first = True
 
     def reset(self):
         super().reset()
@@ -183,61 +178,30 @@ class SequenceDecoding(SamplingMethod):
         :return:
         """
 
-        # This code has three parts.
-        # The first prepares all necessary tensors to make sure they can be easily indexed.
-        # This part is quite long as there are many cases.
-        # 1) There have not been any variables sampled so far.
-        # 2) There have been variables sampled, but their results are NOT used to compute the input distribution.
-        #    in other words, the variable to sample is independent of the other sampled variables. However,
-        #    we should still keep track of the other sampled variables to make sure that it still samples without
-        #    replacement properly. In this case, the ancestral plate is not in the plates attribute.
-        #    We also have to make sure that we know in the future what samples are chosen for the _other_ samples.
-        # 3) There have been parents sampled, and this variable is dependent on at least some of them.
-        #    The plates list then contains the ancestral plate. We need to make sure we compute the joint log probs
-        #    for the conditional samples (ie, based on the different sampled variables in the ancestral dimension).
-        # The second part is a loop over all options for the event dimensions. This samples these conditionally
-        # independent samples in sequence. It samples indexes, not events.
-        # The third part after the loop uses the sampled indexes and matches it to the events to be used.
-
-        # LEGEND FOR SHAPE COMMENTS
-        # =========================
-        # To make this code generalize to every bayesian network, complicated shape management is necessary.
-        # The following are references to the shapes that are used within the method
-        #
-        # distr_plates: refers to the plates on the parameters of the distribution. Does *not* include
-        #  the k? ancestral plate (possibly empty)
-        # orig_distr_plates: refers to the plates on the parameters of the distribution, and *can* include
-        #  the k? ancestral plate (possibly empty)
-        # prev_plates: refers to the plates of the previous sampled variable in this swr sample (possibly empty)
-        # plates: refers to all plates except this ancestral plate, of which there are amt_plates. The first plates are
-        #  the distr_plates, after that the prev_plates that are _not_ in distr_plates.
-        #  It is composed of distr_plate x (ancstr_plates - distr_plates)
-        # events: refers to the conditionally independent dimensions of the distribution (the distributions batch shape minus the plates)
-        # k: refers to self.k
-        # k?: refers to an optional plate dimension of this ancestral plate. It either doesn't exist, or is the sample
-        #  dimension. If it exists, this means this sample is conditionally dependent on ancestors.
-        # |D_yv|: refers to the *size* of the domain
-        # amt_samples: refers to the current amount of sampled sequences. amt_samples <= k, but it can be lower if there
-        #  are not enough events to sample from (eg |D_yv| < k)
-        # event_shape: refers to the *shape* of the domain elements
-        #  (can be 0, eg Categorical, or equal to |D_yv| for OneHotCategorical)
-
         # Do the decoding step given the prepared tensors
-        samples, self.joint_log_probs, self.parent_indexing = self.decode(
+        samples, new_joint_log_probs, self.parent_indexing = self.decode(
             distr, self.joint_log_probs, parents, orig_distr_plates
         )
+        if new_joint_log_probs is not None:
+            self.joint_log_probs = new_joint_log_probs
+        else:
+            # We'll assign it later
+            self.joint_log_probs = None
 
         # Find out what sequences have reached the EOS token, and make sure to always sample EOS after that.
         # Does not contain the ancestral plate as this uses samples instead of s_tensor.
         if self.eos:
             self.finished_samples = samples.eq(self.eos)
 
-        k_index = 0
-        plates = orig_distr_plates
         if isinstance(samples, storch.Tensor):
             k_index = samples.plate_dims
             plates = samples.plates
             samples = samples._tensor
+        else:
+            plate_names = list(map(lambda p: p.name, orig_distr_plates))
+            k_index = plate_names.index(self.plate_name) if self.plate_name in plate_names else 0
+            plates = orig_distr_plates
+
 
         plate_size = samples.shape[k_index]
 
@@ -252,10 +216,13 @@ class SequenceDecoding(SamplingMethod):
 
         # Create the newly updated plate
         self.new_plate = self.create_plate(plate_size, plates.copy())
-        plates.append(self.new_plate)
+        # TODO: This can probably be simplified by assuming plate_first
+        plates.insert(k_index, self.new_plate)
 
         if self.parent_indexing is not None:
-            self.parent_indexing.plates.append(self.new_plate)
+            assert isinstance(self.parent_indexing, storch.Tensor)
+            # TODO: This too
+            self.parent_indexing.plates.insert(k_index, self.new_plate)
 
         # Adjust the sequence based on parent samples chosen
         self.seq = list(map(lambda t: self.new_plate.on_unwrap_tensor(t), self.seq))
@@ -271,6 +238,21 @@ class SequenceDecoding(SamplingMethod):
             requires_grad or self.joint_log_probs.requires_grad,
         )
 
+        # Update joint log probs if decoding method did not compute it
+        if new_joint_log_probs is None:
+            s_log_probs = distr.log_prob(s_tensor)
+            if self.joint_log_probs is not None:
+                self.joint_log_probs += s_log_probs
+            else:
+                self.joint_log_probs = s_log_probs
+
+            if self.finished_samples:
+                # Make sure we do not change the log probabilities for samples that were already finished
+                self.joint_log_probs = (
+                        self.joint_log_probs * self.finished_samples
+                        + self.joint_log_probs * (1 - self.finished_samples)
+                )
+            self.new_plate.log_probs = self.joint_log_probs
         self.seq.append(s_tensor)
 
         # Increase variable index for next samples in sequence
@@ -371,27 +353,21 @@ class MCDecoder(SequenceDecoding):
             else:
                 sample = self.mc_sample(distribution, parents, orig_distr_plates, self.k)
 
-        s_log_probs = distribution.log_prob(sample)
-        if joint_log_probs is not None:
-            joint_log_probs += s_log_probs
-        else:
-            joint_log_probs = s_log_probs
-
         if self.finished_samples:
-            # Make sure we do not change the log probabilities for samples that were already finished
-            joint_log_probs = (
-                joint_log_probs * self.finished_samples
-                + joint_log_probs * (1 - self.finished_samples)
-            )
             sample[self.finished_samples] = self.eos
 
-        return sample, joint_log_probs, None
+        return sample, None, None
 
 
 
 
 
 class IterDecoding(SequenceDecoding):
+
+    def __init__(self, plate_name, k, eos):
+        super().__init__(plate_name, k, eos)
+        self.plate_first = False
+
     # Decodes a multivariable discrete distribution (independent over dimensions)
     def decode(
         self,
@@ -407,8 +383,46 @@ class IterDecoding(SequenceDecoding):
         :param parents: List of parents of this tensor
         :param orig_distr_plates: List of plates from the distribution. Can include the self plate k.
         :return: 3-tuple of `storch.Tensor`. 1: The sampled value. 2: The new joint log probabilities of the samples.
-        3: How the samples index the parent samples. Can just be a range if there is no choosing happening.
+        3: How the samples index the parent samples. Can just be None if there is no choosing happening.
         """
+        # This code has three parts.
+        # The first prepares all necessary tensors to make sure they can be easily indexed.
+        # This part is quite long as there are many cases.
+        # 1) There have not been any variables sampled so far.
+        # 2) There have been variables sampled, but their results are NOT used to compute the input distribution.
+        #    in other words, the variable to sample is independent of the other sampled variables. However,
+        #    we should still keep track of the other sampled variables to make sure that it still samples without
+        #    replacement properly. In this case, the ancestral plate is not in the plates attribute.
+        #    We also have to make sure that we know in the future what samples are chosen for the _other_ samples.
+        # 3) There have been parents sampled, and this variable is dependent on at least some of them.
+        #    The plates list then contains the ancestral plate. We need to make sure we compute the joint log probs
+        #    for the conditional samples (ie, based on the different sampled variables in the ancestral dimension).
+        # The second part is a loop over all options for the event dimensions. This samples these conditionally
+        # independent samples in sequence. It samples indexes, not events.
+        # The third part after the loop uses the sampled indexes and matches it to the events to be used.
+
+        # LEGEND FOR SHAPE COMMENTS
+        # =========================
+        # To make this code generalize to every bayesian network, complicated shape management is necessary.
+        # The following are references to the shapes that are used within the method
+        #
+        # distr_plates: refers to the plates on the parameters of the distribution. Does *not* include
+        #  the k? ancestral plate (possibly empty)
+        # orig_distr_plates: refers to the plates on the parameters of the distribution, and *can* include
+        #  the k? ancestral plate (possibly empty)
+        # prev_plates: refers to the plates of the previous sampled variable in this swr sample (possibly empty)
+        # plates: refers to all plates except this ancestral plate, of which there are amt_plates. The first plates are
+        #  the distr_plates, after that the prev_plates that are _not_ in distr_plates.
+        #  It is composed of distr_plate x (ancstr_plates - distr_plates)
+        # events: refers to the conditionally independent dimensions of the distribution (the distributions batch shape minus the plates)
+        # k: refers to self.k
+        # k?: refers to an optional plate dimension of this ancestral plate. It either doesn't exist, or is the sample
+        #  dimension. If it exists, this means this sample is conditionally dependent on ancestors.
+        # |D_yv|: refers to the *size* of the domain
+        # amt_samples: refers to the current amount of sampled sequences. amt_samples <= k, but it can be lower if there
+        #  are not enough events to sample from (eg |D_yv| < k)
+        # event_shape: refers to the *shape* of the domain elements
+        #  (can be 0, eg Categorical, or equal to |D_yv| for OneHotCategorical)
         ancestral_distrplate_index = -1
         is_conditional_sample = False
 
