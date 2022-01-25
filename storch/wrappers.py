@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from copy import copy
 from typing import Union, Any, Tuple, List, Optional, Dict, Callable
+
+from torch.distributions import Distribution
 
 import storch
 import torch
@@ -140,6 +143,20 @@ def _unsqueeze_and_unwrap(
         if isinstance(a, tuple):
             return tuple(l)
         return l
+    elif isinstance(a, Distribution):
+        from storch.util import get_distr_parameters
+        params = get_distr_parameters(a, False)
+        params_unsq = _unsqueeze_and_unwrap(params, multi_dim_plates, align_tensors, l_broadcast, expand_plates, flatten_plates, event_dims)
+        try:
+            if 'logits' in params and 'probs' in params:
+                # Discrete distributions don't like it if you pass both probs and logits
+                _a = a.__class__(logits=params_unsq['logits'])
+            else:
+                # Attempt to instantiate a copy of the distribution using the unsqueezed parameters
+                _a = a.__class__(**params_unsq)
+        except Exception as e:
+            return a
+        return _a
     else:
         return a
 
