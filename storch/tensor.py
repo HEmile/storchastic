@@ -130,6 +130,12 @@ class Plate:
         """
         return tensor
 
+    def index_in(self, plates: List[Plate]) -> int:
+        return plates.index(self)
+
+    def is_in(self, plates: Iterable[Plate]) -> bool:
+        return self in plates
+
 
 class Tensor:
     """

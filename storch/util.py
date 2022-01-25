@@ -271,7 +271,7 @@ def split(
     new_plates = tensor.plates.copy()
 
     index = tensor.get_plate_dim_index(plate.name)
-    plates_index = new_plates.index(plate)
+    plates_index = new_plates.index_in(plate)
     if not create_plates and tensor.plate_dims != index + 1:
         for _plate in reversed(tensor.plates):
             if _plate.n > 1:

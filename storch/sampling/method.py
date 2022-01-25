@@ -40,9 +40,11 @@ class SamplingMethod(ABC, torch.nn.Module):
         self, tensor: storch.StochasticTensor, plate: Plate
     ) -> Optional[storch.Tensor]:
         """
-        Weight by the size of the sample. Overload this if your gradient estimation uses some kind of weighting
+        Weight by the size of the sample. Overload this if your sampling method uses some kind of weighting
         of the different events, like importance sampling or computing the expectation.
         If None is returned, it is assumed the samples are iid monte carlo samples.
+
+        This method is called from storch.method.Method.sample, and it is not needed to manually call this on created plates
         """
         return self.mc_weighting_function(tensor, plate)
 

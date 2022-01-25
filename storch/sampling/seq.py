@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import itertools
 from abc import abstractmethod
-from typing import Union, List, Optional, Tuple
+from typing import Union, List, Optional, Tuple, Callable, Iterable
+
+from storch import Plate
 
 from storch.typing import AnyTensor
 from storch.sampling.method import SamplingMethod
@@ -19,7 +21,7 @@ class AncestralPlate(storch.Plate):
         parents: List[storch.Plate],
         variable_index: int,
         parent_plate: AncestralPlate,
-        selected_samples: storch.Tensor,
+        selected_samples: Optional[storch.Tensor],
         log_probs: storch.Tensor,
         weight: Optional[storch.Tensor] = None,
     ):
@@ -29,9 +31,18 @@ class AncestralPlate(storch.Plate):
         )
         self.parent_plate = parent_plate
         self.selected_samples = selected_samples
-        self.log_probs = storch.Tensor(
-            log_probs._tensor, [log_probs], log_probs.plates + [self]
-        )
+        if isinstance(log_probs, storch.Tensor):
+            self.log_probs = storch.Tensor(
+                log_probs._tensor,
+                [log_probs],
+                log_probs.plates + [self]
+            )
+        else:
+            self.log_probs = storch.Tensor(
+                log_probs,
+                [],
+                [self]
+            )
         self.variable_index = variable_index
         self._in_recursion = False
         self._override_equality = False
@@ -74,13 +85,17 @@ class AncestralPlate(storch.Plate):
         Gets called whenever the given tensor is being unwrapped and unsqueezed for batch use.
         This method should not be called on tensors whose variable index is higher than this plates.
 
+        selected_samples is used to choose from the parent plates what is the previous element in the sequence.
+        This is for example used in sampling without replacement.
+        If set to None, it is assumed the different sequences are indexed by the plate dimension.
+
         :param tensor: The input tensor that is being unwrapped
         :return: The tensor that will be unwrapped and unsqueezed in the future. Can be a modification of the input tensor.
         """
         if self._in_recursion:
             # Required when calling storch.gather in this method. It will call on_unwrap_tensor again.
             return tensor
-        for i, plate in enumerate(tensor.multi_dim_plates()):
+        for i, plate in enumerate(tensor.plates):
             if plate.name != self.name:
                 continue
             assert isinstance(plate, AncestralPlate)
@@ -88,6 +103,11 @@ class AncestralPlate(storch.Plate):
                 return tensor
             # This is true by the filtering at on_collecting_args
             assert plate.variable_index < self.variable_index
+
+            if not self.selected_samples:
+                new_plates = tensor.plates.copy()
+                new_plates[i] = self
+                return storch.Tensor(tensor._tensor, [tensor], new_plates)
 
             parent_plates = []
             current_plate = self
@@ -114,6 +134,11 @@ class AncestralPlate(storch.Plate):
             break
         return tensor
 
+    def index_in(self, plates: List[Plate]) -> int:
+        return list(map(lambda p: p.name, plates)).index(self.name)
+
+    def is_in(self, plates: Iterable[Plate]) -> bool:
+        return any(map(lambda p: p.name == self.name, plates))
 
 class SequenceDecoding(SamplingMethod):
     """
@@ -232,6 +257,7 @@ class SequenceDecoding(SamplingMethod):
         if self.parent_indexing is not None:
             self.parent_indexing.plates.append(self.new_plate)
 
+        # Adjust the sequence based on parent samples chosen
         self.seq = list(map(lambda t: self.new_plate.on_unwrap_tensor(t), self.seq))
 
         # Construct the stochastic tensor
@@ -247,7 +273,7 @@ class SequenceDecoding(SamplingMethod):
 
         self.seq.append(s_tensor)
 
-        # Increase variable index
+        # Increase variable index for next samples in sequence
         self.variable_index += 1
         return s_tensor, self.new_plate
 
@@ -322,6 +348,7 @@ class SequenceDecoding(SamplingMethod):
 
 
 class MCDecoder(SequenceDecoding):
+
     def decode(
         self,
         distribution: Distribution,
@@ -336,15 +363,16 @@ class MCDecoder(SequenceDecoding):
             if plate.name == self.plate_name:
                 is_conditional_sample = True
 
-        if is_conditional_sample:
-            sample = self.mc_sample(
-                distribution, parents, orig_distr_plates, 1
-            ).squeeze(0)
-        else:
-            sample = self.mc_sample(distribution, parents, orig_distr_plates, self.k)
+        with storch.ignore_wrapping():
+            if is_conditional_sample:
+                sample = self.mc_sample(
+                    distribution, parents, orig_distr_plates, 1
+                ).squeeze(0)
+            else:
+                sample = self.mc_sample(distribution, parents, orig_distr_plates, self.k)
 
         s_log_probs = distribution.log_prob(sample)
-        if joint_log_probs:
+        if joint_log_probs is not None:
             joint_log_probs += s_log_probs
         else:
             joint_log_probs = s_log_probs
@@ -360,7 +388,11 @@ class MCDecoder(SequenceDecoding):
         return sample, joint_log_probs, None
 
 
+
+
+
 class IterDecoding(SequenceDecoding):
+    # Decodes a multivariable discrete distribution (independent over dimensions)
     def decode(
         self,
         distr: Distribution,

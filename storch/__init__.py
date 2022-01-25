@@ -45,12 +45,12 @@ if version.parse(torch.__version__) < version.parse("1.8.0"):
         _torch.distributions.utils.broadcast_all
     )
 
-# Distributions import broadcast_all by name, meaning they refer to the non-monkey patched version.
-# Loop over every distribution to apply the monkey patch.
-for module_info in pkgutil.iter_modules(_torch.distributions.__path__):
-    module = sys.modules.get("torch.distributions." + module_info.name)
-    if "broadcast_all" in module.__dict__:
-        module.broadcast_all = _torch.distributions.utils.broadcast_all
+    # Distributions import broadcast_all by name, meaning they refer to the non-monkey patched version.
+    # Loop over every distribution to apply the monkey patch.
+    for module_info in pkgutil.iter_modules(_torch.distributions.__path__):
+        module = sys.modules.get("torch.distributions." + module_info.name)
+        if "broadcast_all" in module.__dict__:
+            module.broadcast_all = _torch.distributions.utils.broadcast_all
 
 # Validating arguments is not compatible with Storchastic as it does instanceof torch.Tensor checks
 # Necessary for PyTorch versions above 1.8.0

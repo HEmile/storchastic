@@ -146,12 +146,12 @@ def surrogate_loss(debug: bool = False) -> storch.Tensor:
             parent_plates = parent.multi_dim_plates()
             # Reduce all plates that are in the cost node but not in the parent node
             for plate in storch.order_plates(c.multi_dim_plates(), reverse=True):
-                if plate not in parent_plates:
+                if not plate.is_in(parent_plates):
                     reduced_cost = plate.reduce(reduced_cost, detach_weights=True)
             # Align the parent tensor so that the plate dimensions are in the same order as the cost tensor
             # TODO: This can probably be implemented with torch.movedim
             for index_c, plate in enumerate(reduced_cost.multi_dim_plates()):
-                index_p = parent_plates.index(plate)
+                index_p = plate.index_in(parent_plates)
                 if index_c != index_p:
                     parent_tensor = parent_tensor.transpose(index_p, index_c)
                     parent_plates[index_p], parent_plates[index_c] = (
@@ -160,7 +160,7 @@ def surrogate_loss(debug: bool = False) -> storch.Tensor:
                     )
             # Add empty (k=1) plates to new parent
             for plate in parent.plates:
-                if plate not in parent_plates:
+                if not plate.is_in(parent_plates):
                     parent_plates.append(plate)
 
             # Create new storch Tensors with different order of plates for the cost and parent

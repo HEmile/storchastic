@@ -258,7 +258,26 @@ def _prepare_outputs_det(
                 "Creation of stochastic storch Tensor within deterministic context"
             )
         # TODO: Does this require shape checking? Parent/Plate checking?
-        return o, index + 1
+        #   This might be very buggy, hard to figure out how to merge these concepts... Try to prevent creating
+        #   storch.Tensors within deterministic contexts.
+        new_plates = o.plates.copy()
+        for plate in reversed(plates):
+            plate_found = False
+            for i, other_plate in enumerate(new_plates):
+                if plate.name == other_plate.name:
+                    plate_found = True
+                    if hasattr(plate, "variable_index") :
+                        assert hasattr(other_plate, "variable_index")
+                        if plate.variable_index > other_plate.variable_index:
+                            new_plates[i] = plate
+            if not plate_found:
+                new_plates.insert(0, plate)
+
+        new_parents = parents.copy()
+        new_parents.append(o)
+
+        t = storch.Tensor(o._tensor, parents, new_plates, name=name + str(index))
+        return t, index + 1
     if isinstance(o, torch.Tensor):  # Explicitly _not_ a storch.Tensor
         if unflatten_plates:
             plate_dims = tuple([plate.n for plate in plates if plate.n > 1])

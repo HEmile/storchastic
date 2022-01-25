@@ -180,6 +180,7 @@ class SampleWithoutReplacement(IterDecoding):
     def weighting_function(
         self, tensor: storch.StochasticTensor, plate: storch.Plate
     ) -> Optional[storch.Tensor]:
+        # TODO: Doesnt take into account eos tokens
         return self.compute_iw(plate, self.biased_iw).detach()
 
     def compute_iw(self, plate: AncestralPlate, biased: bool):
