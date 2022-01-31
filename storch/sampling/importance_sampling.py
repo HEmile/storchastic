@@ -24,10 +24,6 @@ def add_prop_plates(proposal: Distribution, plates: List[Plate]):
                     plates.insert(1, plate)
 
 
-@storch.deterministic
-def log_prob(tensor: storch.Tensor, distribution: Distribution):
-    return distribution.log_prob(tensor)
-
 class ImportanceSampling(SamplingMethod):
     # Performs importance sampling from a single distribution
     def __init__(self, plate_name: str, n: int, proposal: Distribution):
@@ -53,7 +49,7 @@ class ImportanceSampling(SamplingMethod):
         # Apply importance weights
         true_prob = tensor.distribution.log_prob(tensor).exp()
         proposal_prob = self.proposal.log_prob(tensor).exp()
-        return true_prob / proposal_prob
+        return (true_prob / (plate.n * proposal_prob)).detach()
 
     def sample(self, distr: Distribution, parents: [storch.Tensor], plates: [Plate], requires_grad: bool) -> (
         storch.StochasticTensor, Plate):
@@ -115,15 +111,12 @@ class ImportanceSampleDecoder(MCDecoder):
     ) -> Optional[storch.Tensor]:
         # Compute importance weights
         assert isinstance(plate, AncestralPlate)
-        # with storch.ignore_wrapping():
-        true_prob = log_prob(tensor, tensor.distribution).exp()
-        proposal_prob = log_prob(tensor, self.proposal_dists[plate.variable_index]).exp()
+        true_prob = tensor.distribution.log_prob(tensor).exp()
+        proposal_prob = self.proposal_dists[plate.variable_index].log_prob(tensor).exp()
         parent_weight = 1.0
         if plate.parent_plate:
-            parent_weight = plate.parent_plate.weight
+            parent_weight = plate.parent_plate.weight * plate.n
         # TODO: Should I detach the weights?
-        iw_t = parent_weight * true_prob / (proposal_prob + self.epsilon)
-        # iw = storch.Tensor(iw_t, [tensor], tensor.plates)
-        return iw_t
+        return (parent_weight * true_prob / (plate.n * (proposal_prob + self.epsilon))).detach()
 
 

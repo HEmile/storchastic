@@ -22,7 +22,7 @@ class AncestralPlate(storch.Plate):
         variable_index: int,
         parent_plate: AncestralPlate,
         selected_samples: Optional[storch.Tensor],
-        log_probs: storch.Tensor,
+        log_probs: Optional[storch.Tensor],
         weight: Optional[storch.Tensor] = None,
     ):
         super().__init__(name, n, parents, weight)
@@ -235,7 +235,7 @@ class SequenceDecoding(SamplingMethod):
             self.plate_name,
             plate_size,
             distr,
-            requires_grad or self.joint_log_probs.requires_grad,
+            requires_grad or self.joint_log_probs is not None and self.joint_log_probs.requires_grad,
         )
 
         # Update joint log probs if decoding method did not compute it
@@ -253,6 +253,7 @@ class SequenceDecoding(SamplingMethod):
                         + self.joint_log_probs * (1 - self.finished_samples)
                 )
             self.new_plate.log_probs = self.joint_log_probs
+            s_tensor._requires_grad = s_tensor.requires_grad or self.joint_log_probs.requires_grad
         self.seq.append(s_tensor)
 
         # Increase variable index for next samples in sequence

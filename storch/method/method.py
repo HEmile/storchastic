@@ -187,6 +187,7 @@ class Method(ABC, torch.nn.Module):
                 s_tensor.distribution,
                 False,
             )
+            # TODO: why is _set_method not called on this new_s_tensor?
             new_s_tensor.param_grads = s_tensor.param_grads
             return new_s_tensor
         return s_tensor

@@ -1,9 +1,12 @@
 from __future__ import annotations
+
+from queue import Queue
+
 import torch
 import storch
 from torch.distributions import Distribution
 from collections import deque
-from typing import List, Iterable, Any, Callable, Iterator, Dict
+from typing import List, Iterable, Any, Callable, Iterator, Dict, Tuple, Deque
 import builtins
 from itertools import product
 from typing import Optional
@@ -220,7 +223,7 @@ class Tensor:
 
         self._name = name
         self._tensor = tensor
-        self._parents = []
+        self._parents: List[Tuple[Tensor, bool]] = []
         self._cleaned = False
         differentiable_links = has_backwards_path(self, parents)
         for i, p in enumerate(parents):
@@ -235,7 +238,7 @@ class Tensor:
         self.event_dims = len(self.event_shape)
         self.plates = plates
 
-    def __torch_function__(self, func, types, args=(), kwargs=None):
+    def __torch_function__(self, func: Callable, types, args=(), kwargs=None) -> Callable:
         """
         Called whenever a torch.* or torch.nn.functional.* method is being called on a storch.Tensor. This wraps
         that method in the deterministic wrapper to properly handle all input arguments and outputs.
@@ -261,7 +264,7 @@ class Tensor:
 
         return storch.wrappers._handle_deterministic(func, args, kwargs)
 
-    def __getattr__(self, item):
+    def __getattr__(self, item) -> Any:
         """
         Called whenever an attribute is called on a storch.Tensor object that is not directly implemented by storch.Tensor.
         It defers it to the underlying torch.Tensor. If it is a callable (ie, torch.Tensor implements a function
@@ -303,14 +306,14 @@ class Tensor:
         )
         return t + " " + str(self._tensor) + " Batch links: " + str(self.plates)
 
-    def __repr__(self):
-        return self._tensor.__repr__()
+    def __repr__(self) -> str:
+        return f"[{repr(self.name)}, {repr(self._tensor)}, {repr(self.plates)}"
 
-    def __hash__(self):
+    def __hash__(self) -> int:
         return object.__hash__(self)
 
     @storch.deterministic
-    def __eq__(self, other):
+    def __eq__(self, other) -> bool:
         return self.__eq__(other)
 
     @storch.deterministic(l_broadcast=False)
@@ -323,27 +326,27 @@ class Tensor:
 
     def _walk_backwards(
         self,
-        expand_fn,
+        expand_fn: Callable[[Tensor], Iterator[Tuple[Tensor, bool]]],
         depth_first=True,
         reverse=False, # Only supported for breadth-first
         only_differentiable=False,
         repeat_visited=False,
         walk_fn=lambda x: x,
-    ) -> Iterator:
+    ) -> Iterator[Tensor]:
         visited = set()
         visited_ordered = []
         if depth_first:
             S = [self]
             while S:
                 v = S.pop()
-                if repeat_visited or v not in visited:
+                if repeat_visited or not v.is_in(visited):
                     yield walk_fn(v)
                     visited.add(v)
                     for w, d in expand_fn(v):
                         if d or not only_differentiable:
                             S.append(w)
         else:
-            queue = deque()
+            queue: Deque[Tensor] = deque()
             visited.add(self)
             queue.append(self)
             while queue:
@@ -353,13 +356,14 @@ class Tensor:
                 else:
                     yield walk_fn(v)
                 for w, d in expand_fn(v):
-                    if (repeat_visited or w not in visited) and (
+                    if (repeat_visited or not w.is_in(visited)) and (
                         d or not only_differentiable
                     ):
                         visited.add(w)
                         queue.append(w)
             if reverse:
-                return reversed(visited_ordered)
+                for v in reversed(visited_ordered):
+                    yield v
 
     def walk_parents(
         self,
@@ -368,7 +372,7 @@ class Tensor:
         only_differentiable=False,
         repeat_visited=False,
         walk_fn=lambda x: x,
-    ):
+    ) -> Iterator[Tensor]:
         """
         Searches through the parents of this Tensor in the stochastic computation graph.
 
@@ -387,18 +391,20 @@ class Tensor:
         return self._walk_backwards(
             lambda p: p._parents,
             depth_first,
+            reverse,
             only_differentiable,
             repeat_visited,
             walk_fn,
         )
 
-    def walk_children(
+    def walk_children (
         self,
         depth_first=True,
+        reverse=False,
         only_differentiable=False,
         repeat_visited=False,
         walk_fn=lambda x: x,
-    ):
+    ) -> Iterator[Tensor]:
         """
         Searches through the children of this Tensor in the stochastic computation graph.
 
@@ -414,12 +420,13 @@ class Tensor:
         return self._walk_backwards(
             lambda p: p._children,
             depth_first,
+            reverse,
             only_differentiable,
             repeat_visited,
             walk_fn,
         )
 
-    def _clean(self):
+    def _clean(self) -> None:
         """
         Cleans up :attr:`_children` and :attr:`_parents` for all nodes in the subgraph of this node (depth first)
         """
@@ -455,6 +462,10 @@ class Tensor:
             bool: True if this is a cost node in the stochastic computation graph, False otherwise.
         """
         return False
+
+    @property
+    def parents(self) -> List[Tensor]:
+        return list(map(lambda p: p[0], self._parents))
 
     @property
     def requires_grad(self) -> bool:
@@ -542,6 +553,12 @@ class Tensor:
             "storch.add_cost, then use storch.backward()."
         )
 
+    def is_in(self, tensors: Iterable[Tensor]) -> bool:
+        for tensor in tensors:
+            if tensor is self:
+                return True
+
+        return False
     # region OperatorOverloads
 
     def __len__(self) -> int:
@@ -741,6 +758,8 @@ class Tensor:
         return torch.logical_xor(other, self)
 
     # endregion
+
+
 
 
 class CostTensor(Tensor):

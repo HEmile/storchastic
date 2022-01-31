@@ -33,11 +33,21 @@ def _convert_indices(tensor: storch.Tensor, dims: _indices) -> (List[int], List[
 
 
 def mean(tensor: storch.Tensor, dims: _indices) -> storch.Tensor:
+    """
+    Simply takes the mean of the tensor over the dimensions given.
+    WARNING: This does NOT weight the different elements according to the plates. You will very likely want to
+    call the reduce_plates method instead.
+    """
     indices, reduced_batches = _convert_indices(tensor, dims)
     return storch.reduce(torch.mean, plates=reduced_batches)(tensor, indices)
 
 
 def sum(tensor: storch.Tensor, dims: _indices) -> storch.Tensor:
+    """
+    Simply sums the tensor over the dimensions given.
+    WARNING: This does NOT weight the different elements according to the plates. You will very likely want to
+    call the reduce_plates method instead.
+    """
     indices, reduced_batches = _convert_indices(tensor, dims)
     return storch.reduce(torch.sum, plates=reduced_batches)(tensor, indices)
 
