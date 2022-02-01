@@ -145,7 +145,7 @@ class GumbelSoftmaxWOR(UnorderedSet):
                                                 isinstance(distr, torch.distributions.Bernoulli), self.temperature)
         gumbel_wor = storch.StochasticTensor(
             gumbel_wor._tensor,
-            list(zip(*hard_sample._parents))[0],
+            hard_sample.parents,
             hard_sample.plates,
             hard_sample.name,
             self.k,

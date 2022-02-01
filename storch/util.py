@@ -141,6 +141,8 @@ def has_backwards_path(output: Tensor, inputs: [Tensor]) -> [bool]:
             has_paths[i] = True
         else:
             to_search.append((i, input))
+    if len(to_search) == 0:
+        return False
     for p in walk_backward_graph(output_t):
         found_i = None
         for j, (i, input) in enumerate(to_search):

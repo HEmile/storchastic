@@ -225,13 +225,15 @@ class Tensor:
         self._tensor = tensor
         self._parents: List[Tuple[Tensor, bool]] = []
         self._cleaned = False
-        differentiable_links = has_backwards_path(self, parents)
+        # DISCONTINUED FOR NOW BECAUSE OF PERFORMANCE OVERHEAD
+        # differentiable_links = has_backwards_path(self, parents)
         for i, p in enumerate(parents):
             # TODO: Should I re-add this?
             # if p.is_cost:
             #     raise ValueError("Cost nodes cannot have children.")
-            self._parents.append((p, differentiable_links[i]))
-            p._children.append((self, differentiable_links[i]))
+            # TODO: DIFFERENTIABLE LINKS MANUALLY SET TO FALSE. THIS MIGHT CAUSE BUGS IN THE FUTURE
+            self._parents.append((p, False))
+            p._children.append((self, False))
         self._children = []
         self.plate_dims = batch_dims
         self.event_shape = tensor.shape[batch_dims:]
@@ -273,7 +275,7 @@ class Tensor:
         TODO: This should probably filter the methods
         """
         attr = getattr(torch.Tensor, item)
-        if isinstance(attr, Callable):
+        if callable(attr):
             func_name = attr.__name__
             if func_name in exception_methods:
                 raise IllegalStorchExposeError(

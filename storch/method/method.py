@@ -555,8 +555,9 @@ class ScoreFunction(Method):
         self, tensor: StochasticTensor, cost: CostTensor
     ) -> Tuple[Optional[storch.Tensor], Optional[storch.Tensor]]:
         log_prob: torch.Tensor = tensor.distribution.log_prob(tensor)
+        # tensor.distribution.logits.register_hook(lambda g: print("logits grad", g))
         # print(cost)
-        # log_prob.register_hook(lambda g: print(g))
+        # log_prob.register_hook(lambda g: print("grad", g))
         if len(log_prob.shape) > tensor.plate_dims:
             # Sum out over the event shape
             log_prob = log_prob.sum(
