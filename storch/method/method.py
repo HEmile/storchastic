@@ -392,7 +392,7 @@ class GumbelSoftmax(Method):
             return True
         raise ValueError(
             "There is no differentiable path between the cost tensor and the stochastic tensor. "
-            "We cannot use reparameterization. Use a different gradient estimator, or make sure your"
+            "We cannot use reparameterization. Use a different gradient estimator, or make sure your "
             "code is differentiable."
         )
 

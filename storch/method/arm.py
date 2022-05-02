@@ -63,7 +63,7 @@ class ARM(Method):
         return weighting
 
     def post_sample(self, tensor: storch.StochasticTensor) -> Optional[storch.Tensor]:
-        return tensor > 0.0
+        return (tensor > 0.0).float()
 
     def comp_estimator(
         self, tensor: torch.Tensor, cost: torch.Tensor, logits: torch.Tensor, plate_index: int, n: int
