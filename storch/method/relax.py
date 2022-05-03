@@ -1,3 +1,5 @@
+import warnings
+
 from functools import reduce
 from operator import mul
 from typing import Optional, Callable, Tuple
@@ -344,6 +346,9 @@ class RELAX(Method):
         for tensor in tensors:
             # TODO: We have to select the probs of the distribution here as that's what it flows to. Is this always correct?
             d_param = tensor.grad['probs']
+            if not d_param.requires_grad:
+                warnings.warn("Gradient of input tensor does not require grad which is needed to train the REBAR variance parameter.".format(tensor))
+                continue
             variance = (d_param ** 2).sum(d_param.event_dim_indices)
             var_loss = storch.reduce_plates(variance)
 
