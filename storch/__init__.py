@@ -28,6 +28,7 @@ import pkgutil
 import sys
 
 _debug = False
+CHECK_DIFFERENTIABLE_PATH = False
 # Hard-coded monkey patches: These do not support __torch_function__ (PyTorch version 1.5.0)
 _torch.is_tensor = storch.is_tensor
 _torch.Tensor.to = deterministic(_torch.Tensor.to)

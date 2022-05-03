@@ -323,7 +323,7 @@ class Reparameterization(Method):
         super().__init__(plate_name, sampling_method.set_mc_sample(self.reparam_sample))
 
     def is_pathwise(self, tensor: StochasticTensor, cost_node: CostTensor) -> bool:
-        if has_differentiable_path(cost_node, tensor):
+        if not storch.CHECK_DIFFERENTIABLE_PATH or has_differentiable_path(cost_node, tensor):
             # There is a differentiable path, so we will just use reparameterization here.
             return True
         raise ValueError(
@@ -387,7 +387,7 @@ class GumbelSoftmax(Method):
         )
 
     def is_pathwise(self, tensor: StochasticTensor, cost_node: CostTensor) -> bool:
-        if has_differentiable_path(cost_node, tensor):
+        if not storch.CHECK_DIFFERENTIABLE_PATH or has_differentiable_path(cost_node, tensor):
             # There is a differentiable path, so we will just use reparameterization here.
             return True
         raise ValueError(
@@ -461,7 +461,7 @@ class GumbelEntmax(Method):
     def is_pathwise(
         self, tensor: storch.StochasticTensor, cost_node: storch.CostTensor
     ) -> bool:
-        if has_differentiable_path(cost_node, tensor):
+        if not storch.CHECK_DIFFERENTIABLE_PATH or has_differentiable_path(cost_node, tensor):
             # There is a differentiable path, so we will just use reparameterization here.
             return True
         raise ValueError(
