@@ -42,11 +42,12 @@ class AncestralPlate(storch.Plate):
         self._override_equality = False
 
     def __eq__(self, other):
+        if not isinstance(other, AncestralPlate):
+            return False
         if self._override_equality:
             return other.name == self.name
         return (
             super().__eq__(other)
-            and isinstance(other, AncestralPlate)
             and self.variable_index == other.variable_index
         )
 
@@ -63,6 +64,8 @@ class AncestralPlate(storch.Plate):
         """
         if self._in_recursion:
             self._override_equality = True
+        if any(map(lambda plate: isinstance(plate, AncestralPlate) and plate._in_recursion, plates)) and not self._in_recursion:
+            return False
         return super().on_collecting_args(plates)
 
     def on_duplicate_plate(self, plate: storch.Plate) -> bool:
@@ -98,7 +101,7 @@ class AncestralPlate(storch.Plate):
             # This is true by the filtering at on_collecting_args
             assert plate.variable_index < self.variable_index
 
-            if not self.selected_samples:
+            if self.selected_samples is None:
                 new_plates = tensor.plates.copy()
                 new_plates[i] = self
                 return storch.Tensor(tensor._tensor, [tensor], new_plates)

@@ -184,19 +184,20 @@ class SampleWithoutReplacement(IterDecoding):
         return self.compute_iw(plate, self.biased_iw).detach()
 
     def compute_iw(self, plate: AncestralPlate, biased: bool):
+        k = plate.perturb_log_probs.shape[-1]
         # Compute importance weights. The kth sample has 0 weight, and is only used to compute the importance weights
         q = (
             1
             - (
                 -(
                     plate.log_probs
-                    - plate.perturb_log_probs._tensor[..., self.k - 1].unsqueeze(-1)
+                    - plate.perturb_log_probs._tensor[..., k - 1].unsqueeze(-1)
                 ).exp()
             ).exp()
         ).detach()
         iw = plate.log_probs.exp() / (q + self.EPS)
         # Set the weight of the kth sample (kappa) to 0.
-        iw[..., self.k - 1] = 0.0
+        iw[..., k - 1] = 0.0
         if biased:
             WS = storch.sum(iw, plate).detach()
             return iw / WS
