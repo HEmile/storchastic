@@ -47,10 +47,10 @@ Feel free to create an issue if an estimator is missing here.
 - REINFORCE Without Replacement [6]
 - Unordered Set Estimator [13]
 - ARM [15]
+- Rao-Blackwellized REINFORCE [12]
 
 ### In development
 - Memory Augmented Policy Optimization [11]
-- Rao-Blackwellized REINFORCE [12]
 
 ### Planned
 - Measure valued derivatives [1, 14]
