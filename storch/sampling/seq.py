@@ -44,7 +44,7 @@ class AncestralPlate(storch.Plate):
     def __eq__(self, other):
         if not isinstance(other, AncestralPlate):
             return False
-        if self._override_equality:
+        if self._override_equality or other._override_equality:
             return other.name == self.name
         return (
             super().__eq__(other)
@@ -62,6 +62,9 @@ class AncestralPlate(storch.Plate):
         :param plates:
         :return:
         """
+        # TODO: It seems like in_recursion controls _override_equality. Does it have other uses? Can we remove it and just
+        #  use _override_equality?
+        # TODO: in the expand in on_unwrap_tensor, _override_equality needs to be true but isn't.
         if self._in_recursion:
             self._override_equality = True
         if any(map(lambda plate: isinstance(plate, AncestralPlate) and plate._in_recursion, plates)) and not self._in_recursion:
@@ -92,6 +95,7 @@ class AncestralPlate(storch.Plate):
         if self._in_recursion:
             # Required when calling storch.gather in this method. It will call on_unwrap_tensor again.
             return tensor
+        # Find the corresponding ancestral plate
         for i, plate in enumerate(tensor.plates):
             if plate.name != self.name:
                 continue
@@ -102,21 +106,22 @@ class AncestralPlate(storch.Plate):
             assert plate.variable_index < self.variable_index
 
             if self.selected_samples is None:
+                # If this sequence method does not explicitly select from previous samples, just return it with the current plate
                 new_plates = tensor.plates.copy()
                 new_plates[i] = self
                 return storch.Tensor(tensor._tensor, [tensor], new_plates)
 
-            parent_plates = []
+            downstream_plates = []
             current_plate = self
 
             # Collect the list of plates from the tensors variable index to this plates variable index
             while current_plate.variable_index != plate.variable_index:
-                parent_plates.append(current_plate)
+                downstream_plates.append(current_plate)
                 current_plate = current_plate.parent_plate
             assert current_plate == plate
 
             # Go over all parent plates and gather their respective choices.
-            for parent_plate in reversed(parent_plates):
+            for parent_plate in reversed(downstream_plates):
                 self._in_recursion = True
                 expanded_selected_samples = expand_with_ignore_as(
                     parent_plate.selected_samples, tensor, self.name

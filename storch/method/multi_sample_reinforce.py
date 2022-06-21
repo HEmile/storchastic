@@ -6,20 +6,7 @@ from storch.method.method import Method
 from storch.sampling import SampleWithoutReplacement
 
 
-class ScoreFunctionWOR(Method):
-    """
-    Implement Buy 4 REINFORCE Samples, Get a Baseline for Free! https://openreview.net/pdf?id=r1lgTGL5DE
-    Use biased=True for the biased normalized version which has lower variance.
-    """
-
-    def __init__(
-        self, plate_name: str, k: int, biased: bool = True, use_baseline: bool = True
-    ):
-        # Use k + 1 to be able to compute kappa, the k+1th perturbed log-prob
-        super().__init__(plate_name, SampleWithoutReplacement(plate_name, k, biased))
-        self.biased = biased
-        self.use_baseline = use_baseline
-
+class SeqMethod(Method):
     def is_pathwise(
         self, tensor: storch.StochasticTensor, cost_node: storch.CostTensor
     ) -> bool:
@@ -40,6 +27,21 @@ class ScoreFunctionWOR(Method):
                     "The given tensor contains an ancestral plate that the cost node doesn't have."
                 )
         return True
+
+
+class ScoreFunctionWOR(SeqMethod):
+    """
+    Implement Buy 4 REINFORCE Samples, Get a Baseline for Free! https://openreview.net/pdf?id=r1lgTGL5DE
+    Use biased=True for the biased normalized version which has lower variance.
+    """
+
+    def __init__(
+        self, plate_name: str, k: int, biased: bool = True, use_baseline: bool = True
+    ):
+        # Use k + 1 to be able to compute kappa, the k+1th perturbed log-prob
+        super().__init__(plate_name, SampleWithoutReplacement(plate_name, k, biased))
+        self.biased = biased
+        self.use_baseline = use_baseline
 
     def estimator(
         self, tensor: storch.StochasticTensor, cost_node: storch.CostTensor

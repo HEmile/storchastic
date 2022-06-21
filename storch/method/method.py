@@ -134,7 +134,7 @@ class Method(ABC, torch.nn.Module):
         batch_weighting = self.sampling_method.weighting_function(s_tensor, plate)
         if batch_weighting is not None:
             plate.weight = batch_weighting
-            # TODO: I don't think this code should be here.
+            # TODO: Is there a smarter way to handle this? Is it always properly added?
             # if isinstance(batch_weighting, storch.Tensor):
             #     batch_weighting.plates[0] = plate
 

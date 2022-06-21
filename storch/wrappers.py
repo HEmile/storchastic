@@ -106,6 +106,7 @@ def _unsqueeze_and_unwrap(
 
         # Optionally expand the singleton dimensions to the plate size
         if expand_plates:
+            # TODO: Can maybe be optimized by only running this if the shape is different
             tensor = tensor.expand(tuple(plate_dims) + tensor.shape[len(plate_dims) :])
         # Optionally flatten the plate dimensions to a single batch dimension
         if flatten_plates:

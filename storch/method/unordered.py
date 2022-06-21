@@ -1,12 +1,12 @@
 from typing import Optional, Tuple
 
 import storch
-from storch.method.method import Method
+from storch.method.multi_sample_reinforce import SeqMethod
 from storch.sampling import UnorderedSet, GumbelSoftmaxWOR
 from storch.util import magic_box
 
 
-class UnorderedSetEstimator(Method):
+class UnorderedSetEstimator(SeqMethod):
     """
     Implements the Unordered Set REINFORCE Estimator with baseline from https://openreview.net/forum?id=rklEj2EFvB
     (Wouter Kool et al, ICLR 2020)
@@ -54,25 +54,6 @@ class UnorderedSetEstimator(Method):
         )
         self.use_baseline = use_baseline
 
-    def is_pathwise(
-        self, tensor: storch.StochasticTensor, cost_node: storch.CostTensor
-    ) -> bool:
-        # We only want to add a loss on the stochastic tensor with the same plate as the cost node.
-        # This is because the estimator computes the gradient with the respect to the JOINT log probability.
-        # If we would have added the gradient for all stochastic tensors, these would just be duplicates of the same
-        # loss being added (ie that gradient would be oversampled)
-        for distr_plate in tensor.plates:
-            if distr_plate.name == self.plate_name:
-                for cost_plate in cost_node.plates:
-                    if cost_plate.name == self.plate_name:
-                        if cost_plate is distr_plate:
-                            return False
-                        return True
-                raise ValueError(
-                    "The given tensor contains an ancestral plate that the cost node doesn't have."
-                )
-        return True
-
     def estimator(
         self, tensor: storch.StochasticTensor, cost_node: storch.CostTensor
     ) -> Tuple[
@@ -99,7 +80,7 @@ class UnorderedSetEstimator(Method):
         return plate.log_probs, (1 - magic_box(plate.log_probs)) * baseline.detach()
 
 
-class UnorderedSetGumbelSoftmax(Method):
+class UnorderedSetGumbelSoftmax(SeqMethod):
     def __init__(
         self,
         plate_name: str,

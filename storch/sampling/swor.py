@@ -1,10 +1,9 @@
 from __future__ import annotations
-from typing import Optional, Union, List, Callable, Tuple
+from typing import Optional, Callable, Tuple
 
 import storch
 import torch
 from torch.distributions import Distribution, Gumbel
-import itertools
 from storch.sampling.method import SamplingMethod
 from storch.sampling.seq import IterDecoding, AncestralPlate, right_expand_as
 
@@ -17,6 +16,7 @@ class SampleWithoutReplacement(IterDecoding):
     """
 
     EPS = 1e-8
+    perturbed_log_probs: Optional[storch.Tensor] = None
 
     def __init__(self, plate_name: str, k: int, biased_iw: bool = False, eos=None):
         super().__init__(plate_name, k, eos)
@@ -29,7 +29,7 @@ class SampleWithoutReplacement(IterDecoding):
     def reset(self):
         super().reset()
         # Cumulative perturbed log probabilities of the samples
-        self.perturbed_log_probs: Optional[storch.Tensor] = None
+        self.perturbed_log_probs = None
 
     def decode_step(
         self,
@@ -110,22 +110,24 @@ class SampleWithoutReplacement(IterDecoding):
         if not first_sample:
             # plates x (k * |D_yv|) (k == prev_amt_samples, in this case)
             cond_G_yv = cond_G_yv.reshape(cond_G_yv.shape[:-2] + (-1,))
+            # Reshape log probs to plates x (k * |D_yv|). Matches perturbed shape.
+            all_joint_log_probs = all_joint_log_probs.reshape(cond_G_yv.shape)
 
         # Select the samples given the perturbed log probabilities
-        self.perturbed_log_probs, arg_top = self.select_samples(
+        self.perturbed_log_probs, joint_log_probs, arg_top = self.select_samples(
             cond_G_yv, all_joint_log_probs
         )
+        # Gather corresponding joint log probabilities.
+
         amt_samples = arg_top.shape[-1]
 
         if first_sample:
             # plates x amt_samples
-            joint_log_probs = all_joint_log_probs.gather(dim=-1, index=arg_top)
             # Index for the selected samples. Uses slice(amt_samples) for the first index in case k > |D_yv|
             # (:) * amt_plates + (indices for events) + amt_samples
             indexing = (slice(None),) * amt_plates + (slice(0, amt_samples),) + indices
             sampled_support_indices[indexing] = arg_top
         else:
-            # Gather corresponding joint log probabilities. First reshape like previous to plates x (k * |D_yv|).
             joint_log_probs = all_joint_log_probs.reshape(cond_G_yv.shape).gather(
                 dim=-1, index=arg_top
             )
@@ -151,14 +153,14 @@ class SampleWithoutReplacement(IterDecoding):
 
     def select_samples(
         self, perturbed_log_probs: storch.Tensor, joint_log_probs: storch.Tensor,
-    ) -> (storch.Tensor, storch.Tensor):
+    ) -> (storch.Tensor, storch.Tensor, storch.Tensor):
         """
         Given the perturbed log probabilities and the joint log probabilities of the new options, select which one to
         use for the sample.
         :param perturbed_log_probs: plates x (k? * |D_yv|). Perturbed log-probabilities. k is present if first_sample.
-        :param joint_log_probs: plates x k? x (k? * |D_yv|). Joint log probabilities of the options. k is present if first_sample.
+        :param joint_log_probs: plates x (k? * |D_yv|). Joint log probabilities of the options. k is present if first_sample.
         :param first_sample:
-        :return:
+        :return: perturbed log probs of chosen samples, joint log probs of chosen samples, index of chosen samples
         """
 
         # We can sample at most the amount of what we previous sampled, combined with every option in the current domain
@@ -166,7 +168,10 @@ class SampleWithoutReplacement(IterDecoding):
         amt_samples = min(self.k, perturbed_log_probs.shape[-1])
         # Take the top k over conditional perturbed log probs
         # plates x amt_samples
-        return torch.topk(perturbed_log_probs, amt_samples, dim=-1)
+        perturbed_log_probs, arg_top = torch.topk(perturbed_log_probs, amt_samples, dim=-1)
+        joint_log_probs = joint_log_probs.gather(dim=-1, index=arg_top)
+        return perturbed_log_probs, joint_log_probs, arg_top
+
 
     def create_plate(self, plate_size: int, plates: [storch.Plate]) -> AncestralPlate:
         plate = super().create_plate(plate_size, plates)
@@ -181,6 +186,7 @@ class SampleWithoutReplacement(IterDecoding):
         self, tensor: storch.StochasticTensor, plate: storch.Plate
     ) -> Optional[storch.Tensor]:
         # TODO: Doesnt take into account eos tokens
+        # TODO: Does this add the plate to the weighting function result? Could be a big bug!
         return self.compute_iw(plate, self.biased_iw).detach()
 
     def compute_iw(self, plate: AncestralPlate, biased: bool):
