@@ -27,7 +27,7 @@ sequence models.
 
 [Documentation on Read the Docs.](https://storchastic.readthedocs.io/en/latest/)
 
-[Example: Discrete Variational Auto-Encoder](TODO)
+[Example: Discrete Variational Auto-Encoder](examples/vae/train.py)
 
 ## Installation
 In your virtual Python environment, run
