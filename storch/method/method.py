@@ -555,6 +555,7 @@ class ScoreFunction(Method):
         self, tensor: StochasticTensor, cost: CostTensor
     ) -> Tuple[Optional[storch.Tensor], Optional[storch.Tensor]]:
         log_prob: torch.Tensor = tensor.distribution.log_prob(tensor)
+
         # tensor.distribution.logits.register_hook(lambda g: print("logits grad", g))
         # print(cost)
         # log_prob.register_hook(lambda g: print("grad", g))
@@ -570,6 +571,7 @@ class ScoreFunction(Method):
             baseline = getattr(self, baseline_name)
             baseline = baseline.compute_baseline(tensor, cost)
             return log_prob, (1.0 - magic_box(log_prob)) * baseline
+
         return log_prob, None
 
 

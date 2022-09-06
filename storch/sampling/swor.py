@@ -192,19 +192,16 @@ class SampleWithoutReplacement(IterDecoding):
     def compute_iw(self, plate: AncestralPlate, biased: bool):
         k = plate.perturb_log_probs.shape[-1]
         # Compute importance weights. The kth sample has 0 weight, and is only used to compute the importance weights
-        q = (
-            1
-            - (
-                -(
-                    plate.log_probs
-                    - plate.perturb_log_probs._tensor[..., k - 1].unsqueeze(-1)
-                ).exp()
-            ).exp()
-        ).detach()
+        # Equation 5
+        q = (1 - torch.exp(
+            - torch.exp(
+                plate.log_probs - plate.perturb_log_probs._tensor[..., k - 1].unsqueeze(-1)
+                ))).detach()
         iw = plate.log_probs.exp() / (q + self.EPS)
         # Set the weight of the kth sample (kappa) to 0.
         iw[..., k - 1] = 0.0
         if biased:
+            # Equation 6 (normalization of importance weights)
             WS = storch.sum(iw, plate).detach()
             return iw / WS
         return iw
@@ -233,7 +230,10 @@ def log1mexp(a: torch.Tensor) -> torch.Tensor:
     Numerically stable implementation of log(1-exp(a))"""
     c = -0.693
     a1 = -a.abs()
-    return torch.where(a1 > c, torch.log(-a1.expm1()), torch.log1p(-a1.exp()))
+    eps = 1e-6
+    # exp_a = -a1.exp()
+    # assert (exp_a >= -1).all()
+    return torch.where(a1 > c, torch.log(-a1.expm1() + eps), torch.log1p(-a1.exp() + eps))
 
 
 @storch.deterministic

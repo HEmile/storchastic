@@ -240,7 +240,8 @@ class Tensor:
         self.event_dims = len(self.event_shape)
         self.plates = plates
 
-    def __torch_function__(self, func: Callable, types, args=(), kwargs=None) -> Callable:
+    @classmethod
+    def __torch_function__(cls, func: Callable, types, args=(), kwargs=None) -> Callable:
         """
         Called whenever a torch.* or torch.nn.functional.* method is being called on a storch.Tensor. This wraps
         that method in the deterministic wrapper to properly handle all input arguments and outputs.

@@ -25,7 +25,7 @@ def magic_box(l: Tensor):
     It returns 1 in the forward pass, but returns magic_box(l) \cdot r in the backwards pass.
     This allows for any-order gradient estimation.
     """
-    return (l - l.detach()).exp()
+    return torch.exp(l - l.detach())
 
 def print_graph(costs: [CostTensor]):
     nodes = topological_sort(costs)

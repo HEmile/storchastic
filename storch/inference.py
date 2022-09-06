@@ -126,7 +126,7 @@ def surrogate_loss(debug: bool = False) -> storch.Tensor:
         # if reduced_cost.requires_grad:
         #     accum_loss += reduced_cost
 
-        L = c._tensor.new_tensor(0.0)
+        L = c._tensor.new_tensor(0.0, dtype=torch.float32)
         surrogate_loss_c = 0.0
         # Walk topologically through the graph
         # This is a parallelized implementation of Algorithm 1 in the paper
@@ -198,12 +198,17 @@ def surrogate_loss(debug: bool = False) -> storch.Tensor:
                 if final_A.ndim == 1:
                     final_A = final_A.squeeze(0)
                 surrogate_loss_c += final_A
+
         # Use magic box to distribute the cost to gradient function
         surrogate_loss_c += storch.reduce_plates(magic_box(L) * c, detach_weights=False)
         # Collect surrogate losses for all costs
         surrogate_losses.append(surrogate_loss_c)
     SL = torch.sum(torch.stack(surrogate_losses))
     return SL
+
+
+def costs() -> [CostTensor]:
+    return list(storch.inference._cost_tensors)
 
 
 def backward(

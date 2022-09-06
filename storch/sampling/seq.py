@@ -604,7 +604,7 @@ class IterDecoding(SequenceDecoding):
         if amt_samples < self.k:
             # plates x amt_samples x events
             sampled_support_indices = sampled_support_indices[
-                (...,) + (slice(amt_samples),) + (slice(None),) * len(ranges)
+                (...,) + (slice(amt_samples),)
             ]
         expanded_indices = right_expand_as(sampled_support_indices, support)
         sample = support.gather(dim=amt_multi_dim_plates, index=expanded_indices)
