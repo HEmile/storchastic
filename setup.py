@@ -5,17 +5,14 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="storchastic",  # Replace with your own username
-    version="0.3.5",
+    version="0.3.6",
     author="Emile van Krieken",
     author_email="e.van.krieken@vu.nl",
     description="Stochastic Deep Learning for PyTorch",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/HEmile/storchastic",
-    install_requires=[
-      "entmax",
-      "pyro-ppl"
-    ],
+    install_requires=["entmax", "pyro-ppl", "torch", "packaging"],
     packages=setuptools.find_packages(),
     classifiers=[
         "Programming Language :: Python :: 3",

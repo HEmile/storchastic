@@ -19,15 +19,15 @@ class NormalVAE(VAE):
 
     def initialize_method(self, args) -> storch.method.Method:
         if args.method == "reparameterization":
-            return storch.Reparameterization("z", n_samples=args.samples)
+            return storch.method.Reparameterization("z", n_samples=args.samples)
         elif args.method == "lax":
-            return storch.LAX("z", n_samples=args.samples, in_dim=args.latents)
+            return storch.method.LAX("z", n_samples=args.samples, in_dim=args.latents)
         elif args.method == "score":
-            return storch.ScoreFunction(
+            return storch.method.ScoreFunction(
                 "z", n_samples=args.samples, baseline_factory=args.baseline
             )
 
-    def prior(self, posterior: Distribution) -> Distribution:
+    def prior(self, posterior: Normal) -> Distribution:
         return Normal(torch.zeros_like(posterior.loc), torch.ones_like(posterior.scale))
 
     def variational_posterior(self, params) -> Distribution:

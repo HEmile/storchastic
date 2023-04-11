@@ -17,6 +17,7 @@ from torch.distributions import Distribution
 class VAE(nn.Module):
     def __init__(self, args):
         super(VAE, self).__init__()
+        self.args = args
 
         self.latents = args.latents
         self.samples = args.samples
