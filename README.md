@@ -38,8 +38,8 @@ In your virtual Python environment, run
 ## Algorithms
 Feel free to create an issue if an estimator is missing here.
 - Reparameterization [1, 3]
-- Score Function (REINFORCE) with Moving Average baseline [1, 4]
-- Score Function with Batch Average Baseline [5, 6]
+- REINFORCE with Moving Average baseline [1, 4]
+- REINFORCE with Leave-One-Out baseline (RLOO) [5, 6]
 - Expected value for enumerable distributions
 - (Straight through) Gumbel Softmax [7, 8]
 - LAX, RELAX [9] 
