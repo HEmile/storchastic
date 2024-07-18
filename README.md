@@ -81,7 +81,11 @@ To cite Storchastic, please cite this preprint:
 @article{van2021storchastic,
   title={Storchastic: A Framework for General Stochastic Automatic Differentiation},
   author={van Krieken, Emile and Tomczak, Jakub M and Teije, Annette ten},
-  journal={arXiv preprint arXiv:2104.00428},
+  booktitle = {Advances in Neural Information Processing Systems},
+  editor = {M. Ranzato and A. Beygelzimer and Y. Dauphin and P.S. Liang and J. Wortman Vaughan},
+  pages = {7574--7587},
+  url = {https://proceedings.neurips.cc/paper_files/paper/2021/file/3dfe2f633108d604df160cd1b01710db-Paper.pdf},
+  volume = {34},
   year={2021}
 }
 ```
