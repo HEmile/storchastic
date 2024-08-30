@@ -5,9 +5,9 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="storchastic",  # Replace with your own username
-    version="0.3.6",
+    version="0.3.7",
     author="Emile van Krieken",
-    author_email="e.van.krieken@vu.nl",
+    author_email="emilevankrieken.com",
     description="Stochastic Deep Learning for PyTorch",
     long_description=long_description,
     long_description_content_type="text/markdown",
@@ -19,5 +19,5 @@ setuptools.setup(
         "License :: OSI Approved :: GNU Affero General Public License v3",
         "Operating System :: OS Independent",
     ],
-    python_requires=">=3.6",
+    python_requires=">=3.9",
 )

@@ -3,7 +3,9 @@ from __future__ import annotations
 from copy import copy
 from typing import Union, Any, Tuple, List, Optional, Dict, Callable
 
-from torch.distributions import Distribution
+from torch import Type
+from torch.distributions import (Distribution, Categorical, OneHotCategorical, OneHotCategoricalStraightThrough,
+                                 RelaxedOneHotCategorical, Bernoulli, RelaxedBernoulli)
 
 import storch
 import torch
@@ -19,20 +21,29 @@ _context_name = None
 _plate_links = []
 _ignore_wrap = False
 
+_registered_wrappers = {}
+
+
+def register_wrapper(clazz: Type, convert: Callable[[Any, [storch.Tensor], [storch.Plate], str, int, bool], Any]):
+    if clazz in _registered_wrappers:
+        raise ValueError("Wrapper already registered")
+    _registered_wrappers[clazz] = convert
+
+
 # TODO: This is_iterable thing is a bit annoying: We really only want to unwrap them if they contain storch
 #  Tensors, and then only for some types. Should rethink, maybe. Is unwrapping even necessary if the base torch methods
 #  are all overriden? Maybe, see torch.cat?
 def is_iterable(a: Any):
     return (
-        isinstance(a, Iterable)
-        and not storch.is_tensor(a)
-        and not isinstance(a, str)
-        and not isinstance(a, torch.Storage)
+            isinstance(a, Iterable)
+            and not storch.is_tensor(a)
+            and not isinstance(a, str)
+            and not isinstance(a, torch.Storage)
     )
 
 
 def _collect_parents_and_plates(
-    a: Any, parents: [storch.Tensor], plates: [storch.Plate]
+        a: Any, parents: [storch.Tensor], plates: [storch.Plate]
 ) -> int:
     if isinstance(a, storch.Tensor):
         parents.append(a)
@@ -58,13 +69,13 @@ def _collect_parents_and_plates(
 
 
 def _unsqueeze_and_unwrap(
-    a: Any,
-    multi_dim_plates: [storch.Plate],
-    align_tensors: bool,
-    l_broadcast: bool,
-    expand_plates: bool,
-    flatten_plates: bool,
-    event_dims: int,
+        a: Any,
+        multi_dim_plates: [storch.Plate],
+        align_tensors: bool,
+        l_broadcast: bool,
+        expand_plates: bool,
+        flatten_plates: bool,
+        event_dims: int,
 ):
     if isinstance(a, storch.Tensor):
         if not align_tensors:
@@ -107,11 +118,11 @@ def _unsqueeze_and_unwrap(
         # Optionally expand the singleton dimensions to the plate size
         if expand_plates:
             # TODO: Can maybe be optimized by only running this if the shape is different
-            tensor = tensor.expand(tuple(plate_dims) + tensor.shape[len(plate_dims) :])
+            tensor = tensor.expand(tuple(plate_dims) + tensor.shape[len(plate_dims):])
         # Optionally flatten the plate dimensions to a single batch dimension
         if flatten_plates:
             assert expand_plates
-            tensor = tensor.reshape((-1,) + tensor.shape[len(plate_dims) :])
+            tensor = tensor.reshape((-1,) + tensor.shape[len(plate_dims):])
 
         return tensor
     elif isinstance(a, Mapping):
@@ -147,7 +158,8 @@ def _unsqueeze_and_unwrap(
     elif isinstance(a, Distribution):
         from storch.util import get_distr_parameters
         params = get_distr_parameters(a, False)
-        params_unsq = _unsqueeze_and_unwrap(params, multi_dim_plates, align_tensors, l_broadcast, expand_plates, flatten_plates, event_dims)
+        params_unsq = _unsqueeze_and_unwrap(params, multi_dim_plates, align_tensors, l_broadcast, expand_plates,
+                                            flatten_plates, event_dims)
         try:
             if 'logits' in params and 'probs' in params:
                 # Discrete distributions don't like it if you pass both probs and logits
@@ -163,15 +175,15 @@ def _unsqueeze_and_unwrap(
 
 
 def _prepare_args(
-    fn_args,
-    fn_kwargs,
-    unwrap=True,
-    align_tensors=True,
-    l_broadcast=True,
-    expand_plates=False,
-    flatten_plates=False,
-    dim: Optional[str] = None,
-    dims: Optional[Union[str, List[str]]] = None,
+        fn_args,
+        fn_kwargs,
+        unwrap=True,
+        align_tensors=True,
+        l_broadcast=True,
+        expand_plates=False,
+        flatten_plates=False,
+        dim: Optional[str] = None,
+        dims: Optional[Union[str, List[str]]] = None,
 ) -> (List, Dict, [storch.Tensor], [storch.Plate]):
     """
     Prepares the input arguments of the wrapped function:
@@ -261,12 +273,12 @@ def _prepare_args(
 
 
 def _prepare_outputs_det(
-    o: Any,
-    parents: [storch.Tensor],
-    plates: [storch.Plate],
-    name: str,
-    index: int,
-    unflatten_plates,
+        o: Any,
+        parents: [storch.Tensor],
+        plates: [storch.Plate],
+        name: str,
+        index: int,
+        unflatten_plates,
 ):
     if o is None:
         return None, index
@@ -284,7 +296,7 @@ def _prepare_outputs_det(
             for i, other_plate in enumerate(new_plates):
                 if plate.name == other_plate.name:
                     plate_found = True
-                    if hasattr(plate, "variable_index") :
+                    if hasattr(plate, "variable_index"):
                         assert hasattr(other_plate, "variable_index")
                         if plate.variable_index > other_plate.variable_index:
                             new_plates[i] = plate
@@ -312,18 +324,27 @@ def _prepare_outputs_det(
         if isinstance(o, tuple):
             return tuple(outputs), index
         return outputs, index
+    # TODO: These have to be done manually...
+    #  Currently only discrete distributions are supported.
+    if isinstance(o, (Categorical, Bernoulli, OneHotCategorical, OneHotCategoricalStraightThrough, RelaxedOneHotCategorical, RelaxedBernoulli)):
+        prob, index = _prepare_outputs_det(o.probs, parents, plates, name, index, unflatten_plates)
+        return o.__class__(prob), index
+    for type in _registered_wrappers.keys():
+        if isinstance(o, type):
+            return _registered_wrappers[type](o, parents, plates, name, index, unflatten_plates)
     raise NotImplementedError(
-        "Handling of other types of return values is currently not implemented: ", o
+        "Handling of other types of return values is currently not implemented. You can implement it yourself with "
+        "`register_wrapper`. Output: ", o
     )
 
 
 def _handle_deterministic(
-    fn,
-    fn_args,
-    fn_kwargs,
-    reduce_plates: Optional[Union[str, List[str]]] = None,
-    flatten_plates: bool = False,
-    **wrapper_kwargs
+        fn,
+        fn_args,
+        fn_kwargs,
+        reduce_plates: Optional[Union[str, List[str]]] = None,
+        flatten_plates: bool = False,
+        **wrapper_kwargs
 ):
     if storch.wrappers._context_stochastic:
         raise NotImplementedError(
@@ -370,7 +391,7 @@ def _handle_deterministic(
 
 
 def _deterministic(
-    fn, reduce_plates: Optional[Union[str, List[str]]] = None, **wrapper_kwargs
+        fn, reduce_plates: Optional[Union[str, List[str]]] = None, **wrapper_kwargs
 ):
     @wraps(fn)
     def wrapper(*args, **kwargs):
@@ -410,6 +431,7 @@ def deterministic(fn: Optional[Callable] = None, **kwargs):
         return _deterministic(fn, **kwargs)
     return lambda _f: _deterministic(_f, **kwargs)
 
+
 def make_left_broadcastable(fn: Optional[Callable]):
     """
     Deterministic wrapper that is compatible with functions that are not by themselves left-broadcastable, such as :func:`torch.nn.Conv2d`.
@@ -417,6 +439,7 @@ def make_left_broadcastable(fn: Optional[Callable]):
     To fix this, use `make_left_broadcastable(Conv2d(16, 33, 3))`
     """
     return deterministic(fn, flatten_plates=True)
+
 
 def reduce(fn, plates: Union[str, List[str]]):
     """
@@ -448,7 +471,7 @@ def _self_deterministic(fn, self: storch.Tensor):
 
 
 def _process_stochastic(
-    output: torch.Tensor, parents: [storch.Tensor], plates: [storch.Plate]
+        output: torch.Tensor, parents: [storch.Tensor], plates: [storch.Plate]
 ):
     if isinstance(output, storch.Tensor):
         if not output.stochastic:
@@ -479,8 +502,8 @@ def stochastic(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):
         if (
-            storch.wrappers._context_stochastic
-            or storch.wrappers._context_deterministic > 0
+                storch.wrappers._context_stochastic
+                or storch.wrappers._context_deterministic > 0
         ):
             raise RuntimeError(
                 "Cannot call storch.stochastic from within a stochastic or deterministic context."

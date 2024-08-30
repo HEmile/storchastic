@@ -5,16 +5,15 @@ import torch
 from storch.util import print_graph, magic_box
 import storch
 
-
 _cost_tensors: [CostTensor] = []
 _sampling_methods: [storch.method.Method] = []
 
 
 def denote_independent(
-    tensor: torch.Tensor,
-    dim: int,
-    plate_name: str,
-    weight: Optional[storch.Tensor] = None,
+        tensor: torch.Tensor,
+        dim: int,
+        plate_name: str,
+        weight: Optional[storch.Tensor] = None,
 ) -> IndependentTensor:
     """
     Denote the given dimensions on the tensor as being independent, that is, batched dimensions.
@@ -25,8 +24,8 @@ def denote_independent(
     :return:
     """
     if (
-        storch.wrappers._context_stochastic
-        or storch.wrappers._context_deterministic > 0
+            storch.wrappers._context_stochastic
+            or storch.wrappers._context_deterministic > 0
     ):
         raise RuntimeError(
             "Cannot create independent tensors within a deterministic or stochastic context."
@@ -48,13 +47,13 @@ def denote_independent(
 
 
 def gather_samples(
-    samples: Union[List[storch.Tensor], List[torch.Tensor]],
-    plate_name: str,
-    weight: Optional[storch.Tensor] = None,
+        samples: Union[List[storch.Tensor], List[torch.Tensor]],
+        plate_name: str,
+        weight: Optional[storch.Tensor] = None,
 ) -> IndependentTensor:
     if (
-        storch.wrappers._context_stochastic
-        or storch.wrappers._context_deterministic > 0
+            storch.wrappers._context_stochastic
+            or storch.wrappers._context_deterministic > 0
     ):
         raise RuntimeError(
             "Cannot create independent tensors within a deterministic or stochastic context."
@@ -212,9 +211,9 @@ def costs() -> [CostTensor]:
 
 
 def backward(
-    debug: bool = False,
-    create_graph: bool = False,
-    update_estimator_params: bool = True,
+        debug: bool = False,
+        create_graph: bool = False,
+        update_estimator_params: bool = True,
 ) -> torch.Tensor:
     """
     Computes the gradients of the cost nodes with respect to the parameter nodes. It uses the storch
